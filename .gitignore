@@ -1,0 +1,21 @@
+# XAMPP/SMS Project .gitignore
+
+# Temporary and local files
+tmp/
+*.log
+*.tmp
+
+# System-generated logs and brain
+.gemini/
+brain/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Database backups (if you don't want to push them every time)
+# database/*.sql
+
+# Uploads (optional: common to ignore personal uploads in git)
+# uploads/
+404.html
