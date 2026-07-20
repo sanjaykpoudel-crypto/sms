@@ -96,7 +96,7 @@
                 </div>
                 <div>
                     <h3>Financial Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">8 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">9 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -105,6 +105,14 @@
                     <span>
                         Balance Sheet
                         <span class="rpt-desc">Assets, liabilities and equity overview</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/financial/comparative_balance_sheet" class="report-link-item">
+                    <span class="rpt-dot" style="background:#1abc9c;"></span>
+                    <span>
+                        Comparative Balance Sheet
+                        <span class="rpt-desc">Compare assets, liabilities and equity with the previous fiscal year</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
@@ -175,7 +183,7 @@
                 </div>
                 <div>
                     <h3>Sales Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">4 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">5 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -211,6 +219,14 @@
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
+                <a href="?page=reports/sales/open_invoices" class="report-link-item">
+                    <span class="rpt-dot" style="background:#e67e22;"></span>
+                    <span>
+                        Open Invoices
+                        <span class="rpt-desc">Outstanding customer invoices with open balances</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
             </div>
         </div>
 
@@ -222,7 +238,7 @@
                 </div>
                 <div>
                     <h3>Purchase Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">3 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">2 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -242,14 +258,6 @@
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
-                <a href="?page=reports/vendors/payable_aging" class="report-link-item">
-                    <span class="rpt-dot" style="background:#e74c3c;"></span>
-                    <span>
-                        Accounts Payable (AP) Aging
-                        <span class="rpt-desc">Aging of outstanding vendor bills</span>
-                    </span>
-                    <i class="fas fa-arrow-right rpt-arrow"></i>
-                </a>
             </div>
         </div>
 
@@ -261,23 +269,47 @@
                 </div>
                 <div>
                     <h3>Inventory Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">5 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">8 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
-                <a href="?page=reports/inventory/stock_summary" class="report-link-item">
+                <a href="?page=reports/inventory/inventory_valuation" class="report-link-item">
                     <span class="rpt-dot" style="background:#e67e22;"></span>
                     <span>
-                        Stock Summary
+                        Inventory Valuation
+                        <span class="rpt-desc">Current inventory values at cost vs retail pricing</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/inventory/stock_summary" class="report-link-item">
+                    <span class="rpt-dot" style="background:#d35400;"></span>
+                    <span>
+                        Current Inventory Snapshot
                         <span class="rpt-desc">Current stock levels of all items</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
                 <a href="?page=reports/inventory/stock_ledger" class="report-link-item">
-                    <span class="rpt-dot" style="background:#d35400;"></span>
+                    <span class="rpt-dot" style="background:#8e44ad;"></span>
                     <span>
                         Stock Ledger
                         <span class="rpt-desc">Stock movement history per item</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/inventory/inventory_revenue" class="report-link-item">
+                    <span class="rpt-dot" style="background:#2ecc71;"></span>
+                    <span>
+                        Inventory Revenue
+                        <span class="rpt-desc">Revenue contribution of each inventory item</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/inventory/inventory_profitability" class="report-link-item">
+                    <span class="rpt-dot" style="background:#1abc9c;"></span>
+                    <span>
+                        Inventory Profitability
+                        <span class="rpt-desc">Gross profit and profit margins per item</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
@@ -339,6 +371,53 @@
             </div>
         </div>
 
+        <!-- Vendor Reports -->
+        <div class="report-category-card">
+            <div class="report-category-header">
+                <div class="cat-icon" style="background: linear-gradient(135deg, #8e44ad, #9b59b6);">
+                    <i class="fas fa-user-tie"></i>
+                </div>
+                <div>
+                    <h3>Vendor Reports</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">4 Reports</div>
+                </div>
+            </div>
+            <div class="report-links-list">
+                <a href="?page=reports/vendors/ap_register" class="report-link-item">
+                    <span class="rpt-dot" style="background:#8e44ad;"></span>
+                    <span>
+                        AP Register
+                        <span class="rpt-desc">Complete register of vendor bills and balances</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/vendors/ap_payment_by_bill" class="report-link-item">
+                    <span class="rpt-dot" style="background:#2ecc71;"></span>
+                    <span>
+                        AP Payment by Bill
+                        <span class="rpt-desc">Payments applied to specific vendor bills</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/vendors/open_bills" class="report-link-item">
+                    <span class="rpt-dot" style="background:#e67e22;"></span>
+                    <span>
+                        Open Bills
+                        <span class="rpt-desc">Outstanding bills with remaining balances</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/vendors/payable_aging" class="report-link-item">
+                    <span class="rpt-dot" style="background:#e74c3c;"></span>
+                    <span>
+                        Accounts Payable (AP) Aging
+                        <span class="rpt-desc">Aging of outstanding vendor bills</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+            </div>
+        </div>
+
         <!-- Customer Reports -->
         <div class="report-category-card">
             <div class="report-category-header">
@@ -347,7 +426,7 @@
                 </div>
                 <div>
                     <h3>Customer Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">2 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">4 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -356,6 +435,22 @@
                     <span>
                         Customer Statement
                         <span class="rpt-desc">Outstanding balance and transaction history per customer</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/customers/ar_register" class="report-link-item">
+                    <span class="rpt-dot" style="background:#8e44ad;"></span>
+                    <span>
+                        AR Register
+                        <span class="rpt-desc">Complete register of customer invoices and balances</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/customers/ar_payment_by_invoice" class="report-link-item">
+                    <span class="rpt-dot" style="background:#2ecc71;"></span>
+                    <span>
+                        AR Payment by Invoice
+                        <span class="rpt-desc">Customer payments applied to specific invoices</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>

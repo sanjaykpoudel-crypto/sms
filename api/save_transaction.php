@@ -34,6 +34,16 @@ try {
     }
 
     $header_txn_type = ($party_type === 'customer') ? 'customer_payment' : 'vendor_payment';
+    
+    // Check fiscal year locks
+    if ($id) {
+        $old_txn_date = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id])['txn_date'] ?? null;
+        if ($old_txn_date) {
+            check_fiscal_year_lock($old_txn_date);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
+
     $fiscal = calculate_fiscal_info($txn_date);
 
     if (!$id) {

@@ -428,6 +428,7 @@ if ($is_logged_in) {
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/financial/balance_sheet" class="ns-sub-dropdown-item">Balance Sheet</a>
+                            <a href="?page=reports/financial/comparative_balance_sheet" class="ns-sub-dropdown-item">Comparative Balance Sheet</a>
                             <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income Statement</a>
                             <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative Income Statement</a>
                             <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit Report</a>
@@ -445,6 +446,7 @@ if ($is_logged_in) {
                             <a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a>
                             <a href="?page=reports/sales/by_customer" class="ns-sub-dropdown-item">Sales by Customer</a>
                             <a href="?page=reports/sales/register" class="ns-sub-dropdown-item">Sales Register</a>
+                            <a href="?page=reports/sales/open_invoices" class="ns-sub-dropdown-item">Open Invoices</a>
                         </div>
                     </div>
                     <div class="ns-dropdown-item">
@@ -453,6 +455,15 @@ if ($is_logged_in) {
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/purchases/by_item" class="ns-sub-dropdown-item">Purchase by Item</a>
                             <a href="?page=reports/purchases/by_vendor" class="ns-sub-dropdown-item">Purchase by Vendor</a>
+                        </div>
+                    </div>
+                    <div class="ns-dropdown-item">
+                        <i class="fas fa-user-tie"></i> Vendors <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=reports/vendors/ap_register" class="ns-sub-dropdown-item">AP Register</a>
+                            <a href="?page=reports/vendors/ap_payment_by_bill" class="ns-sub-dropdown-item">AP Payment by Bill</a>
+                            <a href="?page=reports/vendors/open_bills" class="ns-sub-dropdown-item">Open Bills</a>
                             <a href="?page=reports/vendors/payable_aging" class="ns-sub-dropdown-item">AP Aging</a>
                         </div>
                     </div>
@@ -460,8 +471,11 @@ if ($is_logged_in) {
                         <i class="fas fa-warehouse"></i> Inventory <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Stock Summary</a>
+                            <a href="?page=reports/inventory/inventory_valuation" class="ns-sub-dropdown-item">Inventory Valuation</a>
+                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Current Inventory Snapshot</a>
                             <a href="?page=reports/inventory/stock_ledger" class="ns-sub-dropdown-item">Stock Ledger</a>
+                            <a href="?page=reports/inventory/inventory_revenue" class="ns-sub-dropdown-item">Inventory Revenue</a>
+                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability</a>
                             <a href="?page=reports/inventory/low_stock" class="ns-sub-dropdown-item">Low Stock Report</a>
                             <a href="?page=reports/inventory/less_stock" class="ns-sub-dropdown-item">Less Stock Report</a>
                             <a href="?page=reports/inventory/urgent_buy" class="ns-sub-dropdown-item">Urgent Purchases</a>
@@ -481,6 +495,8 @@ if ($is_logged_in) {
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/customers/statement" class="ns-sub-dropdown-item">Customer Statement</a>
+                            <a href="?page=reports/customers/ar_register" class="ns-sub-dropdown-item">AR Register</a>
+                            <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment by Invoice</a>
                             <a href="?page=reports/customers/receivable_aging" class="ns-sub-dropdown-item">AR Aging</a>
                         </div>
                     </div>

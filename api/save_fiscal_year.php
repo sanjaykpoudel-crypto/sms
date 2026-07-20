@@ -78,14 +78,25 @@ try {
 
     // 5. Check active status constraint: Only one fiscal year can be active (open/reopened) at a time
     if ($status === 'open' || $status === 'reopened') {
-        $active_check = $db->fetchOne("
-            SELECT name FROM fiscal_years 
-            WHERE id != :id 
-              AND status IN ('open', 'reopened')
-        ", ['id' => $id ?: '']);
+        $should_check = true;
+        if ($id) {
+            $current = $db->fetchOne("SELECT status FROM fiscal_years WHERE id = ?", [$id]);
+            $current_status = $current['status'] ?? '';
+            if ($current_status === 'open' || $current_status === 'reopened') {
+                $should_check = false; // Already active in the DB; we are not activating a new one
+            }
+        }
         
-        if ($active_check) {
-            throw new Exception("Only one fiscal year can be active (open/reopened) at a time. Fiscal Year '{$active_check['name']}' is currently active.");
+        if ($should_check) {
+            $active_check = $db->fetchOne("
+                SELECT name FROM fiscal_years 
+                WHERE id != :id 
+                  AND status IN ('open', 'reopened')
+            ", ['id' => $id ?: '']);
+            
+            if ($active_check) {
+                throw new Exception("Only one fiscal year can be active (open/reopened) at a time. Fiscal Year '{$active_check['name']}' is currently active.");
+            }
         }
     }
 

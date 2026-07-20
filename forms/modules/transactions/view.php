@@ -26,6 +26,18 @@ if (!$header || $header['is_deleted'] == 1) {
 }
 
 $txn_type = $header['txn_type'];
+
+$is_locked = false;
+if (!empty($header['txn_date'])) {
+    $closed_fy = $db->fetchOne("
+        SELECT id FROM fiscal_years 
+        WHERE ? BETWEEN start_date AND end_date AND status = 'closed'
+    ", [$header['txn_date']]);
+    if ($closed_fy) {
+        $is_locked = true;
+    }
+}
+
 $details = [];
 
 // Fetch Specific Details
@@ -384,13 +396,19 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
         <?php endif; ?>
         
         <div class="view-actions">
-            <?php if (in_array($txn_type, ['customer_invoice', 'vendor_bill']) && ($details['balance_due'] ?? 0) > 0.01 && ($details['payment_status'] ?? '') !== 'paid'): 
+            <?php if (in_array($txn_type, ['customer_invoice', 'vendor_bill']) && ($details['balance_due'] ?? 0) > 0.01 && ($details['payment_status'] ?? '') !== 'paid' && !$is_locked): 
                 $partyType = $txn_type == 'customer_invoice' ? 'customer' : 'vendor';
                 $partyId = $txn_type == 'customer_invoice' ? $details['customer_id'] : $details['vendor_id'];
             ?>
                 <a href="?page=transactions/payment/manage&party_type=<?php echo $partyType; ?>&party_id=<?php echo $partyId; ?>" class="ns-btn" style="background: #28a745; color: white; border-color: #28a745;"><i class="fas fa-money-bill-wave"></i> Make Payment</a>
             <?php endif; ?>
-            <a href="<?php echo $edit_url; ?>" class="ns-btn"><i class="fas fa-edit"></i> Edit</a>
+            
+            <?php if (!$is_locked): ?>
+                <a href="<?php echo $edit_url; ?>" class="ns-btn"><i class="fas fa-edit"></i> Edit</a>
+            <?php else: ?>
+                <button class="ns-btn" disabled style="color: #64748b; background: #f1f5f9; border-color: #cbd5e1; cursor: not-allowed;" title="This transaction is locked in a closed fiscal period"><i class="fas fa-lock"></i> Locked</button>
+            <?php endif; ?>
+            
             <a href="?page=transactions/print&id=<?php echo $id; ?>" target="_blank" class="ns-btn ns-btn-primary"><i class="fas fa-print"></i> Print</a>
             <a href="javascript:history.back()" class="ns-btn"><i class="fas fa-arrow-left"></i> Back</a>
         </div>

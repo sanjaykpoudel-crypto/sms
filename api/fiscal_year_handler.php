@@ -530,18 +530,35 @@ function run_validation($pdo, $db, $start, $end) {
         'action_url' => $ap_diff < 0.05 ? null : '?page=reports/vendors/payable_aging'
     ];
     
-    // 6. Inventory Valuation Completed (GL Inventory vs Items current stock valuation)
+    // 6. Inventory Valuation Completed (GL Inventory vs Items stock valuation as of period end date)
     $gl_inv = (float)($db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'inventory' AND h.txn_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
-    ", [$start, $end])['bal'] ?? 0);
+        WHERE a.account_subtype = 'inventory' AND h.txn_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
+    ", [$end])['bal'] ?? 0);
     
-    $items_inv = (float)($db->fetchOne("
-        SELECT SUM(current_stock * cost_price) as bal FROM items WHERE is_active = 1 AND is_deleted = 0
-    ")['bal'] ?? 0);
+    $items_inv_rows = $db->fetchAll("
+        SELECT 
+            i.cost_price,
+            COALESCE(SUM(CASE 
+                WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
+                WHEN h.txn_type IN ('customer_invoice','POS') THEN -l.quantity 
+                WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+                ELSE 0 
+            END), 0) AS computed_stock
+        FROM items i
+        LEFT JOIN transaction_lines l ON l.item_id = i.id
+        LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_date <= ?
+        WHERE i.is_deleted = 0
+        GROUP BY i.id
+    ", [$end]);
+    
+    $items_inv = 0.0;
+    foreach ($items_inv_rows as $row) {
+        $items_inv += (float)$row['computed_stock'] * (float)$row['cost_price'];
+    }
     
     $inv_diff = abs($gl_inv - $items_inv);
     

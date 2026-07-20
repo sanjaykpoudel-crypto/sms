@@ -33,6 +33,10 @@ try {
     $pos = $db->fetchOne("SELECT * FROM pos_entry WHERE id = ?", [$original_pos_id]);
     if (!$pos) throw new Exception("Original POS record not found.");
 
+    // Check fiscal year locks
+    check_fiscal_year_lock($return_date);
+    check_fiscal_year_lock(date('Y-m-d', strtotime($pos['date_time'])));
+
     // 2. Create Return Record
     $db->execute(
         "INSERT INTO pos_returns (id, original_pos_id, return_date, total_return_amount, refund_mode, status, created_by)
