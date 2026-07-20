@@ -7,39 +7,83 @@ $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? date('Y-m-01');
 $date_to    = $_GET['date_to']   ?? $today;
 
-$rows = $db->fetchAll("
-    SELECT 
-        d.date,
-        COALESCE(s.total_sales, 0) as total_sales,
-        COALESCE(s.total_cogs, 0) as total_cogs,
-        COALESCE(s.gross_profit, 0) as gross_profit,
-        COALESCE(e.total_expenses, 0) as total_expenses,
-        (COALESCE(s.gross_profit, 0) - COALESCE(e.total_expenses, 0)) as net_profit
-    FROM (
-        SELECT DISTINCT txn_date AS date FROM transaction_headers WHERE is_deleted = 0 AND status != 'voided' AND txn_date BETWEEN ? AND ?
-    ) d
-    LEFT JOIN (
-        SELECT 
-            h.txn_date,
-            SUM(l.line_total) as total_sales,
-            SUM(l.cost_price * l.quantity) as total_cogs,
-            SUM(l.gross_profit) as gross_profit
-        FROM transaction_lines l
-        JOIN transaction_headers h ON l.header_id = h.id
-        WHERE h.txn_type = 'customer_invoice' AND h.is_deleted = 0 AND h.status != 'voided'
-        GROUP BY h.txn_date
-    ) s ON d.date = s.txn_date
-    LEFT JOIN (
-        SELECT 
-            h.txn_date,
-            SUM(e.amount) as total_expenses
-        FROM expenses e
-        JOIN transaction_headers h ON e.header_id = h.id
-        WHERE h.txn_type = 'expense' AND h.is_deleted = 0 AND h.status != 'voided'
-        GROUP BY h.txn_date
-    ) e ON d.date = e.txn_date
-    ORDER BY d.date DESC
+// ── Sales data: merge POS items (direct) + non-POS invoice lines ──
+// Using pos_items directly is the single source of truth, same as the dashboard tile.
+// gross_profit = (net_amount - tax) - (qty × cost_price)  ← tax excluded from margin
+$pos_sales_rows = $db->fetchAll("
+    SELECT
+        DATE(pe.date_time) as txn_date,
+        SUM(pi.net_amount - pi.tax)                            as total_sales,
+        SUM(pi.quantity * i.cost_price)                        as total_cogs,
+        SUM((pi.net_amount - pi.tax) - (pi.quantity * i.cost_price)) as gross_profit
+    FROM pos_items pi
+    JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
+    JOIN pos_entry pe ON pi.pos_id = pe.id
+    WHERE pe.is_deleted = 0 
+      AND (pe.invoice_no NOT LIKE 'POS-SUM-%' OR pe.invoice_no IN (SELECT txn_number FROM transaction_headers WHERE txn_type = 'customer_invoice' AND is_deleted = 0))
+      AND DATE(pe.date_time) BETWEEN ? AND ?
+    GROUP BY DATE(pe.date_time)
 ", [$date_from, $date_to]);
+
+$non_pos_sales_rows = $db->fetchAll("
+    SELECT
+        h.txn_date,
+        SUM(l.line_total)             as total_sales,
+        SUM(l.cost_price * l.quantity) as total_cogs,
+        SUM(l.gross_profit)           as gross_profit
+    FROM transaction_lines l
+    JOIN transaction_headers h ON l.header_id = h.id
+    WHERE h.txn_type = 'customer_invoice'
+      AND h.txn_date BETWEEN ? AND ?
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.txn_number NOT LIKE 'POS-%'
+    GROUP BY h.txn_date
+", [$date_from, $date_to]);
+
+$expense_rows = $db->fetchAll("
+    SELECT h.txn_date, SUM(e.amount) as total_expenses
+    FROM expenses e
+    JOIN transaction_headers h ON e.header_id = h.id
+    WHERE h.txn_type = 'expense' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.txn_date BETWEEN ? AND ?
+    GROUP BY h.txn_date
+", [$date_from, $date_to]);
+
+// Merge all into a date-keyed map
+$date_map = [];
+foreach ($pos_sales_rows as $r) {
+    $dt = $r['txn_date'];
+    if (!isset($date_map[$dt])) $date_map[$dt] = ['total_sales'=>0,'total_cogs'=>0,'gross_profit'=>0,'total_expenses'=>0];
+    $date_map[$dt]['total_sales']  += (float)$r['total_sales'];
+    $date_map[$dt]['total_cogs']   += (float)$r['total_cogs'];
+    $date_map[$dt]['gross_profit'] += (float)$r['gross_profit'];
+}
+foreach ($non_pos_sales_rows as $r) {
+    $dt = $r['txn_date'];
+    if (!isset($date_map[$dt])) $date_map[$dt] = ['total_sales'=>0,'total_cogs'=>0,'gross_profit'=>0,'total_expenses'=>0];
+    $date_map[$dt]['total_sales']  += (float)$r['total_sales'];
+    $date_map[$dt]['total_cogs']   += (float)$r['total_cogs'];
+    $date_map[$dt]['gross_profit'] += (float)$r['gross_profit'];
+}
+foreach ($expense_rows as $r) {
+    $dt = $r['txn_date'];
+    if (!isset($date_map[$dt])) $date_map[$dt] = ['total_sales'=>0,'total_cogs'=>0,'gross_profit'=>0,'total_expenses'=>0];
+    $date_map[$dt]['total_expenses'] += (float)$r['total_expenses'];
+}
+
+krsort($date_map); // newest first
+$rows = [];
+foreach ($date_map as $dt => $v) {
+    $rows[] = [
+        'date'           => $dt,
+        'total_sales'    => $v['total_sales'],
+        'total_cogs'     => $v['total_cogs'],
+        'gross_profit'   => $v['gross_profit'],
+        'total_expenses' => $v['total_expenses'],
+        'net_profit'     => $v['gross_profit'] - $v['total_expenses'],
+    ];
+}
+
 
 $sum_sales    = 0;
 $sum_cogs     = 0;
@@ -105,11 +149,7 @@ foreach ($rows as $r) {
                         <?= rpt_currency((float)$r['net_profit']) ?>
                     </td>
                 </tr>
-            <?php endforeach; else: ?>
-                <tr>
-                    <td colspan="6" style="text-align:center;color:#999;padding:20px">No transaction records found for the selected period.</td>
-                </tr>
-            <?php endif; ?>
+            <?php endforeach; endif; ?>
             </tbody>
             <?php if (!empty($rows)): ?>
             <tfoot>

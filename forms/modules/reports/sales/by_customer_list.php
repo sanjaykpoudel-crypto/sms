@@ -17,7 +17,7 @@ $rows = $db->fetchAll("
     FROM customer_invoices ci
     JOIN customers c ON ci.customer_id = c.id
     JOIN transaction_headers th ON ci.header_id = th.id
-    WHERE ci.invoice_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status != 'void'
+    WHERE th.txn_type = 'customer_invoice' AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     GROUP BY ci.customer_id
     ORDER BY total_sales DESC
 ", [$date_from, $date_to]);
@@ -64,9 +64,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
         <th>Status</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="8" style="text-align:center;color:#888;padding:30px">No sales data found for the selected period.</td></tr>
-      <?php else: foreach ($rows as $r): ?>
+      <?php if (!empty($rows)): foreach ($rows as $r): ?>
         <tr>
           <td style="font-weight:600"><?= htmlspecialchars($r['customer_code']) ?></td>
           <td><?= htmlspecialchars($r['full_name']) ?></td>

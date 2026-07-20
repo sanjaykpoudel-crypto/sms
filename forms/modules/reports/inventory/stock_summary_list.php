@@ -16,7 +16,7 @@ $rows = $db->fetchAll("
         END), 0) AS stock_qty
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
     LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
     WHERE i.is_deleted = 0
@@ -24,10 +24,22 @@ $rows = $db->fetchAll("
     ORDER BY rc1.name, i.item_name
 ");
 
+$cat_filter = $_GET['category'] ?? '';
+$filtered_rows = [];
+foreach ($rows as $r) {
+    if ($cat_filter && $r['category_id'] !== $cat_filter) {
+        continue;
+    }
+    $stock_val = $r['stock_qty'] * $r['cost_price'];
+    if (empty($cat_filter) && abs($stock_val) < 0.005) {
+        continue;
+    }
+    $filtered_rows[] = $r;
+}
+
 $total_value = 0;
-foreach ($rows as $r) { $total_value += $r['stock_qty'] * $r['cost_price']; }
-$low_stock_count = count(array_filter($rows, fn($r) => $r['stock_qty'] <= $r['reorder_level']));
-?>
+foreach ($filtered_rows as $r) { $total_value += $r['stock_qty'] * $r['cost_price']; }
+$low_stock_count = count(array_filter($filtered_rows, fn($r) => $r['stock_qty'] <= $r['reorder_level']));
 ?>
 <style>
 .stock-low{background:#fff3cd;color:#664d03}
@@ -44,7 +56,7 @@ rpt_filter_bar('Stock Summary', [
 ], 'tbl-stock'); ?>
 
 <div class="rpt-summary">
-    <div class="rpt-summary-card"><div class="val"><?= count($rows) ?></div><div class="lbl">Total SKUs</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total SKUs</div></div>
     <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_value) ?></div><div class="lbl">Stock Value (Cost)</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= $low_stock_count ?></div><div class="lbl">Low / Out of Stock</div></div>
 </div>
@@ -62,9 +74,7 @@ rpt_filter_bar('Stock Summary', [
       </tr></thead>
       <tbody>
       <?php
-        $cat_filter = $_GET['category'] ?? '';
-        foreach ($rows as $r):
-            if ($cat_filter && $r['category_id'] !== $cat_filter) continue;
+        foreach ($filtered_rows as $r):
             $stock_val = $r['stock_qty'] * $r['cost_price'];
             $is_out = $r['stock_qty'] <= 0;
             $is_low = !$is_out && $r['stock_qty'] <= $r['reorder_level'];
@@ -75,7 +85,7 @@ rpt_filter_bar('Stock Summary', [
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td><?= htmlspecialchars($r['unit_type'] ?? '') ?></td>
-          <td style="text-align:right;font-weight:600"><?= number_format($r['stock_qty'],2) ?></td>
+          <td style="text-align:right;font-weight:600"><?= number_format($r['stock_qty'],0) ?></td>
           <td style="text-align:right"><?= number_format($r['reorder_level']) ?></td>
           <td style="text-align:right"><?= rpt_currency($r['cost_price']) ?></td>
           <td style="text-align:right"><?= rpt_currency($stock_val) ?></td>

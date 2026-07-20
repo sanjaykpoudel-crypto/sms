@@ -63,9 +63,16 @@ foreach($info as $row) {
                     <i class="fas fa-cloud-download-alt"></i> Download from Git (Pull)
                 </button>
             </div>
-            <p class="ns-text-muted" style="margin-top: 10px; font-size: 12px;">
-                <i class="fas fa-exclamation-triangle" style="color: #e67e22;"></i> Ensure you have a Git repository initialized in your backup folder.
+        </div>
+
+        <div class="ns-form-section" style="margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            <h3 class="ns-form-section-title" style="color: #c00;"><i class="fas fa-exclamation-triangle"></i> Reset Transactions</h3>
+            <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
+                This operation will delete all transactions (invoices, bills, payments, POS sales, and journal entries) and reset item stock to zero. Master data such as users, employees, accounts, items, customers, and vendors will be preserved.
             </p>
+            <button type="button" class="ns-btn ns-btn-danger" style="background: #c00; color: white;" onclick="confirmResetTransactions()">
+                <i class="fas fa-trash-alt"></i> Reset All Transactions
+            </button>
         </div>
 
         <!-- Terminal Output Area -->
@@ -121,5 +128,38 @@ function runOperation(op) {
     .finally(() => {
         log.scrollTop = log.scrollHeight;
     });
+}
+
+function confirmResetTransactions() {
+    if (confirm("WARNING: This will permanently delete ALL transactions, journal entries, payments, invoices, bills, and reset item stock to 0. Master data (users, items, customers, vendors, accounts) will not be deleted.\n\nAre you absolutely sure you want to proceed?")) {
+        if (confirm("Are you really, REALLY sure? This action is irreversible!")) {
+            const log = document.getElementById('terminal-output');
+            const content = document.getElementById('log-content');
+            log.style.display = 'block';
+            content.innerHTML = '<span style="color: #ce9178;">[' + new Date().toLocaleTimeString() + ']</span> Starting transaction reset operation...<br>';
+            log.scrollTop = log.scrollHeight;
+            
+            fetch('api/system_backup.php?action=reset_transactions')
+            .then(r => r.json())
+            .then(data => {
+                const color = data.status === 'success' ? '#6a9955' : '#f44747';
+                content.innerHTML += '<span style="color: ' + color + ';">[' + new Date().toLocaleTimeString() + '] ' + data.message + '</span><br>';
+                if (data.status === 'success') {
+                    nsNotify('Transactions reset successfully!');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    nsNotify('Reset failed: ' + data.message, 'error');
+                }
+            })
+            .catch(err => {
+                content.innerHTML += '<span style="color: #f44747;">[' + new Date().toLocaleTimeString() + '] Error: ' + err.message + '</span><br>';
+            })
+            .finally(() => {
+                log.scrollTop = log.scrollHeight;
+            });
+        }
+    }
 }
 </script>

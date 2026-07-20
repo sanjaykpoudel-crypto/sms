@@ -6,6 +6,11 @@ $db = db();
 $today = date('Y-m-d');
 $as_of = $_GET['as_of'] ?? $today;
 
+require_once 'api/reference_helper.php';
+
+// Resolve aggregation boundary start date to prevent double-counting closed years
+$start_date = get_report_start_date($as_of);
+
 // Build trial balance by aggregating all journal entries grouped by account
 $sql = "
     SELECT 
@@ -16,13 +21,14 @@ $sql = "
         SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) as total_credit
     FROM accounts a
     JOIN journal_entries j ON a.id = j.account_id
-    WHERE j.entry_date <= ? AND a.is_deleted = 0
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     GROUP BY a.id, a.account_code, a.account_name, a.account_type
     HAVING (total_debit != 0 OR total_credit != 0)
     ORDER BY a.account_code ASC
 ";
 
-$gl_data = $db->fetchAll($sql, [$as_of]);
+$gl_data = $db->fetchAll($sql, [$start_date, $as_of]);
 
 $rows = [];
 $debit_total  = 0.0;
@@ -90,14 +96,7 @@ $type_colors = [
         </tr>
       </thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr>
-          <td colspan="5" style="text-align:center;color:#888;padding:40px">
-            <i class="fas fa-file-alt" style="font-size:32px;display:block;margin-bottom:10px;opacity:.3"></i>
-            No active balances found up to <?= rpt_date($as_of) ?>.
-          </td>
-        </tr>
-      <?php else: foreach ($rows as $r):
+      <?php if (!empty($rows)): foreach ($rows as $r):
         $tc = $type_colors[$r['type']] ?? '#888';
       ?>
         <tr>

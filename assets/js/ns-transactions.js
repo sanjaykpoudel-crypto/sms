@@ -50,7 +50,9 @@ function nsAddLine(tableId) {
     newRow.querySelectorAll('input').forEach(input => {
         if (!input.readOnly) input.value = input.defaultValue || '';
         if (input.classList.contains('qty-input')) input.value = 1;
-        if (input.classList.contains('rate-input') || input.classList.contains('amount-input')) input.value = '0.00';
+        if (input.classList.contains('rate-input') || input.classList.contains('amount-input') || input.classList.contains('profit-input') || input.classList.contains('tax-amt-input') || input.classList.contains('gross-amount-input') || input.classList.contains('cost-input') || input.classList.contains('stock-input') || input.classList.contains('new-stock-input')) {
+            input.value = (input.classList.contains('stock-input') || input.classList.contains('cost-input') || input.classList.contains('profit-input') || input.classList.contains('new-stock-input')) ? '' : '0.00';
+        }
     });
     
     // Clear selects
@@ -71,7 +73,9 @@ function nsInsertLine(btn) {
     newRow.querySelectorAll('input').forEach(input => {
         if (!input.readOnly) input.value = '';
         if (input.classList.contains('qty-input')) input.value = 1;
-        if (input.classList.contains('rate-input') || input.classList.contains('amount-input')) input.value = '0.00';
+        if (input.classList.contains('rate-input') || input.classList.contains('amount-input') || input.classList.contains('profit-input') || input.classList.contains('tax-amt-input') || input.classList.contains('gross-amount-input') || input.classList.contains('cost-input') || input.classList.contains('stock-input') || input.classList.contains('new-stock-input')) {
+            input.value = (input.classList.contains('stock-input') || input.classList.contains('cost-input') || input.classList.contains('profit-input') || input.classList.contains('new-stock-input')) ? '' : '0.00';
+        }
     });
     
     tbody.insertBefore(newRow, currentRow);
@@ -103,7 +107,9 @@ function nsClearLines(tableId) {
         firstRow.querySelectorAll('input').forEach(input => {
             if (!input.readOnly) input.value = '';
             if (input.classList.contains('qty-input')) input.value = 1;
-            if (input.classList.contains('rate-input') || input.classList.contains('amount-input')) input.value = '0.00';
+            if (input.classList.contains('rate-input') || input.classList.contains('amount-input') || input.classList.contains('profit-input') || input.classList.contains('tax-amt-input') || input.classList.contains('gross-amount-input') || input.classList.contains('cost-input') || input.classList.contains('stock-input') || input.classList.contains('new-stock-input')) {
+                input.value = (input.classList.contains('stock-input') || input.classList.contains('cost-input') || input.classList.contains('profit-input') || input.classList.contains('new-stock-input')) ? '' : '0.00';
+            }
         });
         updateRowNumbers(tbody);
         if (typeof updateTotals === 'function') updateTotals();
@@ -138,5 +144,35 @@ function updateTotals() {
         } else {
             if (totalEl) totalEl.innerText = subtotal.toLocaleString(undefined, {minimumFractionDigits: 2});
         }
+    }
+}
+
+function nsDeleteTransaction(id, redirectUrl) {
+    if (!id) return;
+    if (confirm("Are you sure you want to delete this transaction? This will mark it as void/deleted.")) {
+        fetch('api/transaction_handler.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'delete',
+                table: 'transaction_headers',
+                primary_key: 'id',
+                primary_value: id
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                nsNotify('Transaction deleted successfully.');
+                setTimeout(() => { 
+                    window.location.href = redirectUrl || '?page=transactions'; 
+                }, 1500);
+            } else {
+                nsNotify(data.message || 'Delete failed', 'error');
+            }
+        })
+        .catch(err => {
+            nsNotify('Network error', 'error');
+        });
     }
 }

@@ -10,7 +10,7 @@ if (!defined('TESTING')) {
     require_once '../database/DBConnection.php';
     require_once 'reference_helper.php';
 
-    $inputJSON = file_get_contents('php://input');
+    $inputJSON = $GLOBALS['mock_input_payload'] ?? file_get_contents('php://input');
     $input     = json_decode($inputJSON, true);
 
     if (!$input) {
@@ -61,6 +61,27 @@ function handleTransaction($json, $pdo, $db) {
             $stmt->execute([$primaryValue]);
             $oldData = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$oldData) throw new Exception("Record not found for $action");
+        }
+
+        // Check closed fiscal year locks
+        if ($tableName === 'transaction_headers') {
+            if ($action === 'delete') {
+                check_fiscal_year_lock($oldData['txn_date'] ?? null);
+            } else if ($action === 'save') {
+                check_fiscal_year_lock($data['txn_date'] ?? null);
+            } else if ($action === 'update') {
+                check_fiscal_year_lock($oldData['txn_date'] ?? null);
+                check_fiscal_year_lock($data['txn_date'] ?? ($oldData['txn_date'] ?? null));
+            }
+        } else if ($tableName === 'pos_entry') {
+            if ($action === 'delete') {
+                check_fiscal_year_lock(date('Y-m-d', strtotime($oldData['date_time'] ?? 'now')));
+            } else if ($action === 'save') {
+                check_fiscal_year_lock(date('Y-m-d', strtotime($data['date_time'] ?? 'now')));
+            } else if ($action === 'update') {
+                check_fiscal_year_lock(date('Y-m-d', strtotime($oldData['date_time'] ?? 'now')));
+                check_fiscal_year_lock(date('Y-m-d', strtotime($data['date_time'] ?? ($oldData['date_time'] ?? 'now'))));
+            }
         }
 
         switch ($action) {
@@ -148,6 +169,7 @@ function handleTransaction($json, $pdo, $db) {
 
             case 'delete':
                 if (!$primaryValue) throw new Exception("Primary Value required for delete");
+                $sync_date_to_run = null;
 
                 // If deleting a transaction payment, reverse the applied balances on invoices/bills
                 if ($tableName === 'transaction_headers') {
@@ -203,20 +225,7 @@ function handleTransaction($json, $pdo, $db) {
                         $pdo->prepare("DELETE FROM cash_denominations WHERE header_id = ?")->execute([$primaryValue]);
                     }
 
-                    // If deleting a POS daily summary invoice, also soft-delete and rename all corresponding pos_entry records on that day!
-                    if ($txn_type === 'customer_invoice' && strpos($oldData['txn_number'], 'POS-SUM-') === 0) {
-                        $date_str = substr($oldData['txn_number'], 8, 8); // YYYYMMDD
-                        if (strlen($date_str) === 8) {
-                            $txn_date = substr($date_str, 0, 4) . '-' . substr($date_str, 4, 2) . '-' . substr($date_str, 6, 2);
-                            
-                            // Find all pos_entry records on this date that are not already deleted
-                            $pos_entries = $db->fetchAll("SELECT id, invoice_no FROM pos_entry WHERE DATE(date_time) = ? AND is_deleted = 0", [$txn_date]);
-                            foreach ($pos_entries as $pe) {
-                                $new_pe_invoice = $pe['invoice_no'] . '-DEL-' . substr(md5(uniqid(rand(), true)), 0, 8);
-                                $pdo->prepare("UPDATE pos_entry SET is_deleted = 1, invoice_no = ? WHERE id = ?")->execute([$new_pe_invoice, $pe['id']]);
-                            }
-                        }
-                    }
+                    // POS summary invoice deletion does not soft-delete POS entries anymore (POS entries remain for aggregation/regeneration)
 
                     // Rename the txn_number so the original name is freed up for a new transaction
                     $old_txn_number = $oldData['txn_number'];
@@ -225,6 +234,11 @@ function handleTransaction($json, $pdo, $db) {
                     $pdo->prepare("UPDATE transaction_headers SET txn_number = ? WHERE id = ?")->execute([$new_txn_number, $primaryValue]);
                     $pdo->prepare("UPDATE customer_invoices SET invoice_number = ? WHERE header_id = ?")->execute([$new_txn_number, $primaryValue]);
                     $pdo->prepare("UPDATE vendor_bills SET vendor_invoice_number = ? WHERE header_id = ?")->execute([$new_txn_number, $primaryValue]);
+
+                    // If it is a POS summary invoice (starts with POS-SUM-), also mark the consolidated pos_entry as deleted and rename it
+                    if (strpos($old_txn_number, 'POS-SUM-') === 0) {
+                        $pdo->prepare("UPDATE pos_entry SET is_deleted = 1, invoice_no = ? WHERE invoice_no = ?")->execute([$new_txn_number, $old_txn_number]);
+                    }
                 }
 
                 // If deleting a standalone pos_entry record, rename its invoice_no to free up unique constraint
@@ -234,6 +248,17 @@ function handleTransaction($json, $pdo, $db) {
                         $new_invoice_no = $old_invoice_no . '-DEL-' . substr(md5(uniqid(rand(), true)), 0, 8);
                         $pdo->prepare("UPDATE pos_entry SET invoice_no = ? WHERE id = ?")->execute([$new_invoice_no, $primaryValue]);
                     }
+                    
+                    // Revert stock of the deleted POS items
+                    $stmt = $pdo->prepare("SELECT item_id, quantity FROM pos_items WHERE pos_id = ?");
+                    $stmt->execute([$primaryValue]);
+                    $old_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($old_items as $oi) {
+                        $pdo->prepare("UPDATE items SET current_stock = current_stock + ? WHERE id = ?")->execute([$oi['quantity'], $oi['item_id']]);
+                    }
+                    
+                    // Set date to run daily summary sync
+                    $sync_date_to_run = date('Y-m-d', strtotime($oldData['date_time']));
                 }
 
                 if (array_key_exists('is_deleted', $oldData)) {
@@ -256,6 +281,10 @@ function handleTransaction($json, $pdo, $db) {
         logAudit($tableName, $action, $oldData, $data, $insertId, $userId, $pdo);
 
         $pdo->commit();
+
+        if (isset($sync_date_to_run) && $sync_date_to_run) {
+            sync_daily_pos_summary($sync_date_to_run);
+        }
 
         if ($trigger_sync) {
             trigger_background_sync();

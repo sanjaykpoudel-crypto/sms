@@ -9,6 +9,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ============================================================
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS system_info;
+DROP TABLE IF EXISTS system_logs;
 DROP TABLE IF EXISTS journal_entries;
 DROP TABLE IF EXISTS cash_denominations;
 DROP TABLE IF EXISTS expenses;
@@ -17,6 +18,7 @@ DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS customer_invoices;
 DROP TABLE IF EXISTS vendor_bills;
 DROP TABLE IF EXISTS transaction_lines;
+DROP TABLE IF EXISTS transaction_links;
 DROP TABLE IF EXISTS transaction_headers;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS customers;
@@ -64,9 +66,11 @@ CREATE TABLE accounts (
     parent_account_id VARCHAR(36) DEFAULT NULL,
     currency CHAR(3) NOT NULL DEFAULT 'NPR',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    opening_balance DECIMAL(14,2) NOT NULL DEFAULT 0.00,
     is_deleted TINYINT(1) DEFAULT 0,
     deleted_at DATETIME NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_account_id) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
@@ -153,9 +157,9 @@ CREATE TABLE users (
     role ENUM('admin', 'manager', 'cashier', 'accountant') NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     is_deleted TINYINT(1) DEFAULT 0,
-    deleted_at DATETIME NULL,
     last_login TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX (role),
     INDEX (is_active),
     INDEX (is_deleted)
@@ -165,12 +169,12 @@ CREATE TABLE users (
 CREATE TABLE transaction_headers (
     id VARCHAR(36) PRIMARY KEY,
     txn_number VARCHAR(30) NOT NULL UNIQUE,
-    txn_type ENUM('vendor_bill', 'customer_invoice', 'customer_payment', 'vendor_payment', 'account_transfer', 'expense', 'cash_denomination') NOT NULL,
+    txn_type ENUM('vendor_bill', 'customer_invoice', 'customer_payment', 'vendor_payment', 'account_transfer', 'expense', 'cash_denomination', 'inventory_adjustment', 'Journal') NOT NULL,
     txn_date DATE NOT NULL,
     fiscal_year INT NOT NULL,
     fiscal_month INT NOT NULL,
     fiscal_period CHAR(7) NOT NULL,
-    status ENUM('draft', 'approved', 'posted', 'voided', 'paid', 'partial', 'open') NOT NULL,
+    status ENUM('draft', 'approved', 'posted', 'voided', 'paid', 'partial', 'open') NOT NULL DEFAULT 'draft',
     reference_number VARCHAR(50) DEFAULT NULL,
     memo TEXT DEFAULT NULL,
     created_by VARCHAR(36) NOT NULL,
@@ -178,8 +182,12 @@ CREATE TABLE transaction_headers (
     is_deleted TINYINT(1) DEFAULT 0,
     deleted_at DATETIME NULL,
     ip_address VARCHAR(50) NULL,
+    net_amount DECIMAL(14,2) DEFAULT 0.00,
+    party_id VARCHAR(36) DEFAULT NULL,
+    party_type ENUM('customer', 'vendor', 'user') DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     posted_at TIMESTAMP NULL DEFAULT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX (txn_type),
     INDEX (status),
     INDEX (txn_date),
@@ -338,13 +346,42 @@ CREATE TABLE journal_entries (
     entry_type ENUM('debit', 'credit') NOT NULL,
     amount DECIMAL(14,2) NOT NULL,
     memo VARCHAR(255) DEFAULT NULL,
+    created_by VARCHAR(36) DEFAULT NULL,
     entry_date DATE NOT NULL,
     fiscal_period CHAR(7) NOT NULL,
     fiscal_year INT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    party_id VARCHAR(36) DEFAULT NULL,
+    party_type ENUM('customer', 'vendor', 'user') DEFAULT NULL,
     FOREIGN KEY (header_id) REFERENCES transaction_headers(id),
     FOREIGN KEY (account_id) REFERENCES accounts(id),
     FOREIGN KEY (item_id) REFERENCES items(id)
+);
+
+-- transaction_links
+CREATE TABLE transaction_links (
+    id VARCHAR(36) PRIMARY KEY,
+    parent_id VARCHAR(36) NOT NULL,
+    child_id VARCHAR(36) NOT NULL,
+    link_type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- system_logs
+CREATE TABLE system_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36) DEFAULT NULL,
+    action TEXT NOT NULL,
+    action_type VARCHAR(50) DEFAULT NULL,
+    table_name VARCHAR(50) DEFAULT NULL,
+    module VARCHAR(255) NOT NULL,
+    ref_id VARCHAR(100) NOT NULL,
+    field_name VARCHAR(100) DEFAULT NULL,
+    old_data TEXT DEFAULT NULL,
+    new_data TEXT DEFAULT NULL,
+    ip_address VARCHAR(50) DEFAULT NULL,
+    device_info TEXT DEFAULT NULL,
+    date_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- reference_codes
@@ -513,7 +550,8 @@ BEGIN
     )
     WHERE th.txn_type = 'customer_invoice'
       AND je.entry_type = 'debit'
-      AND (je.item_id IS NULL OR je.item_id = '');
+      AND (je.item_id IS NULL OR je.item_id = '')
+      AND je.memo LIKE 'Invoice%';
 
     -- 2. Sync Payable account for Bills
     UPDATE journal_entries je
@@ -526,7 +564,8 @@ BEGIN
     )
     WHERE th.txn_type = 'vendor_bill'
       AND je.entry_type = 'credit'
-      AND (je.item_id IS NULL OR je.item_id = '');
+      AND (je.item_id IS NULL OR je.item_id = '')
+      AND je.memo LIKE 'Bill%';
 
     -- 3. Sync Item Accounts for Invoices (Sales, COGS, Inventory Out)
     -- 3a. Sales Revenue (credit, memo LIKE 'Invoice%')

@@ -12,41 +12,69 @@ $items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 
 $item_options = ['' => 'All Items'];
 foreach ($items as $it) { $item_options[$it['id']] = $it['sku'].' - '.$it['item_name']; }
 
-$where  = "h.txn_date BETWEEN ? AND ?";
-$params = [$date_from, $date_to];
-if ($item_id) { $where .= " AND l.item_id = ?"; $params[] = $item_id; }
+$params = [
+    'date_from' => $date_from,
+    'date_to'   => $date_to
+];
+
+$item_clause = '';
+if ($item_id) {
+    $item_clause = " AND i.id = :item_id ";
+    $params['item_id'] = $item_id;
+}
 
 $rows = $db->fetchAll("
-    SELECT h.txn_date, h.txn_number, h.txn_type,
-           i.sku, i.item_name,
-           CASE 
-             WHEN h.txn_type='vendor_bill' THEN 'Purchase IN'
-             WHEN h.txn_type IN ('customer_invoice','POS') THEN 'Sale OUT'
-             WHEN h.txn_type='inventory_adjustment' AND l.quantity > 0 THEN 'Adjustment IN'
-             WHEN h.txn_type='inventory_adjustment' AND l.quantity < 0 THEN 'Adjustment OUT'
-             ELSE h.txn_type 
-           END AS movement_type,
-           CASE 
-             WHEN h.txn_type='vendor_bill' THEN l.quantity 
-             WHEN h.txn_type='inventory_adjustment' AND l.quantity > 0 THEN l.quantity 
-             ELSE 0 
-           END AS qty_in,
-           CASE 
-             WHEN h.txn_type IN ('customer_invoice','POS') THEN l.quantity 
-             WHEN h.txn_type='inventory_adjustment' AND l.quantity < 0 THEN ABS(l.quantity) 
-             ELSE 0 
-           END AS qty_out,
-           l.unit_price
-    FROM transaction_lines l
-    JOIN transaction_headers h ON l.header_id = h.id
-    JOIN items i ON l.item_id = i.id
-    WHERE $where AND h.txn_type IN ('vendor_bill','customer_invoice','POS','inventory_adjustment')
-    ORDER BY h.txn_date, h.created_at
+    SELECT 
+        i.id, i.sku, i.item_name, i.cost_price,
+        COALESCE(SUM(CASE 
+            WHEN h.txn_date < :date_from THEN
+                CASE 
+                    WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice','POS') THEN -l.quantity 
+                    WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+                    ELSE 0 
+                END
+            ELSE 0 
+        END), 0) AS opening_qty,
+        
+        COALESCE(SUM(CASE 
+            WHEN h.txn_date BETWEEN :date_from AND :date_to THEN
+                CASE 
+                    WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
+                    WHEN h.txn_type = 'inventory_adjustment' AND l.quantity > 0 THEN l.quantity
+                    ELSE 0 
+                END
+            ELSE 0 
+        END), 0) AS qty_in,
+        
+        COALESCE(SUM(CASE 
+            WHEN h.txn_date BETWEEN :date_from AND :date_to THEN
+                CASE 
+                    WHEN h.txn_type IN ('customer_invoice','POS') THEN l.quantity 
+                    WHEN h.txn_type = 'inventory_adjustment' AND l.quantity < 0 THEN ABS(l.quantity)
+                    ELSE 0 
+                END
+            ELSE 0 
+        END), 0) AS qty_out
+    FROM items i
+    LEFT JOIN transaction_lines l ON l.item_id = i.id
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE i.is_deleted = 0 $item_clause
+    GROUP BY i.id, i.sku, i.item_name, i.cost_price
+    ORDER BY i.sku, i.item_name
 ", $params);
 
-$total_in  = array_sum(array_column($rows, 'qty_in'));
-$total_out = array_sum(array_column($rows, 'qty_out'));
-?>
+$filtered_rows = [];
+foreach ($rows as $r) {
+    $closing = $r['opening_qty'] + $r['qty_in'] - $r['qty_out'];
+    if (empty($item_id) && abs($closing) < 0.005) {
+        continue;
+    }
+    $filtered_rows[] = $r;
+}
+
+$total_in  = array_sum(array_column($filtered_rows, 'qty_in'));
+$total_out = array_sum(array_column($filtered_rows, 'qty_out'));
 ?>
 
 <?php rpt_filter_bar('Stock Ledger', [
@@ -56,42 +84,58 @@ $total_out = array_sum(array_column($rows, 'qty_out'));
 ], 'tbl-stock-ledger'); ?>
 
 <div class="rpt-summary">
-  <div class="rpt-summary-card"><div class="val"><?= count($rows) ?></div><div class="lbl">Movements</div></div>
-  <div class="rpt-summary-card"><div class="val" style="color:#1a7f37"><?= number_format($total_in,2) ?></div><div class="lbl">Total Qty In</div></div>
-  <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= number_format($total_out,2) ?></div><div class="lbl">Total Qty Out</div></div>
-  <div class="rpt-summary-card"><div class="val"><?= number_format($total_in-$total_out,2) ?></div><div class="lbl">Net Movement</div></div>
+  <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total Items</div></div>
+  <div class="rpt-summary-card"><div class="val" style="color:#1a7f37"><?= number_format($total_in,0) ?></div><div class="lbl">Total Qty In</div></div>
+  <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= number_format($total_out,0) ?></div><div class="lbl">Total Qty Out</div></div>
+  <div class="rpt-summary-card"><div class="val"><?= number_format($total_in-$total_out,0) ?></div><div class="lbl">Net Movement</div></div>
 </div>
 
 <div class="ns-portlet">
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-stock-ledger">
       <thead><tr>
-        <th>Date</th><th>Ref #</th><th>Movement</th><th>SKU</th><th>Item</th>
+        <th>SKU</th><th>Item Name</th>
+        <th style="text-align:right">Opening Qty</th>
         <th style="text-align:right">Qty In</th>
         <th style="text-align:right">Qty Out</th>
-        <th style="text-align:right">Unit Price</th>
+        <th style="text-align:right">Closing Qty</th>
+        <th style="text-align:right">Cost Price</th>
+        <th style="text-align:right">Stock Value</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="8" style="text-align:center;color:#888;padding:30px">No stock movements found for selected period.</td></tr>
-      <?php else: foreach ($rows as $r): ?>
+      <?php if (empty($filtered_rows)): ?>
+        <tr><td colspan="8" style="text-align:center;color:#888;padding:30px">No stock items found.</td></tr>
+      <?php else: 
+        $grand_opening = 0;
+        $grand_closing = 0;
+        $grand_value = 0;
+        foreach ($filtered_rows as $r): 
+            $closing = $r['opening_qty'] + $r['qty_in'] - $r['qty_out'];
+            $stock_value = $closing * $r['cost_price'];
+            $grand_opening += $r['opening_qty'];
+            $grand_closing += $closing;
+            $grand_value += $stock_value;
+      ?>
         <tr>
-          <td><?= $r['txn_date'] ?></td>
-          <td style="font-weight:600"><?= htmlspecialchars($r['txn_number']) ?></td>
-          <td><?= $r['qty_in']>0 ? rpt_badge($r['movement_type'],'#1a7f37') : rpt_badge($r['movement_type'],'#c00') ?></td>
-          <td><?= htmlspecialchars($r['sku']) ?></td>
+          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
-          <td style="text-align:right;color:#1a7f37;font-weight:600"><?= $r['qty_in']>0 ? number_format($r['qty_in'],2) : '-' ?></td>
-          <td style="text-align:right;color:#c00;font-weight:600"><?= $r['qty_out']>0 ? number_format($r['qty_out'],2) : '-' ?></td>
-          <td style="text-align:right"><?= rpt_currency($r['unit_price']) ?></td>
+          <td style="text-align:right;color:#666"><?= number_format($r['opening_qty'],0) ?></td>
+          <td style="text-align:right;color:#1a7f37;font-weight:600"><?= $r['qty_in']>0 ? number_format($r['qty_in'],0) : '—' ?></td>
+          <td style="text-align:right;color:#c00;font-weight:600"><?= $r['qty_out']>0 ? number_format($r['qty_out'],0) : '—' ?></td>
+          <td style="text-align:right;font-weight:700"><?= number_format($closing,0) ?></td>
+          <td style="text-align:right"><?= rpt_currency($r['cost_price']) ?></td>
+          <td style="text-align:right;font-weight:600"><?= rpt_currency($stock_value) ?></td>
         </tr>
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="5">TOTAL</td>
-        <td style="text-align:right;color:#1a7f37"><?= number_format($total_in,2) ?></td>
-        <td style="text-align:right;color:#c00"><?= number_format($total_out,2) ?></td>
+        <td colspan="2">TOTAL</td>
+        <td style="text-align:right;color:#666"><?= number_format($grand_opening,0) ?></td>
+        <td style="text-align:right;color:#1a7f37"><?= number_format($total_in,0) ?></td>
+        <td style="text-align:right;color:#c00"><?= number_format($total_out,0) ?></td>
+        <td style="text-align:right"><?= number_format($grand_closing,0) ?></td>
         <td></td>
+        <td style="text-align:right"><?= rpt_currency($grand_value) ?></td>
       </tr></tfoot>
     </table>
   </div>

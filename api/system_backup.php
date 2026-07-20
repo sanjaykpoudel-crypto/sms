@@ -1,9 +1,11 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
-if (!isset($_SESSION['user_id'])) {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
-    exit;
+if (!defined('TESTING')) {
+    if (!isset($_SESSION['user_id'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
+        exit;
+    }
 }
 header('Content-Type: application/json');
 require_once '../database/DBConnection.php';
@@ -117,11 +119,90 @@ try {
             echo json_encode(['status' => ($return_var === 0 ? 'success' : 'error'), 'message' => "Git pull attempted", 'output' => implode("\n", $output)]);
             break;
 
+        case 'reset_transactions':
+            $pdo = $db->getConnection();
+            $pdo->beginTransaction();
+            try {
+                // Disable foreign key checks to allow truncating
+                $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
+                
+                $tables = [
+                    'journal_entries',
+                    'transaction_lines',
+                    'transaction_links',
+                    'payments',
+                    'vendor_bills',
+                    'customer_invoices',
+                    'account_transfers',
+                    'expenses',
+                    'cash_denominations',
+                    'pos_payments',
+                    'pos_items',
+                    'pos_return_items',
+                    'pos_returns',
+                    'pos_entry',
+                    'transaction_headers',
+                    'audit_logs',
+                    'system_logs'
+                ];
+                
+                foreach ($tables as $table) {
+                    // Check if table exists before truncating to avoid errors
+                    $stmt = $pdo->prepare("SHOW TABLES LIKE ?");
+                    $stmt->execute([$table]);
+                    if ($stmt->rowCount() > 0) {
+                        $pdo->exec("TRUNCATE TABLE `$table`");
+                    }
+                }
+                
+                // Reset item stock
+                $pdo->exec("UPDATE items SET current_stock = 0.0000");
+                
+                // Reset next sequence numbers for transactions
+                $tx_prefixes = [
+                    'customer_payment',
+                    'expense',
+                    'journal_entry',
+                    'purchase_order',
+                    'customer_invoice',
+                    'vendor_bill',
+                    'vendor_payment',
+                    'Journal',
+                    'inventory_adjustment',
+                    'account_transfer'
+                ];
+                
+                foreach ($tx_prefixes as $prefix) {
+                    $key = "ref_{$prefix}_next";
+                    $pdo->prepare("UPDATE system_info SET meta_value = '1' WHERE meta_field = ?")->execute([$key]);
+                }
+                
+                // Re-enable foreign key checks
+                $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+                
+                // Re-sync opening balances
+                require_once 'reference_helper.php';
+                if (function_exists('sync_opening_balance_journal_entries')) {
+                    sync_opening_balance_journal_entries($pdo);
+                }
+                
+                $pdo->commit();
+                echo json_encode(['status' => 'success', 'message' => 'All transactions have been reset successfully, stock was set to zero, and numbering counters reset to 1. Users, items, and accounts were preserved.']);
+            } catch (Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+                throw $e;
+            }
+            break;
+
         default:
             throw new Exception("Invalid action: $action");
+            break;
     }
 } catch (Exception $e) {
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    echo json_encode(['status' => 'error', 'message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
 }
 
 

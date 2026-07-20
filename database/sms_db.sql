@@ -65,7 +65,8 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_sync_gl_accounts` ()   BEGIN
         )
         WHERE th.txn_type = 'customer_invoice'
           AND je.entry_type = 'debit'
-          AND (je.item_id IS NULL OR je.item_id = '');
+          AND (je.item_id IS NULL OR je.item_id = '')
+          AND je.memo LIKE 'Invoice%';
 
         -- 2. Sync Payable account for Bills
         UPDATE journal_entries je
@@ -78,7 +79,8 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_sync_gl_accounts` ()   BEGIN
         )
         WHERE th.txn_type = 'vendor_bill'
           AND je.entry_type = 'credit'
-          AND (je.item_id IS NULL OR je.item_id = '');
+          AND (je.item_id IS NULL OR je.item_id = '')
+          AND je.memo LIKE 'Bill%';
 
         -- 3. Sync Item Accounts for Invoices (Sales, COGS, Inventory Out)
         -- 3a. Sales Revenue (credit, memo LIKE 'Invoice%')

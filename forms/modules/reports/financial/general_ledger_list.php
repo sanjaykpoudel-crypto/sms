@@ -4,7 +4,7 @@ require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
 $today     = date('Y-m-d');
-$date_from = $_GET['date_from'] ?? date('Y-m-01');
+$date_from = $_GET['date_from'] ?? date('Y-01-01');
 $date_to   = $_GET['date_to']   ?? $today;
 $account_id = $_GET['account_id'] ?? '';
 
@@ -15,8 +15,30 @@ foreach ($accounts_list as $a) {
     $acct_options[$a['id']] = $a['account_code'].' - '.$a['account_name']; 
 }
 
+require_once 'api/reference_helper.php';
+$fy_start_date = get_report_start_date($date_from);
+
+// Calculate Opening Balance and fetch normal balance if account is selected
+$opening_bal = 0.0;
+$normal_bal = 'debit';
+if ($account_id) {
+    $acct_info = $db->fetchOne("SELECT normal_balance FROM accounts WHERE id = ?", [$account_id]);
+    $normal_bal = $acct_info['normal_balance'] ?? 'debit';
+    
+    $op_row = $db->fetchOne("
+        SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+        FROM journal_entries j
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE j.account_id = ? 
+          AND j.entry_date >= ? AND j.entry_date < ? 
+          AND h.is_deleted = 0 
+          AND h.status NOT IN ('void', 'voided', 'draft')
+    ", [$account_id, $fy_start_date, $date_from]);
+    $opening_bal = (float)($op_row['bal'] ?? 0.0);
+}
+
 // Build the query from journal_entries
-$where = "j.entry_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'void'";
+$where = "j.entry_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')";
 $params = [$date_from, $date_to];
 
 if ($account_id) {
@@ -48,12 +70,19 @@ $sql = "
 
 $rows = $db->fetchAll($sql, $params);
 
-$total_debit  = 0;
-$total_credit = 0;
+$total_debit  = 0.0;
+$total_credit = 0.0;
 foreach ($rows as $r) {
-    if ($r['entry_type'] === 'debit') $total_debit += $r['amount'];
-    else $total_credit += $r['amount'];
+    if ($r['entry_type'] === 'debit') $total_debit += (float)$r['amount'];
+    else $total_credit += (float)$r['amount'];
 }
+
+$net_change = $total_debit - $total_credit;
+if ($normal_bal === 'credit') {
+    $net_change = -$net_change;
+    $opening_bal = -$opening_bal;
+}
+$closing_bal = $opening_bal + $net_change;
 ?>
 
 <?php rpt_filter_bar('General Ledger', [
@@ -63,10 +92,17 @@ foreach ($rows as $r) {
 ], 'tbl-ledger'); ?>
 
 <div class="rpt-summary">
-  <div class="rpt-summary-card"><div class="val"><?= count($rows) ?></div><div class="lbl">Total Entries</div></div>
-  <div class="rpt-summary-card"><div class="val" style="color:#003087"><?= rpt_currency($total_debit) ?></div><div class="lbl">Total Debits (In)</div></div>
-  <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= rpt_currency($total_credit) ?></div><div class="lbl">Total Credits (Out)</div></div>
-  <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_debit - $total_credit) ?></div><div class="lbl">Net Change</div></div>
+  <?php if ($account_id): ?>
+    <div class="rpt-summary-card"><div class="val"><?= rpt_currency($opening_bal) ?></div><div class="lbl">Opening Balance</div></div>
+    <div class="rpt-summary-card"><div class="val" style="color:#003087"><?= rpt_currency($total_debit) ?></div><div class="lbl">Total Debits (Dr)</div></div>
+    <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= rpt_currency($total_credit) ?></div><div class="lbl">Total Credits (Cr)</div></div>
+    <div class="rpt-summary-card"><div class="val" style="color:#1a7f37"><?= rpt_currency($closing_bal) ?></div><div class="lbl">Closing Balance</div></div>
+  <?php else: ?>
+    <div class="rpt-summary-card"><div class="val"><?= count($rows) ?></div><div class="lbl">Total Entries</div></div>
+    <div class="rpt-summary-card"><div class="val" style="color:#003087"><?= rpt_currency($total_debit) ?></div><div class="lbl">Total Debits (In)</div></div>
+    <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= rpt_currency($total_credit) ?></div><div class="lbl">Total Credits (Out)</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_debit - $total_credit) ?></div><div class="lbl">Net Change</div></div>
+  <?php endif; ?>
 </div>
 
 <div class="ns-portlet">

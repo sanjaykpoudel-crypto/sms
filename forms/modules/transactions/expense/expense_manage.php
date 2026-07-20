@@ -26,6 +26,9 @@ $paid_from_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM 
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'Enter'; ?> Expense</div>
     <div class="ns-page-actions">
         <button type="button" onclick="saveExpense(event)" class="ns-btn ns-btn-primary">Save</button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/expense')"><i class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <a href="?page=transactions/expense" class="ns-btn">Cancel</a>
     </div>
 </div>

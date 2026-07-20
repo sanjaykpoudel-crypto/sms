@@ -18,8 +18,8 @@ function rpt_header(string $title) {
         .rpt-filter-group label { font-size: 12px; color: #64748b; font-weight: 600; white-space: nowrap; text-transform: uppercase; }
         .rpt-input { padding: 6px 10px !important; font-size: 13px !important; height: 34px !important; border: 1px solid #cbd5e1 !important; border-radius: 4px !important; }
         
-        .rpt-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-        .rpt-summary-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; flex: 1; min-width: 160px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .rpt-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+        .rpt-summary-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; flex: 1; min-width: 140px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         .rpt-summary-card .val { font-size: 22px; font-weight: 800; color: var(--ns-primary); }
         .rpt-summary-card .lbl { font-size: 11px; color: #64748b; margin-top: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
         

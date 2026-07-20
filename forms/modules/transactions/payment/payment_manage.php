@@ -66,6 +66,9 @@ $default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_fie
     </div>
     <div class="ns-page-actions">
         <button type="submit" form="payment-form" class="ns-btn ns-btn-primary"><i class="fas fa-check-circle"></i> <?php echo $id ? 'Edit' : 'Save'; ?></button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/payment')"><i class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <button type="button" onclick="history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</button>
     </div>
 </div>

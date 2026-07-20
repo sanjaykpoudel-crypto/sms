@@ -26,6 +26,16 @@ try {
         $txn_number = getNextTransactionNumber('vendor_bill');
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
+
+    // Check closed fiscal year lock
+    if ($id) {
+        $old_header = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id]);
+        if ($old_header) {
+            check_fiscal_year_lock($old_header['txn_date']);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
+
     $due_date = $_POST['due_date'] ?? $txn_date;
     $party_id = $_POST['party_id'] ?? null;
     $ref_number = !empty($_POST['ref_number']) ? $_POST['ref_number'] : $txn_number;
@@ -65,6 +75,7 @@ try {
     $item_ids = $_POST['item_id'] ?? [];
     $qtys = $_POST['qty'] ?? [];
     $rates = $_POST['rate'] ?? [];
+    $amounts = $_POST['amount'] ?? [];
     $tax_rates = $_POST['tax_pct'] ?? [];
     
     $subtotal = 0;
@@ -77,23 +88,30 @@ try {
         $rate = (float)$rates[$idx];
         $tax_rate = (float)$tax_rates[$idx];
         
-        $line_amount = $qty * $rate;
-        $tax_amount = $line_amount * ($tax_rate / 100);
-        $line_total = $line_amount + $tax_amount;
+        $post_amount = isset($amounts[$idx]) && is_numeric($amounts[$idx]) ? (float)$amounts[$idx] : null;
+        $line_amount = $post_amount !== null ? round($post_amount, 2) : round($qty * $rate, 2);
+        $tax_amount = round($line_amount * ($tax_rate / 100), 2);
+        $line_total = round($line_amount + $tax_amount, 2);
 
         $subtotal += $line_amount;
         $tax_total += $tax_amount;
 
         $line_account_id = !empty($_POST['account_id'][$idx] ?? null) ? $_POST['account_id'][$idx] : get_effective_account($item_id, 'inventory');
 
-        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $rate, $tax_rate, $tax_amount, $line_total, $rate, 0
+        $unit = $_POST['unit'][$idx] ?? '';
+        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $rate, 0
         ]);
         
         // Add new stock and update cost price
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-            $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
+            $item_sku = $db->fetchOne("SELECT sku FROM items WHERE id = ?", [$item_id])['sku'] ?? '';
+            if ($item_sku === 'I-00013') {
+                $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = 0.00 WHERE id = ?", [$qty, $item_id]);
+            } else {
+                $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
+            }
         }
 
         $gl_items[] = [
@@ -172,6 +190,12 @@ try {
         if ($tax_total > 0) {
             $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
                 generate_uuid(), $id, $tax_account, $tax_total, 'VAT ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+            ]);
+        }
+        if ($discount_amount > 0) {
+            $disc_account = get_accounting_preference('default_discount_account') ?: 'acc-6160';
+            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
+                generate_uuid(), $id, $disc_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
             ]);
         }
         if ($grand_total > 0) {

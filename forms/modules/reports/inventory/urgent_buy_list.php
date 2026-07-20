@@ -13,7 +13,7 @@ $items = $db->fetchAll("
             ELSE 0 END), 0) as current_stock
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided'
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE i.is_deleted = 0
     GROUP BY i.id
@@ -98,9 +98,9 @@ foreach ($items as $r) {
                     <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
-                    <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#c0392b' : '#d35400' ?>"><?= number_format($stock, 2) ?></td>
+                    <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#c0392b' : '#d35400' ?>"><?= number_format($stock, 0) ?></td>
                     <td style="text-align:right"><?= number_format($reorder_lvl, 0) ?></td>
-                    <td style="text-align:right;font-weight:700;color:#c0392b"><?= number_format($gap, 2) ?></td>
+                    <td style="text-align:right;font-weight:700;color:#c0392b"><?= number_format($gap, 0) ?></td>
                     <td style="text-align:right;font-weight:700;color:#2980b9"><?= number_format($order_qty, 0) ?></td>
                     <td style="text-align:right"><?= rpt_currency((float)$r['cost_price']) ?></td>
                     <td style="text-align:right;font-weight:700"><?= rpt_currency($est_cost) ?></td>

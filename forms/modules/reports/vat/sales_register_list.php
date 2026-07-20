@@ -7,23 +7,30 @@ $today = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to = $_GET['date_to'] ?? $today;
 
-// VAT on Sales (Invoices + POS)
+// VAT on Sales (Invoices + POS — no double-counting of POS summaries)
 $sales = $db->fetchAll("
     SELECT ci.invoice_date AS txn_date, ci.invoice_number AS txn_number, c.full_name AS party, c.pan_number,
            ci.subtotal, ci.tax_amount, ci.total_amount, ci.payment_status, 'Invoice' as txn_type
     FROM customer_invoices ci
     JOIN customers c ON ci.customer_id = c.id
     JOIN transaction_headers th ON ci.header_id = th.id
-    WHERE ci.invoice_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status != 'void' AND ci.tax_amount > 0
-    
+    WHERE ci.invoice_date BETWEEN ? AND ?
+      AND th.is_deleted = 0
+      AND th.status NOT IN ('void', 'voided', 'draft')
+      AND ci.tax_amount > 0
+      AND ci.invoice_number NOT LIKE 'POS-%'
+
     UNION ALL
-    
-    SELECT pe.date_time AS txn_date, pe.invoice_no AS txn_number, COALESCE(c.full_name, 'Walk-in Customer') AS party, c.pan_number,
+
+    SELECT DATE(pe.date_time) AS txn_date, pe.invoice_no AS txn_number, COALESCE(c.full_name, 'Walk-in Customer') AS party, c.pan_number,
            pe.gross_amount - pe.discount_amount as subtotal, pe.tax_amount, pe.net_amount as total_amount, 'paid' as payment_status, 'POS' as txn_type
     FROM pos_entry pe
     LEFT JOIN customers c ON pe.customer_id = c.id
-    WHERE pe.date_time BETWEEN ? AND ? AND pe.tax_amount > 0
-    
+    WHERE DATE(pe.date_time) BETWEEN ? AND ?
+      AND pe.is_deleted = 0
+      AND (pe.invoice_no NOT LIKE 'POS-SUM-%' OR pe.invoice_no IN (SELECT txn_number FROM transaction_headers WHERE txn_type = 'customer_invoice' AND is_deleted = 0))
+      AND pe.tax_amount > 0
+
     ORDER BY txn_date DESC
 ", [$date_from, $date_to, $date_from, $date_to]);
 

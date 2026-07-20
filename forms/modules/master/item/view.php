@@ -22,7 +22,7 @@ $item = $db->fetchOne("
                 ELSE 0 END)
             FROM transaction_lines l
             JOIN transaction_headers h ON l.header_id = h.id
-            WHERE l.item_id = i.id AND h.status != 'void'
+            WHERE l.item_id = i.id AND h.status NOT IN ('void', 'voided', 'draft')
         ) as current_stock
     FROM items i
     LEFT JOIN accounts a1 ON i.inventory_account_id = a1.id
@@ -230,12 +230,12 @@ function getDiff($oldJson, $newJson) {
             <div class="detail-group">
                 <div class="detail-label">Current Stock</div>
                 <div class="detail-value" style="font-size: 20px; font-weight: 800; color: <?php echo ($item['current_stock'] <= $item['reorder_level']) ? 'var(--accent-red)' : 'var(--accent-green)'; ?>;">
-                    <?php echo number_format($item['current_stock'] ?? 0, 2); ?>
+                    <?php echo number_format($item['current_stock'] ?? 0, 0); ?>
                 </div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Reorder Level</div>
-                <div class="detail-value"><?php echo number_format($item['reorder_level'] ?? 0, 2); ?></div>
+                <div class="detail-value"><?php echo number_format($item['reorder_level'] ?? 0, 0); ?></div>
             </div>
             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
             <div class="detail-group">
@@ -268,17 +268,25 @@ function getDiff($oldJson, $newJson) {
             </tr>
         </thead>
         <tbody>
-            <?php foreach($movements as $mov): ?>
+            <?php foreach($movements as $mov): 
+                // Determine if this movement adds or subtracts stock
+                if (in_array($mov['txn_type'], ['customer_invoice', 'Invoice', 'POS', 'Sale'])) {
+                    $is_addition = false;
+                } elseif (in_array($mov['txn_type'], ['vendor_bill', 'Bill', 'Opening Stock'])) {
+                    $is_addition = true;
+                } else {
+                    $is_addition = $mov['quantity'] > 0;
+                }
+                $qty_color = $is_addition ? '#080' : '#c00';
+                $qty_prefix = $is_addition ? '+' : '-';
+                $display_qty = number_format(abs($mov['quantity']), 0);
+            ?>
             <tr>
                 <td><?php echo date('M d, Y', strtotime($mov['txn_date'])); ?></td>
                 <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($mov['id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($mov['txn_number']); ?></a></td>
                 <td><span style="background: #eef2f6; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; color: #475569;"><?php echo str_replace('_', ' ', htmlspecialchars($mov['txn_type'])); ?></span></td>
-                <td style="text-align: right; font-weight: 600; color: <?php echo ($mov['quantity'] > 0 && in_array($mov['txn_type'], ['vendor_bill', 'Opening Stock'])) ? '#080' : (($mov['quantity'] > 0) ? '#c00' : '#080'); ?>;">
-                    <?php 
-                        // Bills add stock, invoices subtract stock
-                        if(in_array($mov['txn_type'], ['vendor_bill', 'Opening Stock'])) echo '+' . number_format($mov['quantity'], 2);
-                        else echo '-' . number_format($mov['quantity'], 2);
-                    ?>
+                <td style="text-align: right; font-weight: 600; color: <?php echo $qty_color; ?>;">
+                    <?php echo $qty_prefix . $display_qty; ?>
                 </td>
                 <td style="text-align: right;">Rs <?php echo number_format($mov['unit_price'], 2); ?></td>
                 <td style="text-align: right;">Rs <?php echo number_format($mov['line_total'], 2); ?></td>

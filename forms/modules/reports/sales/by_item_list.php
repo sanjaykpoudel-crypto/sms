@@ -11,7 +11,10 @@ $rows = $db->fetchAll("
     SELECT 
         i.sku, i.item_name, rc.name as item_category,
         SUM(l.quantity)    AS qty_sold,
-        SUM(l.line_total)  AS gross_revenue,
+        SUM(CASE 
+            WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-SUM-%' THEN l.line_total
+            ELSE l.line_total - l.tax_amount
+        END)  AS gross_revenue,
         SUM(l.gross_profit) AS gross_profit
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
@@ -19,7 +22,7 @@ $rows = $db->fetchAll("
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE h.txn_type IN ('customer_invoice','POS')
       AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status != 'void'
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     GROUP BY i.id
     ORDER BY gross_revenue DESC
 ", [$date_from, $date_to]);
@@ -53,9 +56,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
         <th style="text-align:right">Margin %</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="7" style="text-align:center;color:#888;padding:30px">No sales data found for the selected period.</td></tr>
-      <?php else: foreach ($rows as $r):
+      <?php if (!empty($rows)): foreach ($rows as $r):
         $margin = $r['gross_revenue'] > 0 ? $r['gross_profit']/$r['gross_revenue']*100 : 0;
         $color = $margin >= 20 ? '#1a7f37' : ($margin >= 10 ? '#9a6700' : '#c00');
       ?>

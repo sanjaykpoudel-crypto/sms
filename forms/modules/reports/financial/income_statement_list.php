@@ -7,36 +7,51 @@ $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? date('Y-m-01');
 $date_to    = $_GET['date_to']   ?? $today;
 
-// Revenue = Total amount paid on invoices within the period (Cash Basis)
-// Note: We sum amount_paid for invoices dated in the range. 
-// For a truer cash basis, we would sum payments in the range, but this matches the user's "not paid" exclusion request.
-$revenue_data = $db->fetchOne("
-    SELECT 
-        COALESCE(SUM(ci.amount_paid), 0) AS paid_revenue,
-        COALESCE(SUM(ci.total_amount), 0) AS total_revenue
-    FROM customer_invoices ci 
-    JOIN transaction_headers th ON ci.header_id = th.id 
-    WHERE ci.invoice_date BETWEEN ? AND ? 
-    AND th.is_deleted = 0 AND th.status != 'void'
+// Fetch GL Revenue (Credit balances on income accounts)
+$revenue_rows = $db->fetchAll("
+    SELECT a.account_name, -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'income'
+      AND h.txn_date BETWEEN ? AND ?
+      AND h.txn_type != 'inventory_adjustment'
+      AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.source IS NULL
+    GROUP BY a.id, a.account_name
+    HAVING bal != 0
 ", [$date_from, $date_to]);
 
-$total_revenue = (float)$revenue_data['paid_revenue'];
-$accrual_revenue = (float)$revenue_data['total_revenue'];
-$payment_ratio = $accrual_revenue > 0 ? ($total_revenue / $accrual_revenue) : 1;
+$total_revenue = array_sum(array_column($revenue_rows, 'bal'));
 
-// COGS proportionate to the paid revenue to maintain correct margin
-$total_cogs_accrual = (float)($db->fetchOne("SELECT COALESCE(SUM(l.cost_price * l.quantity),0) AS v FROM transaction_lines l JOIN transaction_headers h ON l.header_id=h.id WHERE h.txn_type IN ('customer_invoice','POS') AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'void'", [$date_from, $date_to])['v'] ?? 0);
-$cogs = $total_cogs_accrual * $payment_ratio;
+// Fetch GL COGS (Debit balances on expense accounts with subtype cogs)
+$cogs = (float)($db->fetchOne("
+    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'expense' AND a.account_subtype = 'cogs'
+      AND h.txn_type != 'inventory_adjustment'
+      AND h.txn_date BETWEEN ? AND ?
+      AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.source IS NULL
+", [$date_from, $date_to])['bal'] ?? 0);
+
 $gross_profit = $total_revenue - $cogs;
 
-// Expenses from new expense module (pulling from expenses table)
+// Fetch GL Operating Expenses (Debit balances on non-COGS expense accounts)
 $expenses_rows = $db->fetchAll("
-    SELECT a.account_name AS description, SUM(e.amount) AS amount
-    FROM expenses e
-    JOIN transaction_headers h ON e.header_id = h.id
-    JOIN accounts a ON e.expense_account_id = a.id
-    WHERE h.txn_type = 'expense' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'void'
-    GROUP BY a.id
+    SELECT a.account_name AS description, SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as amount
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'expense' AND a.account_subtype != 'cogs'
+      AND h.txn_type != 'inventory_adjustment'
+      AND h.txn_date BETWEEN ? AND ?
+      AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.source IS NULL
+    GROUP BY a.id, a.account_name
+    HAVING amount != 0
     ORDER BY a.account_name
 ", [$date_from, $date_to]);
 
@@ -64,7 +79,11 @@ $net_profit = $gross_profit - $total_expenses;
     </div>
 
     <div class="is-section">REVENUE</div>
-    <div class="is-row"><span>Sales Revenue</span><span><?= rpt_currency($total_revenue) ?></span></div>
+    <?php if (empty($revenue_rows)): ?>
+      <div class="is-row"><span style="color:#888">No revenue recorded.</span><span>Rs 0.00</span></div>
+    <?php else: foreach ($revenue_rows as $r): ?>
+      <div class="is-row"><span><?= htmlspecialchars($r['account_name']) ?></span><span><?= rpt_currency($r['bal']) ?></span></div>
+    <?php endforeach; endif; ?>
     <div class="is-subtotal"><span>Gross Revenue</span><span><?= rpt_currency($total_revenue) ?></span></div>
 
     <div class="is-section">COST OF GOODS SOLD</div>

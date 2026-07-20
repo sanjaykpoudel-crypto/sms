@@ -13,7 +13,7 @@ $bills = $db->fetchAll("
     FROM vendor_bills vb
     JOIN vendors v ON vb.vendor_id = v.id
     JOIN transaction_headers th ON vb.header_id = th.id
-    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status != 'void' AND vb.tax_amount > 0
+    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND vb.tax_amount > 0
     ORDER BY vb.bill_date DESC
 ", [$date_from, $date_to]);
 

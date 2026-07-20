@@ -13,7 +13,7 @@ $items = $db->fetchAll("
             ELSE 0 END), 0) as current_stock
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided'
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE i.is_deleted = 0
     GROUP BY i.id
@@ -92,17 +92,13 @@ foreach ($items as $r) {
                     <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
-                    <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#e74c3c' : ($status == 'LOW STOCK' ? '#e67e22' : '#2c3e50') ?>"><?= number_format($stock, 2) ?></td>
+                    <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#e74c3c' : ($status == 'LOW STOCK' ? '#e67e22' : '#2c3e50') ?>"><?= number_format($stock, 0) ?></td>
                     <td style="text-align:right"><?= $r['reorder_level'] !== null ? number_format($r['reorder_level'], 0) : 'N/A' ?></td>
                     <td style="text-align:right"><?= rpt_currency((float)$r['cost_price']) ?></td>
                     <td style="text-align:right;font-weight:600"><?= rpt_currency($val_cost) ?></td>
                     <td><?= rpt_badge($status, $badge_color) ?></td>
                 </tr>
-            <?php endforeach; else: ?>
-                <tr>
-                    <td colspan="8" style="text-align:center;color:#999;padding:20px">No item records found in the system.</td>
-                </tr>
-            <?php endif; ?>
+            <?php endforeach; endif; ?>
             </tbody>
         </table>
     </div>

@@ -34,6 +34,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         <?php echo $id ? 'Edit' : 'Enter'; ?> Bill</div>
     <div class="ns-page-actions">
         <button type="submit" form="bill-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> <?php echo $id ? 'Edit' : 'Save'; ?> Bill</button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/bill')"><i class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <button type="button" onclick="history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</button>
     </div>
 </div>
@@ -104,6 +107,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                         <th width="210">Item Name <span class="ns-required">*</span></th>
                         <th width="75" style="text-align: right;">Stock</th>
                         <th width="95" style="text-align: right;">Qty <span class="ns-required">*</span></th>
+                        <th width="95" style="text-align: right; color: var(--ns-primary);">New Stock</th>
                         <th width="80" style="text-align: center;">Unit</th>
                         <th width="115" style="text-align: right;">Rate <span class="ns-required">*</span></th>
                         <th width="120" style="text-align: right;">Amount</th>
@@ -118,9 +122,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                     $rows = empty($txn_items) ? [null] : $txn_items;
                     foreach ($rows as $idx => $ti):
                         $isNew = ($ti === null);
-                        $qty = $isNew ? 1 : $ti['quantity'];
-                        $rate = $isNew ? '0.00' : $ti['unit_price'];
-                        $amount = $isNew ? '0.00' : ($ti['quantity'] * $ti['unit_price']);
+                        $qty = $isNew ? 1 : (int)$ti['quantity'];
+                        $rate = $isNew ? '0.00' : number_format((float)$ti['unit_price'], 2, '.', '');
+                        $amount = $isNew ? '0.00' : number_format((float)($ti['line_total'] - $ti['tax_amount']), 2, '.', '');
                         $taxPct = $isNew ? 0 : $ti['tax_rate'];
                         $taxAmt = $isNew ? '0.00' : $ti['tax_amount'];
                         $grossAmt = $isNew ? '0.00' : $ti['line_total'];
@@ -138,10 +142,14 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                                 </select>
                             </td>
                             <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="" readonly></td>
-                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num" value="<?php echo $qty; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num" value="<?php echo $qty; ?>" min="0" step="1" onfocus="this.select()" oninput="billCalcFromRate(this)" onblur="this.value = Math.round(parseFloat(this.value || 0)); billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="text" class="ns-input new-stock-input ns-input-num" style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);" value="" readonly tabindex="-1"></td>
                             <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
-                            <td><input type="number" name="rate[]" class="ns-input rate-input ns-input-num" value="<?php echo $rate; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
-                            <td><input type="number" name="amount[]" class="ns-input amount-input ns-input-num ns-input-subtotal" value="<?php echo $amount; ?>" readonly></td>
+                            <td><input type="number" name="rate[]" class="ns-input rate-input ns-input-num" value="<?php echo $rate; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)" onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="number" name="amount[]"
+                                    class="ns-input amount-input ns-input-num ns-input-subtotal"
+                                    value="<?php echo $amount; ?>" min="0" step="any" onfocus="this.select()"
+                                    oninput="billCalcFromAmount(this)" onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromAmount(this)" onkeydown="billCheckEnter(event)"></td>
                             <td><input type="number" name="tax_pct[]" class="ns-input tax-pct-input ns-input-num" value="<?php echo $taxPct; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)"></td>
                             <td><input type="number" name="tax_amt[]" class="ns-input tax-amt-input ns-input-num ns-input-tax" value="<?php echo $taxAmt; ?>" readonly></td>
                             <td><input type="number" name="gross_amount[]" class="ns-input gross-amount-input ns-input-num ns-input-gross" value="<?php echo $grossAmt; ?>" min="0" step="any" onfocus="this.select()" onblur="billCalcFromGross(this)" onkeydown="billCheckEnter(event)"></td>
@@ -245,11 +253,36 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         const rate = parseFloat(row.querySelector('.rate-input').value) || 0;
         const taxPct = parseFloat(row.querySelector('.tax-pct-input').value) || 0;
 
+        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
+        const newStock = currentStock + qty;
+        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+
         const amount = qty * rate;
         const taxAmt = amount * (taxPct / 100);
         const grossAmt = amount + taxAmt;
 
         row.querySelector('.amount-input').value = amount.toFixed(2);
+        row.querySelector('.tax-amt-input').value = taxAmt.toFixed(2);
+        row.querySelector('.gross-amount-input').value = grossAmt.toFixed(2);
+
+        billCalcTotals();
+    }
+
+    function billCalcFromAmount(el) {
+        const row = el.closest('tr');
+        const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+        const amount = parseFloat(row.querySelector('.amount-input').value) || 0;
+        const taxPct = parseFloat(row.querySelector('.tax-pct-input').value) || 0;
+
+        let rate = qty > 0 ? amount / qty : 0;
+        const taxAmt = amount * (taxPct / 100);
+        const grossAmt = amount + taxAmt;
+
+        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
+        const newStock = currentStock + qty;
+        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+
+        row.querySelector('.rate-input').value = rate.toFixed(2);
         row.querySelector('.tax-amt-input').value = taxAmt.toFixed(2);
         row.querySelector('.gross-amount-input').value = grossAmt.toFixed(2);
 
@@ -273,7 +306,11 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
             rate = qty > 0 ? amount / qty : 0;
         }
 
-        row.querySelector('.rate-input').value = rate.toFixed(4);
+        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
+        const newStock = currentStock + qty;
+        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+
+        row.querySelector('.rate-input').value = rate.toFixed(2);
         row.querySelector('.amount-input').value = amount.toFixed(2);
         row.querySelector('.tax-amt-input').value = taxAmt.toFixed(2);
 
@@ -335,5 +372,19 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         }
     }
 
-    window.addEventListener('load', billCalcTotals);
+    window.addEventListener('load', function () {
+        billCalcTotals();
+        document.querySelectorAll('#bill-items-table tbody tr').forEach(row => {
+            const sel = row.querySelector('select[name="item_id[]"]');
+            if (!sel || !sel.value) return;
+            fetch('api/get_item_details.php?id=' + sel.value)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) return;
+                    row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
+                    row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
+                    // Do not auto-calculate on load to preserve precisely saved amounts
+                });
+        });
+    });
 </script>

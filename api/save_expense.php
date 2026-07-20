@@ -25,6 +25,15 @@ try {
     $txn_type = 'Expense';
     $party_id = $_POST['party_id'] ?? null; // For expenses, this is often just a string name
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
+
+    // Check closed fiscal year lock
+    if ($id) {
+        $old_header = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id]);
+        if ($old_header) {
+            check_fiscal_year_lock($old_header['txn_date']);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
     $memo = $_POST['memo'] ?? '';
     $ref_number = $_POST['ref_number'] ?? '';
     $net_amount = (float)($_POST['net_amount'] ?? 0);

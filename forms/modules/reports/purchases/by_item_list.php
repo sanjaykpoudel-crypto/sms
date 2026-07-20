@@ -19,7 +19,7 @@ $rows = $db->fetchAll("
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE h.txn_type = 'vendor_bill'
       AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status != 'void'
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     GROUP BY i.id
     ORDER BY total_cost DESC
 ", [$date_from, $date_to]);
@@ -62,9 +62,7 @@ $total_qty  = array_sum(array_column($rows, 'qty_purchased'));
         <th style="text-align:right">Total Cost</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="6" style="text-align:center;color:#888;padding:30px">No purchase data found for the selected period.</td></tr>
-      <?php else: foreach ($rows as $r): ?>
+      <?php if (!empty($rows)): foreach ($rows as $r): ?>
         <tr>
           <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>

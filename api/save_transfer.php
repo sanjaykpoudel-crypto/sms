@@ -26,6 +26,15 @@ try {
         $txn_number = getNextTransactionNumber('account_transfer');
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
+
+    // Check closed fiscal year lock
+    if ($id) {
+        $old_header = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id]);
+        if ($old_header) {
+            check_fiscal_year_lock($old_header['txn_date']);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
     $from_account_id = $_POST['from_account_id'] ?? null;
     $to_account_id = $_POST['to_account_id'] ?? null;
     $amount = (float)($_POST['amount'] ?? 0);

@@ -60,7 +60,7 @@ ORDER BY i.updated_at DESC");
                     <td style="text-align: right;"><?php echo number_format($row['cost_price'], 2); ?></td>
                     <td style="text-align: right;"><?php echo number_format($row['selling_price'], 2); ?></td>
                     <td style="text-align: right; font-weight: 700; color: <?php echo ($row['current_stock'] <= $row['reorder_level']) ? 'var(--ns-danger)' : 'inherit'; ?>;">
-                        <?php echo number_format($row['current_stock'] ?? 0, 2); ?>
+                        <?php echo number_format($row['current_stock'] ?? 0, 0); ?>
                     </td>
                     <td style="text-align: center;">
                         <span style="color: <?php echo $row['is_active'] ? 'var(--ns-success)' : 'var(--ns-danger)'; ?>; font-weight: 600;">

@@ -26,6 +26,15 @@ try {
         $txn_number = getNextTransactionNumber('inventory_adjustment');
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
+
+    // Check closed fiscal year lock
+    if ($id) {
+        $old_header = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id]);
+        if ($old_header) {
+            check_fiscal_year_lock($old_header['txn_date']);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
     $adjustment_account_id = $_POST['adjustment_account_id'] ?? null;
     $memo = $_POST['memo'] ?? '';
     $status = 'posted';
@@ -87,6 +96,9 @@ try {
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
     }
 
+    $total_adjustment_credit = 0;
+    $total_adjustment_debit = 0;
+
     foreach ($line_data_list as $idx => $line) {
         $item_id = $line['item_id'];
         $qty = $line['qty'];
@@ -104,27 +116,35 @@ try {
         // Update item stock and cost price
         $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
 
-        // Journal Entries impact
+        // Journal Entries impact for the item's inventory asset account
         $abs_amount = abs($line_total);
         if ($abs_amount > 0) {
             if ($qty > 0) {
-                // Increase: Dr Inventory, Cr Adjustment Account
+                // Increase: Dr Inventory
                 $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
                     generate_uuid(), $id, $inventory_account_id, $item_id, $abs_amount, 'Inventory Adj IN - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
                 ]);
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $adjustment_account_id, $item_id, $abs_amount, 'Inventory Adj IN - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $total_adjustment_credit += $abs_amount;
             } else {
-                // Decrease: Dr Adjustment Account, Cr Inventory
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $adjustment_account_id, $item_id, $abs_amount, 'Inventory Adj OUT - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                // Decrease: Cr Inventory
                 $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
                     generate_uuid(), $id, $inventory_account_id, $item_id, $abs_amount, 'Inventory Adj OUT - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
                 ]);
+                $total_adjustment_debit += $abs_amount;
             }
         }
+    }
+
+    // Insert the single summarized offsetting Journal Entry / Entries for the Adjustment Account
+    if ($total_adjustment_credit > 0) {
+        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
+            generate_uuid(), $id, $adjustment_account_id, null, $total_adjustment_credit, 'Inventory Adj Offset CR - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+        ]);
+    }
+    if ($total_adjustment_debit > 0) {
+        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
+            generate_uuid(), $id, $adjustment_account_id, null, $total_adjustment_debit, 'Inventory Adj Offset DR - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+        ]);
     }
 
     $pdo->commit();

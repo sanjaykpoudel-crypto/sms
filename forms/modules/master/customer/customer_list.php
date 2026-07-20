@@ -12,14 +12,20 @@ $customers = $db->fetchAll(
         SELECT COALESCE(SUM(ci.total_amount), 0) 
         FROM customer_invoices ci 
         JOIN transaction_headers th ON ci.header_id = th.id 
-        WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status != 'voided'
+        WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ) AS total_sales,
     (
         SELECT COALESCE(SUM(p.amount), 0) 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id 
-        WHERE p.customer_id = c.id AND th.is_deleted = 0 AND th.status != 'voided'
-    ) AS total_paid
+        WHERE p.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ) AS total_paid,
+    (
+        SELECT COALESCE(SUM(ci.balance_due), 0) 
+        FROM customer_invoices ci 
+        JOIN transaction_headers th ON ci.header_id = th.id 
+        WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ) AS total_due
     FROM customers c 
     WHERE c.is_deleted = 0 $status_filter
     ORDER BY c.updated_at DESC
@@ -59,7 +65,7 @@ $customers = $db->fetchAll(
             </thead>
             <tbody>
                 <?php foreach ($customers as $row): 
-                    $remaining = $row['total_sales'] - $row['total_paid'];
+                    $remaining = $row['total_due'];
                 ?>
                 <tr>
                     <td style="font-weight: 600;"><?php echo htmlspecialchars($row['customer_code']); ?></td>

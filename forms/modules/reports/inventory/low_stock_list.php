@@ -53,7 +53,7 @@ foreach ($items as $r) { $total_value += max(0, $r['stock_qty']) * $r['cost_pric
           <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
-          <td style="text-align:right;font-weight:800;color:<?= $r['stock_qty']<=0?'#842029':'#664d03' ?>"><?= number_format($r['stock_qty'],2) ?></td>
+          <td style="text-align:right;font-weight:800;color:<?= $r['stock_qty']<=0?'#842029':'#664d03' ?>"><?= number_format($r['stock_qty'],0) ?></td>
           <td style="text-align:right"><?= number_format($r['reorder_level']) ?></td>
           <td style="text-align:right;color:#003087;font-weight:700"><?= number_format($r['reorder_qty']) ?></td>
           <td style="text-align:right"><?= rpt_currency($r['cost_price']) ?></td>

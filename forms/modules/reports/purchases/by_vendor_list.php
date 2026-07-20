@@ -17,7 +17,7 @@ $rows = $db->fetchAll("
     FROM vendor_bills vb
     JOIN vendors v ON vb.vendor_id = v.id
     JOIN transaction_headers th ON vb.header_id = th.id
-    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status != 'void'
+    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     GROUP BY vb.vendor_id
     ORDER BY total_purchased DESC
 ", [$date_from, $date_to]);
@@ -64,9 +64,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
         <th>Status</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="8" style="text-align:center;color:#888;padding:30px">No purchase data found for the selected period.</td></tr>
-      <?php else: foreach ($rows as $r): ?>
+      <?php if (!empty($rows)): foreach ($rows as $r): ?>
         <tr>
           <td style="font-weight:600"><?= htmlspecialchars($r['vendor_code']) ?></td>
           <td><?= htmlspecialchars($r['company_name']) ?></td>

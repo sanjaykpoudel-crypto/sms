@@ -2890,6 +2890,27 @@ body.dark-theme, .dark-mode {
 .dv4-kpi.kpi-inv      { background: var(--dv4-gradient-cyan); }
 .dv4-kpi.kpi-lowstock { background: var(--dv4-gradient-orange); }
 
+/* Anchor tile: remove default link styling, add clickable indicator */
+a.dv4-kpi-link {
+  text-decoration: none !important;
+  color: inherit !important;
+  display: block;
+}
+a.dv4-kpi-link::after {
+  content: '\f35d'; /* fa-external-link-alt */
+  font-family: 'Font Awesome 5 Free';
+  font-weight: 900;
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  font-size: 9px;
+  opacity: 0;
+  color: rgba(255,255,255,0.7);
+  transition: opacity 0.2s;
+  z-index: 2;
+}
+a.dv4-kpi-link:hover::after { opacity: 1; }
+
 /* ─── Section Separator ────────────────────────────────────────── */
 .dv4-sep {
   display: flex; align-items: center; gap: 10px;

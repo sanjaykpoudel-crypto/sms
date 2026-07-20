@@ -429,9 +429,12 @@ if ($is_logged_in) {
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/financial/balance_sheet" class="ns-sub-dropdown-item">Balance Sheet</a>
                             <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income Statement</a>
+                            <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative Income Statement</a>
                             <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit Report</a>
                             <a href="?page=reports/financial/trial_balance" class="ns-sub-dropdown-item">Trial Balance</a>
                             <a href="?page=reports/financial/general_ledger" class="ns-sub-dropdown-item">General Ledger</a>
+                            <a href="?page=reports/financial/equity_statement" class="ns-sub-dropdown-item">Equity Statement</a>
+                            <a href="?page=reports/financial/cash_book" class="ns-sub-dropdown-item">Cash Book</a>
                         </div>
                     </div>
                     <div class="ns-dropdown-item">
@@ -450,6 +453,7 @@ if ($is_logged_in) {
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/purchases/by_item" class="ns-sub-dropdown-item">Purchase by Item</a>
                             <a href="?page=reports/purchases/by_vendor" class="ns-sub-dropdown-item">Purchase by Vendor</a>
+                            <a href="?page=reports/vendors/payable_aging" class="ns-sub-dropdown-item">AP Aging</a>
                         </div>
                     </div>
                     <div class="ns-dropdown-item">
@@ -477,6 +481,7 @@ if ($is_logged_in) {
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/customers/statement" class="ns-sub-dropdown-item">Customer Statement</a>
+                            <a href="?page=reports/customers/receivable_aging" class="ns-sub-dropdown-item">AR Aging</a>
                         </div>
                     </div>
                 </div>
@@ -486,13 +491,11 @@ if ($is_logged_in) {
                 Setup <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System Information</a>
-                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Users &
-                        Roles</a>
-                    <a href="?page=system/settings/manage" class="ns-dropdown-item"><i class="fas fa-cog"></i> General
-                        Settings</a>
-                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i>
-                        Accounting Lists</a>
+                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Users & Roles</a>
+                    <a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i> Accounting Periods / Closing</a>
+                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i> Accounting Lists</a>
                     <a href="?page=system/settings/accounting_preferences" class="ns-dropdown-item"><i class="fas fa-file-contract"></i> Accounting Preferences</a>
+                    <a href="?page=master/account/opening_balance" class="ns-dropdown-item"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a>
                     <a href="?page=system/ref_codes/manage" class="ns-dropdown-item"><i class="fas fa-list-ol"></i> Auto Generated Numbers</a>
                     <a href="?page=system/import_export/manage" class="ns-dropdown-item"><i class="fas fa-file-import"></i> Import / Export Data</a>
                     <a href="?page=system/backup/manage" class="ns-dropdown-item"><i class="fas fa-database"></i> Backup & Restore</a>

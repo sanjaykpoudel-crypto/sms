@@ -17,7 +17,7 @@ if ($customer_id) {
     // 1. Get Opening Balance (Invoices - Payments before from_date)
     $inv_before = $db->fetchOne("SELECT SUM(total_amount) as total FROM customer_invoices ci 
                                 JOIN transaction_headers th ON ci.header_id = th.id 
-                                WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status != 'void' AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
+                                WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
     
     $pay_before = $db->fetchOne("SELECT SUM(p.amount) as total FROM payments p
                                 JOIN transaction_headers th ON p.header_id = th.id
@@ -29,7 +29,7 @@ if ($customer_id) {
     $invoices = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Invoice' as type, ci.total_amount as debit, 0 as credit, th.memo
                                FROM customer_invoices ci 
                                JOIN transaction_headers th ON ci.header_id = th.id 
-                               WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status != 'void' AND th.is_deleted = 0", [$customer_id, $from_date, $to_date]);
+                               WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date, $to_date]);
 
     // 3. Get Payments in range
     $payments = $db->fetchAll("SELECT p.payment_date as date, th.txn_number as number, 'Payment' as type, 0 as debit, SUM(p.amount) as credit, th.memo
@@ -47,7 +47,7 @@ if ($customer_id) {
     $today = date('Y-m-d');
     $aging = ['current' => 0, '1_30' => 0, '31_60' => 0, '61_90' => 0, 'over_90' => 0];
     $aging15 = ['current' => 0, '1_15' => 0, '16_30' => 0, '31_45' => 0, '46_60' => 0, '61_75' => 0, 'over_75' => 0];
-    $open_invoices = $db->fetchAll("SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0 AND th.status != 'void' AND th.is_deleted = 0", [$customer_id]);
+    $open_invoices = $db->fetchAll("SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id]);
     foreach($open_invoices as $inv) {
         $days = floor((strtotime($today) - strtotime($inv['txn_date'])) / 86400);
         

@@ -20,9 +20,24 @@ try {
 
     $id = $_POST['id'] ?? null;
     $txn_number = $_POST['txn_number'] ?? '';
+    if ($id) {
+        $db_txn = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id]);
+        if ($db_txn) {
+            $txn_number = $db_txn['txn_number'];
+        }
+    }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
     $memo = $_POST['memo'] ?? '';
     $ref_number = $_POST['ref_number'] ?? '';
+
+    // Check closed fiscal year lock
+    if ($id) {
+        $old_header = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE id = ?", [$id]);
+        if ($old_header) {
+            check_fiscal_year_lock($old_header['txn_date']);
+        }
+    }
+    check_fiscal_year_lock($txn_date);
 
     // Line data
     $account_ids     = $_POST['account_id']       ?? [];
@@ -77,6 +92,41 @@ try {
                 $_SESSION['user_id']
             ]
         );
+    }
+
+    // Sync to Bank Opening Balances if this is the OPENING-BALANCES journal entry
+    if ($txn_number === 'OPENING-BALANCES') {
+        // Reset all bank and cash opening balances to 0
+        $db->execute("UPDATE accounts SET opening_balance = 0.00 WHERE account_subtype IN ('bank', 'cash')");
+
+        // Fetch the saved journal entries for this transaction
+        $saved_entries = $db->fetchAll("SELECT account_id, entry_type, amount FROM journal_entries WHERE header_id = ?", [$id]);
+
+        // Group by account_id and calculate the net balance
+        $balances = [];
+        foreach ($saved_entries as $entry) {
+            $acc_id = $entry['account_id'];
+            $entry_type = $entry['entry_type'];
+            $amount = (float)$entry['amount'];
+
+            // Check if this account is cash/bank
+            $acc = $db->fetchOne("SELECT account_subtype FROM accounts WHERE id = ?", [$acc_id]);
+            if ($acc && in_array($acc['account_subtype'], ['bank', 'cash'])) {
+                if (!isset($balances[$acc_id])) {
+                    $balances[$acc_id] = 0.00;
+                }
+                if ($entry_type === 'debit') {
+                    $balances[$acc_id] += $amount;
+                } else {
+                    $balances[$acc_id] -= $amount;
+                }
+            }
+        }
+
+        // Update the accounts table with the new opening balances
+        foreach ($balances as $acc_id => $net_bal) {
+            $db->execute("UPDATE accounts SET opening_balance = ? WHERE id = ?", [$net_bal, $acc_id]);
+        }
     }
 
     $pdo->commit();

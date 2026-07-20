@@ -20,13 +20,16 @@ if ($id) {
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku, cost_price, current_stock FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
-$expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE account_type IN ('expense', 'income') AND is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+$expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-warehouse" style="margin-right: 10px; color: var(--ns-accent);"></i>
         <?php echo $id ? 'Edit' : 'New'; ?> Inventory Adjustment</div>
     <div class="ns-page-actions">
         <button type="submit" form="adjustment-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save Adjustment</button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/adjustment')"><i class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <button type="button" onclick="history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</button>
     </div>
 </div>
@@ -48,7 +51,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                     <select name="adjustment_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
                         <?php foreach($expense_accounts as $acc): ?>
-                            <option value="<?php echo $acc['id']; ?>" <?php echo ($data['party_id'] ?? '') == $acc['id'] ? 'selected' : ($acc['account_code'] == '6160' ? 'selected' : ''); ?>>
+                            <option value="<?php echo $acc['id']; ?>" <?php echo ($data['party_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
                                 <?php echo $acc['account_code'] . ' - ' . htmlspecialchars($acc['account_name']); ?>
                             </option>
                         <?php endforeach; ?>

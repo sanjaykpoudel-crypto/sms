@@ -13,7 +13,10 @@ $items = $db->fetchAll("
         i.item_name, 
         rc.name as category_name,
         SUM(l.quantity) as total_qty, 
-        SUM(l.line_total) as total_revenue, 
+        SUM(CASE 
+            WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-SUM-%' THEN l.line_total
+            ELSE l.line_total - l.tax_amount
+        END) as total_revenue, 
         SUM(l.cost_price * l.quantity) as total_cost,
         SUM(l.gross_profit) as total_profit
     FROM transaction_lines l
@@ -22,7 +25,7 @@ $items = $db->fetchAll("
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE h.txn_type = 'customer_invoice' 
       AND h.is_deleted = 0 
-      AND h.status != 'voided'
+      AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_date BETWEEN ? AND ?
     GROUP BY l.item_id
     ORDER BY total_profit DESC
@@ -98,11 +101,7 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
                     <td style="text-align:right;font-weight:700;color:#16a085"><?= rpt_currency((float)$r['total_profit']) ?></td>
                     <td style="text-align:right;font-weight:600;color:#2980b9"><?= number_format($margin, 2) ?>%</td>
                 </tr>
-            <?php endforeach; else: ?>
-                <tr>
-                    <td colspan="9" style="text-align:center;color:#999;padding:20px">No item profit records found for the selected period.</td>
-                </tr>
-            <?php endif; ?>
+            <?php endforeach; endif; ?>
             </tbody>
             <?php if (!empty($items)): ?>
             <tfoot>

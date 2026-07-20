@@ -3,14 +3,14 @@ require_once 'database/DBConnection.php';
 $db = db();
 
 // Fetch active items with category names
-$items = $db->fetchAll("SELECT i.id, i.sku, i.item_name, r.name as category_name, i.selling_price, i.tax_rate 
+$items = $db->fetchAll("SELECT i.id, i.sku, i.item_name, r.name as category_name, i.selling_price, i.cost_price, i.current_stock, i.tax_rate 
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
-    WHERE i.is_active = 1 AND i.is_deleted = 0 
+    WHERE i.is_active = 1 AND i.is_deleted = 0 AND i.current_stock > 0
     ORDER BY i.item_name ASC");
 
-// Fetch bank accounts for payment (including those converted from cash)
-$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype = 'bank' AND is_active = 1 ORDER BY account_name ASC");
+// Fetch bank/cash accounts for payment
+$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_active = 1 ORDER BY account_subtype DESC, account_name ASC");
 
 // Get unique categories (names, not IDs)
 $categories = [];
@@ -46,9 +46,9 @@ $txn_date = date('Y-m-d');
     .pos-cat-btn.active, .pos-cat-btn:hover { background: var(--ns-primary); border-color: var(--ns-primary); color: #fff; }
 
     .pos-grid { padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; overflow-y: auto; flex: 1; align-content: start; }
-    .pos-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; transition: 0.2s; display: flex; flex-direction: column; justify-content: space-between; min-height: 120px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .pos-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; transition: 0.2s; display: flex; flex-direction: column; justify-content: flex-start; min-height: 120px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .pos-card:hover { border-color: var(--ns-primary); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,85,170,0.08); }
-    .pos-card-name { font-size: 13px; font-weight: 600; color: #1e293b; margin-bottom: 8px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .pos-card-name { font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 15px; font-weight: 800; color: #ea580c; margin-bottom: 8px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex-shrink: 0; letter-spacing: 0.2px; }
     .pos-card-price { font-size: 15px; font-weight: 700; color: var(--ns-accent); }
     .pos-card-sku { font-size: 11px; color: #94a3b8; margin-top: 4px; font-weight: 500; }
 
@@ -60,7 +60,7 @@ $txn_date = date('Y-m-d');
     
     .cart-item { display: flex; align-items: center; padding: 12px; background: #fff; border: 1px solid #e2e8f0; margin-bottom: 8px; border-radius: 10px; position: relative; }
     .cart-item-info { flex: 1; min-width: 0; }
-    .cart-item-name { font-size: 13px; font-weight: 600; color: #1e293b; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cart-item-name { font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; font-weight: 800; color: #ea580c; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.2px; }
     .cart-item-meta { font-size: 11px; color: #64748b; display: flex; gap: 8px; }
     
     .cart-qty-ctrl { display: flex; align-items: center; background: #f1f5f9; border-radius: 6px; padding: 2px; margin-left: 10px; }
@@ -79,8 +79,18 @@ $txn_date = date('Y-m-d');
     
     .payment-grid { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px; margin-bottom: 20px; }
     .pay-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
-    .pay-select { flex: 2; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }
-    .pay-amount { flex: 1; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; text-align: right; font-weight: 700; font-size: 14px; }
+    .pay-select { flex: 2; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; min-width: 0; }
+    .pay-amount { flex: 1; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; text-align: right; font-weight: 700; font-size: 14px; min-width: 0; }
+    
+    /* Hide number input spinners globally within POS */
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    input[type=number] {
+        -moz-appearance: textfield;
+    }
     
     .pos-action-btn { width: 100%; padding: 16px; background: var(--ns-accent); color: #fff; border: none; border-radius: 10px; font-size: 18px; font-weight: 800; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 6px rgba(243, 156, 18, 0.2); }
     .pos-action-btn:hover { background: #e67e22; transform: translateY(-1px); box-shadow: 0 6px 12px rgba(243, 156, 18, 0.3); }
@@ -232,11 +242,14 @@ function renderGrid(search = '') {
         const div = document.createElement('div');
         div.className = 'pos-card';
         div.onclick = () => addToCart(item);
+        const stock = parseFloat(item.current_stock || 0);
+        const stockColor = stock <= 0 ? '#ef4444' : '#10b981';
         div.innerHTML = `
-            <div class="pos-card-name">${item.item_name}</div>
-            <div>
-                <div class="pos-card-price">Rs ${parseFloat(item.selling_price).toFixed(2)}</div>
-                <div class="pos-card-sku">${item.sku || '-'}</div>
+            <div class="pos-card-name" style="margin-bottom: 4px;">${item.item_name}</div>
+            <div style="font-size: 11px; text-align: left; margin: 5px 0; color: #475569; display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;">
+                <div><span style="font-weight: 600;">Stock:</span> <span style="color: ${stockColor}; font-weight: 700;">${stock.toFixed(0)}</span></div>
+                <div><span style="font-weight: 600;">Cost:</span> Rs ${parseFloat(item.cost_price).toFixed(2)}</div>
+                <div><span style="font-weight: 600;">Sell:</span> Rs ${parseFloat(item.selling_price).toFixed(2)}</div>
             </div>
         `;
         grid.appendChild(div);
@@ -250,11 +263,14 @@ function filterCategory(cat) {
 }
 
 function addToCart(item) {
+    if (parseFloat(item.selling_price || 0) === 0) {
+        alert("Warning: Selling price is not set for this item.");
+    }
     const idx = cart.findIndex(c => c.id === item.id);
     if(idx > -1) {
         cart[idx].qty += 1;
     } else {
-        cart.push({ ...item, qty: 1, discount: 0 });
+        cart.push({ ...item, qty: 1, price: parseFloat(item.selling_price), discount: 0 });
     }
     renderCart();
 }
@@ -278,23 +294,30 @@ function renderCart() {
         const div = document.createElement('div');
         div.className = 'cart-item';
         div.innerHTML = `
-            <div class="cart-item-info">
-                <div class="cart-item-name">${c.item_name}</div>
-                <div class="cart-item-meta">
-                    <span>Rs ${parseFloat(c.selling_price).toFixed(2)} / unit</span>
+            <div class="cart-item-info" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 6px;">
+                <div class="cart-item-name" style="font-size: 13px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; flex: 1; min-width: 0;" title="${c.item_name}">${c.item_name}</div>
+                <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                    <div class="cart-qty-ctrl" style="margin: 0; padding: 1px; display: flex; align-items: center;">
+                        <button class="cart-qty-btn" style="width: 24px; height: 24px;" onclick="updateQty(${i}, -1)"><i class="fas fa-minus" style="font-size: 10px;"></i></button>
+                        <input class="cart-qty-val" style="width: 25px; font-size: 12px;" type="number" value="${c.qty}" onchange="setQty(${i}, this.value)">
+                        <button class="cart-qty-btn" style="width: 24px; height: 24px;" onclick="updateQty(${i}, 1)"><i class="fas fa-plus" style="font-size: 10px;"></i></button>
+                    </div>
+                    <div class="cart-price-ctrl" style="display: flex; align-items: center; gap: 2px;">
+                        <span style="font-size: 11px; color: #64748b; font-weight: 600;">Rs</span>
+                        <input style="width: 65px; text-align: right; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px 4px; font-size: 12px; font-weight: 700; color: #1e293b; background: #fff;" type="number" step="0.01" value="${parseFloat(c.price).toFixed(2)}" onchange="setPrice(${i}, this.value)">
+                    </div>
+                    <button class="cart-item-del" style="width: 26px; height: 26px; margin: 0; display: flex; align-items: center; justify-content: center;" onclick="removeLine(${i})"><i class="fas fa-trash" style="font-size: 12px;"></i></button>
                 </div>
             </div>
-            <div class="cart-qty-ctrl">
-                <button class="cart-qty-btn" onclick="updateQty(${i}, -1)"><i class="fas fa-minus"></i></button>
-                <input class="cart-qty-val" type="number" value="${c.qty}" onchange="setQty(${i}, this.value)">
-                <button class="cart-qty-btn" onclick="updateQty(${i}, 1)"><i class="fas fa-plus"></i></button>
-            </div>
-            <div class="cart-item-total">Rs ${(c.qty * c.selling_price).toFixed(2)}</div>
-            <button class="cart-item-del" onclick="removeLine(${i})"><i class="fas fa-trash"></i></button>
         `;
         itemsEl.appendChild(div);
     });
     calculateTotals();
+}
+
+function setPrice(idx, val) {
+    cart[idx].price = parseFloat(val) || 0;
+    renderCart();
 }
 
 function updateQty(idx, delta) {
@@ -316,7 +339,7 @@ function removeLine(idx) {
 
 function calculateTotals() {
     let subtotal = 0;
-    cart.forEach(c => subtotal += (c.qty * c.selling_price));
+    cart.forEach(c => subtotal += (c.qty * c.price));
     
     const discType = document.getElementById('discount-type').value;
     const discVal = parseFloat(document.getElementById('discount-val').value) || 0;
@@ -329,7 +352,8 @@ function calculateTotals() {
     if (includeTax) {
         cart.forEach(c => {
             // Proportionate tax calculation
-            const lineTaxable = (c.qty * c.selling_price) - (discAmount * ((c.qty * c.selling_price) / (subtotal||1)));
+            const lineSub = c.qty * c.price;
+            const lineTaxable = lineSub - (discAmount * (lineSub / (subtotal||1)));
             taxAmount += lineTaxable * (parseFloat(c.tax_rate||0) / 100);
         });
     }
@@ -393,8 +417,9 @@ function renderPayments() {
 
 function updatePayAcc(idx, val) {
     payments[idx].account_id = val;
-    // Default mode to bank since selection is removed
-    payments[idx].mode = 'bank';
+    // Derive mode from selected account's actual subtype
+    const acc = accounts.find(a => a.id === val);
+    payments[idx].mode = acc ? (acc.account_subtype || 'cash') : 'cash';
 }
 
 function updatePayAmt(idx, val) {
@@ -423,6 +448,14 @@ function calculateChange() {
 function completeSale() {
     if(document.getElementById('btn-checkout').disabled) return;
     
+    // Check if any cart item has 0 price
+    const zeroPriceItems = cart.filter(c => parseFloat(c.price || 0) === 0);
+    if (zeroPriceItems.length > 0) {
+        if (!confirm("Warning: Selling price is not set for some items in the cart. Do you want to proceed?")) {
+            return;
+        }
+    }
+    
     const btn = document.getElementById('btn-checkout');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Transaction...';
@@ -438,14 +471,14 @@ function completeSale() {
         net_amount: parseFloat(document.getElementById('txt-total').innerText.replace('Rs ', '')),
         include_tax: document.getElementById('include-tax').checked,
         items: cart.map(c => {
-            const lineSub = c.qty * c.selling_price;
+            const lineSub = c.qty * c.price;
             const lineDisc = (lineSub / (parseFloat(document.getElementById('txt-subtotal').innerText.replace('Rs ', '')) || 1)) * (parseFloat(document.getElementById('discount-val').value) || 0); // Simplified disc
             const isTaxable = document.getElementById('include-tax').checked;
             const tax = isTaxable ? (lineSub - lineDisc) * (parseFloat(c.tax_rate||0)/100) : 0;
             return {
                 id: c.id,
                 qty: c.qty,
-                price: parseFloat(c.selling_price),
+                price: parseFloat(c.price),
                 tax: tax,
                 net: lineSub - lineDisc + tax
             };

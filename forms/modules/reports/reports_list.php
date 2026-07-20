@@ -96,7 +96,7 @@
                 </div>
                 <div>
                     <h3>Financial Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">5 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">8 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -113,6 +113,14 @@
                     <span>
                         Income Statement
                         <span class="rpt-desc">Revenue, expenses and net profit</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/financial/comparative_income" class="report-link-item">
+                    <span class="rpt-dot" style="background:#2ecc71;"></span>
+                    <span>
+                        Comparative Income Statement
+                        <span class="rpt-desc">Compare revenue/expenses with the previous fiscal year</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
@@ -137,6 +145,22 @@
                     <span>
                         General Ledger
                         <span class="rpt-desc">All journal entries by account</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/financial/cash_book" class="report-link-item">
+                    <span class="rpt-dot" style="background:#1abc9c;"></span>
+                    <span>
+                        Cash Book
+                        <span class="rpt-desc">Cash & Bank running account ledgers</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/financial/equity_statement" class="report-link-item">
+                    <span class="rpt-dot" style="background:#9b59b6;"></span>
+                    <span>
+                        Equity Statement
+                        <span class="rpt-desc">Statement of changes in Owner's Equity</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
@@ -198,7 +222,7 @@
                 </div>
                 <div>
                     <h3>Purchase Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">2 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">3 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -215,6 +239,14 @@
                     <span>
                         Purchase by Vendor
                         <span class="rpt-desc">Vendor-wise purchase summary</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/vendors/payable_aging" class="report-link-item">
+                    <span class="rpt-dot" style="background:#e74c3c;"></span>
+                    <span>
+                        Accounts Payable (AP) Aging
+                        <span class="rpt-desc">Aging of outstanding vendor bills</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>
@@ -315,7 +347,7 @@
                 </div>
                 <div>
                     <h3>Customer Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">1 Report</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">2 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -324,6 +356,14 @@
                     <span>
                         Customer Statement
                         <span class="rpt-desc">Outstanding balance and transaction history per customer</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/customers/receivable_aging" class="report-link-item">
+                    <span class="rpt-dot" style="background:#3498db;"></span>
+                    <span>
+                        Accounts Receivable (AR) Aging
+                        <span class="rpt-desc">Aging of outstanding customer invoices</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>

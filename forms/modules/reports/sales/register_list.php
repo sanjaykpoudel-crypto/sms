@@ -17,7 +17,7 @@ $sql = "
     FROM customer_invoices ci
     JOIN customers c ON ci.customer_id = c.id
     JOIN transaction_headers th ON ci.header_id = th.id
-    WHERE ci.invoice_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status != 'void'
+    WHERE ci.invoice_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
 ";
 $params = [$date_from, $date_to];
 if ($sale_type) { $sql .= " AND ci.sale_type = ?"; $params[] = $sale_type; }
@@ -73,9 +73,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
         <th>Status</th>
       </tr></thead>
       <tbody>
-      <?php if (empty($rows)): ?>
-        <tr><td colspan="11" style="text-align:center;color:#888;padding:30px">No invoices found for the selected period.</td></tr>
-      <?php else: foreach ($rows as $r):
+      <?php if (!empty($rows)): foreach ($rows as $r):
         $status_colors = ['unpaid'=>'#c00','partial'=>'#9a6700','paid'=>'#1a7f37'];
         $sc = $status_colors[$r['payment_status']] ?? '#888';
       ?>

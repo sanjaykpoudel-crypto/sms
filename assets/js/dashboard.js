@@ -618,12 +618,19 @@
     }
 
     function kpiLink(kpiKey) {
+        const today = new Date().toISOString().slice(0, 10);
         const links = {
-            today_sales: '?page=reports/sales/register', today_profit: '?page=reports/financial/daily_profit',
-            cash_on_hand: '?page=reports/financial/general_ledger&account=1010',
-            bank_balance: '?page=reports/financial/general_ledger&account=1020',
-            ar: '?page=reports/financial/trial_balance', ap: '?page=reports/financial/trial_balance',
-            inventory_value: '?page=reports/inventory/stock_summary', low_stock: '?page=reports/inventory/low_stock'
+            today_sales:        `?page=reports/sales/register&date_from=${today}&date_to=${today}`,
+            today_expenses:     `?page=transactions/expense&date_from=${today}&date_to=${today}`,
+            today_gross_profit: `?page=reports/financial/daily_profit&date_from=${today}&date_to=${today}`,
+            today_purchase:     `?page=reports/purchases/by_vendor&date_from=${today}&date_to=${today}`,
+            today_net_profit:   `?page=reports/financial/daily_profit&date_from=${today}&date_to=${today}`,
+            cash_on_hand:    `?page=reports/financial/general_ledger&account=acc-1010&date_from=${today}&date_to=${today}`,
+            bank_balance:    `?page=reports/financial/general_ledger&account=acc-1020&date_from=${today}&date_to=${today}`,
+            ar:              `?page=reports/customers/statement`,
+            ap:              `?page=reports/purchases/by_vendor`,
+            inventory_value: `?page=reports/inventory/stock_summary`,
+            low_stock:       `?page=reports/inventory/low_stock`
         };
         return links[kpiKey] || '#';
     }
@@ -670,6 +677,14 @@
                 options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: true, position: 'bottom', labels: { color: labelColor(), padding: 12, font: { size: 10 }, usePointStyle: true } } } }
             });
         }
+        const cCanvas = $('chart-categories');
+        if (cCanvas) {
+            state.charts.categories = new Chart(cCanvas.getContext('2d'), {
+                type: 'doughnut',
+                data: { labels: [], datasets: [{ data: [], backgroundColor: ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1','#f43f5e','#d946ef','#a855f7','#22c55e','#eab308','#3abff8','#f472b6','#06b6d4','#fb7185','#fb923c','#a78bfa','#4ade80'], borderWidth: 0, hoverOffset: 10 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: true, position: 'bottom', labels: { color: labelColor(), padding: 12, font: { size: 10 }, usePointStyle: true } } } }
+            });
+        }
         const hCanvas = $('chart-hourly');
         if (hCanvas) {
             state.charts.hourly = new Chart(hCanvas.getContext('2d'), {
@@ -690,7 +705,7 @@
         if (eCanvas) {
             state.charts.expenses = new Chart(eCanvas.getContext('2d'), {
                 type: 'doughnut',
-                data: { labels: [], datasets: [{ data: [], backgroundColor: ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1'], borderWidth: 0, hoverOffset: 10 }] },
+                data: { labels: [], datasets: [{ data: [], backgroundColor: ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1','#f43f5e','#d946ef','#a855f7','#22c55e','#eab308','#3abff8','#f472b6','#06b6d4','#fb7185','#fb923c','#a78bfa','#4ade80'], borderWidth: 0, hoverOffset: 10 }] },
                 options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { display: true, position: 'right', labels: { color: labelColor(), padding: 8, font: { size: 10 }, usePointStyle: true } } } }
             });
         }
@@ -701,30 +716,33 @@
     function renderKPIs(data) {
         const kpis = data.kpi || {};
         const map = [
-            { id: 'kpi-sales-val', sub: 'kpi-sales-sub', k: 'today_sales', suffix: 'vs yesterday', tile: 'kpi-tile-sales' },
-            { id: 'kpi-expenses-val', sub: 'kpi-expenses-sub', k: 'today_expenses', suffix: 'vs yesterday', tile: 'kpi-tile-expenses' },
-            { id: 'kpi-profit-val', sub: 'kpi-profit-sub', k: 'today_profit', suffix: 'vs yesterday', tile: 'kpi-tile-profit' },
-            { id: 'kpi-bankflow-val', sub: 'kpi-bankflow-sub', k: 'bank_flow', suffix: 'vs yesterday', tile: 'kpi-tile-bankflow' },
-            { id: 'kpi-cash-val', sub: 'kpi-cash-sub', k: 'cash_on_hand', suffix: 'vs yesterday', tile: 'kpi-tile-cash' },
-            { id: 'kpi-bank-val', sub: 'kpi-bank-sub', k: 'bank_balance', suffix: 'vs yesterday', tile: 'kpi-tile-bank' },
-            { id: 'kpi-ar-val', sub: 'kpi-ar-sub', k: 'ar', suffix: 'outstanding', tile: 'kpi-tile-ar' },
-            { id: 'kpi-ap-val', sub: 'kpi-ap-sub', k: 'ap', suffix: 'outstanding', tile: 'kpi-tile-ap' },
-            { id: 'kpi-inv-val', sub: 'kpi-inv-sub', k: 'inventory_value', suffix: 'current value', tile: 'kpi-tile-inv' },
-            { id: 'kpi-low-val', sub: 'kpi-low-sub', k: 'low_stock', suffix: 'items need reorder', tile: 'kpi-tile-low' }
+            { id: 'kpi-sales-val',        sub: 'kpi-sales-sub',        k: 'today_sales',        suffix: 'vs yesterday', tile: 'kpi-tile-sales' },
+            { id: 'kpi-expenses-val',     sub: 'kpi-expenses-sub',     k: 'today_expenses',     suffix: 'vs yesterday', tile: 'kpi-tile-expenses' },
+            { id: 'kpi-gross-profit-val', sub: 'kpi-gross-profit-sub', k: 'today_gross_profit', suffix: 'vs yesterday', tile: 'kpi-tile-gross-profit' },
+            { id: 'kpi-purchase-val',     sub: 'kpi-purchase-sub',     k: 'today_purchase',     suffix: 'vs yesterday', tile: 'kpi-tile-purchase' },
+            { id: 'kpi-net-profit-val',   sub: 'kpi-net-profit-sub',   k: 'today_net_profit',   suffix: 'vs yesterday', tile: 'kpi-tile-net-profit' },
+            { id: 'kpi-cash-val',         sub: 'kpi-cash-sub',         k: 'cash_on_hand',       suffix: 'vs yesterday', tile: 'kpi-tile-cash' },
+            { id: 'kpi-bank-val',         sub: 'kpi-bank-sub',         k: 'bank_balance',       suffix: 'vs yesterday', tile: 'kpi-tile-bank' },
+            { id: 'kpi-ar-val',           sub: 'kpi-ar-sub',           k: 'ar',                 suffix: 'outstanding',  tile: 'kpi-tile-ar' },
+            { id: 'kpi-ap-val',           sub: 'kpi-ap-sub',           k: 'ap',                 suffix: 'outstanding',  tile: 'kpi-tile-ap' },
+            { id: 'kpi-inv-val',          sub: 'kpi-inv-sub',          k: 'inventory_value',    suffix: 'current value',tile: 'kpi-tile-inv' },
+            { id: 'kpi-low-val',          sub: 'kpi-low-sub',          k: 'low_stock',          suffix: 'items need reorder', tile: 'kpi-tile-low' }
         ];
         map.forEach(m => {
             safe(() => {
                 const kpi = kpis[m.k];
                 const valEl = el(m.id);
                 const subEl = el(m.sub);
-                const tile = el(m.tile);
+                const tile  = el(m.tile);
                 if (!kpi || kpi.value === undefined) { if (tile) tile.style.display = 'none'; return; }
-                if (tile) tile.style.display = '';
+                if (tile) {
+                    tile.style.display = '';
+                    // Set the href on the anchor tile so the whole card is clickable
+                    if (tile.tagName === 'A') tile.href = kpiLink(m.k);
+                }
                 if (valEl) {
                     valEl.textContent = m.k === 'low_stock' ? fmtInt(kpi.value) : fmt(kpi.value);
-                    valEl.style.cursor = 'pointer';
-                    valEl.title = 'Click to view detailed report';
-                    valEl.onclick = (e) => { e.stopPropagation(); window.location.href = kpiLink(m.k); };
+                    valEl.title = fmtFull(kpi.value); // show exact value on hover
                 }
                 if (subEl) subEl.innerHTML = trendHTML(kpi) + ' <span style="opacity:0.7;">' + m.suffix + '</span>';
             });
@@ -733,7 +751,32 @@
 
     function renderCharts(data) {
         safe(() => { const st = data.sales_trend || {}; if (state.charts.sales) { state.charts.sales.data.labels = st.labels || []; state.charts.sales.data.datasets[0].data = st.values || []; state.charts.sales.update('none'); } });
-        safe(() => { const sp = data.sales_payment || {}; if (state.charts.payments) { state.charts.payments.data.labels = sp.labels || []; state.charts.payments.data.datasets[0].data = sp.values || []; state.charts.payments.update('none'); } });
+        safe(() => {
+            const sp = data.sales_payment;
+            const card = el('widget-chart-payments');
+            if (!sp && card) { card.style.display = 'none'; }
+            else if (card) {
+                card.style.display = '';
+                if (state.charts.payments) {
+                    state.charts.payments.data.labels = sp.labels || [];
+                    state.charts.payments.data.datasets[0].data = sp.values || [];
+                    state.charts.payments.update('none');
+                }
+            }
+        });
+        safe(() => {
+            const sc = data.sales_category;
+            const card = el('widget-chart-categories');
+            if (!sc && card) { card.style.display = 'none'; }
+            else if (card) {
+                card.style.display = '';
+                if (state.charts.categories) {
+                    state.charts.categories.data.labels = sc.labels || [];
+                    state.charts.categories.data.datasets[0].data = sc.values || [];
+                    state.charts.categories.update('none');
+                }
+            }
+        });
         safe(() => { const sh = data.sales_hourly || {}; if (state.charts.hourly) { state.charts.hourly.data.labels = sh.labels || []; state.charts.hourly.data.datasets[0].data = sh.values || []; state.charts.hourly.update('none'); } });
         safe(() => { const gp = data.gp_trend || {}; if (state.charts.gp) { state.charts.gp.data.labels = gp.labels || []; state.charts.gp.data.datasets[0].data = gp.values || []; state.charts.gp.update('none'); } });
         safe(() => { const exp = data.expenses || {}; if (state.charts.expenses) { state.charts.expenses.data.labels = exp.labels || []; state.charts.expenses.data.datasets[0].data = exp.values || []; state.charts.expenses.update('none'); } });
@@ -816,6 +859,7 @@
             el('cust-new') && (el('cust-new').textContent = fmtInt(cust.new));
             el('cust-ar') && (el('cust-ar').textContent = fmt(cust.outstanding_ar));
             el('supp-total') && (el('supp-total').textContent = fmtInt(supp.total));
+            el('supp-new') && (el('supp-new').textContent = fmtInt(supp.new));
             el('supp-ap') && (el('supp-ap').textContent = fmt(supp.outstanding_ap));
         });
         safe(() => {
@@ -902,7 +946,7 @@
             const closing = el('cash-closing'); if (closing) closing.textContent = fmtCash(cs.closing);
             const diff = el('cash-diff');
             if (diff) { const d = parseFloat(cs.diff || 0); diff.textContent = (d >= 0 ? '+' : '') + fmtCash(d); diff.style.color = d > 0 ? '#10b981' : (d < 0 ? '#ef4444' : 'var(--dv4-text)'); }
-            const expected = el('cash-expected'); if (expected) expected.textContent = 'Expected: ' + fmtCash(cs.expected || 0);
+            const expected = el('cash-expected'); if (expected) expected.textContent = fmtCash(cs.expected || 0);
             const counted = el('cash-counted-by');
             if (counted) { counted.textContent = cs.counted_by || 'Not Counted'; const cls = cs.counted_by === 'Verified' ? 'dv4-pill-green' : (cs.counted_by === 'Counted' ? 'dv4-pill-blue' : 'dv4-pill-amber'); counted.className = 'dv4-pill ' + cls; }
         });
@@ -953,21 +997,24 @@
         const acc = bankAccountsCache.find(a => a.id == accountId);
         const stats = el('bank-account-stats');
         const empty = el('ba-empty-state');
+        const headerName = el('ba-header-account-name');
         if (!acc) {
             if (stats) stats.style.display = 'none';
+            if (headerName) headerName.textContent = '';
             if (empty) empty.style.display = '';
             return;
         }
         if (stats) stats.style.display = '';
         if (empty) empty.style.display = 'none';
         safe(() => {
-            el('ba-account-name') && (el('ba-account-name').textContent = acc.account_name + ' (' + acc.account_code + ')');
-            el('ba-money-in') && (el('ba-money-in').textContent = fmtFull(acc.money_in));
-            el('ba-money-out') && (el('ba-money-out').textContent = fmtFull(acc.money_out));
-            const balEl = el('ba-balance');
-            if (balEl) { balEl.textContent = fmtFull(acc.balance); balEl.style.color = acc.balance >= 0 ? '#10b981' : '#ef4444'; }
+            if (headerName) headerName.textContent = ' — ' + acc.account_name + ' (' + acc.account_code + ')';
+            const opening = parseFloat(acc.balance || 0) - parseFloat(acc.today_in || 0) + parseFloat(acc.today_out || 0);
+            const openEl = el('ba-opening');
+            if (openEl) { openEl.textContent = fmtFull(opening); openEl.style.color = opening >= 0 ? 'var(--dv4-text)' : '#ef4444'; }
             el('ba-today-in') && (el('ba-today-in').textContent = fmtFull(acc.today_in));
             el('ba-today-out') && (el('ba-today-out').textContent = fmtFull(acc.today_out));
+            const balEl = el('ba-balance');
+            if (balEl) { balEl.textContent = fmtFull(acc.balance); balEl.style.color = acc.balance >= 0 ? '#10b981' : '#ef4444'; }
         });
     }
 
@@ -1013,6 +1060,7 @@
             safe(() => renderAlerts(data));
             safe(() => renderActivities(data));
             safe(() => renderBankAccountDetail(data));
+            safe(() => renderReminders(data));
                 if (loader) loader.classList.remove('active');
             })
             .catch(err => { console.error('[DV4] Fetch error:', err); if (loader) loader.classList.remove('active'); });

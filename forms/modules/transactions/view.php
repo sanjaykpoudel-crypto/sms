@@ -58,7 +58,8 @@ if ($txn_type == 'vendor_bill') {
         WHERE p.header_id = :id
     ", ['id' => $id]);
     if ($details) {
-        $details['total_amount'] = $details['amount'];
+        $total_paid_row = $db->fetchOne("SELECT SUM(amount) as total_amt FROM payments WHERE header_id = :id", ['id' => $id]);
+        $details['total_amount'] = (float)($total_paid_row['total_amt'] ?? 0);
     }
 } elseif (strtolower($txn_type) == 'expense') {
     $details = $db->fetchOne("
@@ -121,15 +122,19 @@ $links = $db->fetchAll("
 // Also fetch from payments directly and via transaction_links
 $payments = $db->fetchAll("
     SELECT p.id, p.header_id, p.payment_method, p.payment_date, th.txn_number, th.status,
-           COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), p.amount) as amount
+           IF(p.applied_to_txn_id IS NOT NULL, p.amount, COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), p.amount)) as amount,
+           a.account_name
     FROM transaction_links tl
     JOIN transaction_headers th ON tl.parent_id = th.id
     LEFT JOIN payments p ON p.header_id = th.id
+    LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE tl.child_id = :id AND tl.link_type LIKE 'payment:%'
     UNION DISTINCT
-    SELECT p.id, p.header_id, p.payment_method, p.payment_date, th.txn_number, th.status, p.amount
+    SELECT p.id, p.header_id, p.payment_method, p.payment_date, th.txn_number, th.status, p.amount,
+           a.account_name
     FROM payments p
     LEFT JOIN transaction_headers th ON p.header_id = th.id
+    LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE p.applied_to_txn_id = :id
 ", ['id' => $id]);
 
@@ -211,6 +216,9 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
     } elseif ($txn_type == 'cash_denomination') {
         $edit_url = "?page=transactions/cash_denom/manage&id=".$id;
         $list_url = "?page=transactions/cash_denom";
+    } elseif ($txn_type == 'account_transfer') {
+        $edit_url = "?page=transactions/transfer/manage&id=".$id;
+        $list_url = "?page=transactions/transfer";
     }
 ?>
 <style>
@@ -360,7 +368,9 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
             </h1>
         </div>
         <div class="view-subtitle">
-            <strong><?php echo htmlspecialchars($details['entity_name'] ?? ''); ?></strong> | 
+            <?php if (!empty($details['entity_name'])): ?>
+                <strong><?php echo htmlspecialchars($details['entity_name']); ?></strong> | 
+            <?php endif; ?>
             Date: <?php echo date('M d, Y', strtotime($header['txn_date'])); ?>
         </div>
     </div>
@@ -382,9 +392,6 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
             <?php endif; ?>
             <a href="<?php echo $edit_url; ?>" class="ns-btn"><i class="fas fa-edit"></i> Edit</a>
             <a href="?page=transactions/print&id=<?php echo $id; ?>" target="_blank" class="ns-btn ns-btn-primary"><i class="fas fa-print"></i> Print</a>
-            <button class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="attemptDelete()">
-                <i class="fas fa-trash"></i> Delete
-            </button>
             <a href="javascript:history.back()" class="ns-btn"><i class="fas fa-arrow-left"></i> Back</a>
         </div>
     </div>
@@ -396,9 +403,9 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
         <!-- Main Info -->
         <div>
             <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">Primary Information</h3>
-            <?php if(!in_array(strtolower($txn_type), ['expense', 'cash_denomination'])): ?>
+            <?php if(in_array(strtolower($txn_type), ['customer_invoice', 'vendor_bill', 'customer_payment', 'vendor_payment'])): ?>
             <div class="detail-group">
-                <div class="detail-label"><?php echo $txn_type == 'vendor_bill' ? 'Vendor' : 'Customer'; ?></div>
+                <div class="detail-label"><?php echo ($txn_type == 'vendor_bill' || $txn_type == 'vendor_payment') ? 'Vendor' : 'Customer'; ?></div>
                 <div class="detail-value"><?php echo htmlspecialchars($details['entity_name'] ?? 'N/A'); ?></div>
             </div>
             <?php elseif(strtolower($txn_type) == 'cash_denomination'): ?>
@@ -483,18 +490,20 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
                     <div class="detail-value" style="font-size: 24px; font-weight: 700; color: #003087;">Rs. <?php echo number_format($details['total_amount'] ?? 0, 2); ?></div>
                 </div>
             <?php else: ?>
-                <div class="detail-group">
-                    <div class="detail-label">Subtotal</div>
-                    <div class="detail-value">Rs. <?php echo number_format($details['subtotal'] ?? 0, 2); ?></div>
-                </div>
-                <div class="detail-group">
-                    <div class="detail-label">Discount</div>
-                    <div class="detail-value">Rs. <?php echo number_format($details['discount_amount'] ?? 0, 2); ?></div>
-                </div>
-                <div class="detail-group">
-                    <div class="detail-label">Tax (VAT)</div>
-                    <div class="detail-value">Rs. <?php echo number_format($details['tax_amount'] ?? 0, 2); ?></div>
-                </div>
+                <?php if (in_array(strtolower($txn_type), ['customer_invoice', 'vendor_bill'])): ?>
+                    <div class="detail-group">
+                        <div class="detail-label">Subtotal</div>
+                        <div class="detail-value">Rs. <?php echo number_format($details['subtotal'] ?? 0, 2); ?></div>
+                    </div>
+                    <div class="detail-group">
+                        <div class="detail-label">Discount</div>
+                        <div class="detail-value">Rs. <?php echo number_format($details['discount_amount'] ?? 0, 2); ?></div>
+                    </div>
+                    <div class="detail-group">
+                        <div class="detail-label">Tax (VAT)</div>
+                        <div class="detail-value">Rs. <?php echo number_format($details['tax_amount'] ?? 0, 2); ?></div>
+                    </div>
+                <?php endif; ?>
                 <div class="detail-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
                     <div class="detail-label" style="font-size: 14px; color: #333;">Total Amount</div>
                     <div class="detail-value" style="font-size: 18px; font-weight: 700;">Rs. <?php echo number_format($details['total_amount'] ?? $header['net_amount'] ?? 0, 2); ?></div>
@@ -747,7 +756,7 @@ $applied_records = $db->fetchAll("
                 <tr>
                     <th>Date</th>
                     <th>Reference</th>
-                    <th>Payment Method</th>
+                    <th>Payment Account</th>
                     <th>Status</th>
                     <th style="text-align: right;">Amount</th>
                 </tr>
@@ -757,7 +766,15 @@ $applied_records = $db->fetchAll("
                 <tr>
                     <td><?php echo date('Y-m-d', strtotime($p['payment_date'])); ?></td>
                     <td><a href="?page=transactions/view&id=<?php echo $p['header_id']; ?>"><?php echo htmlspecialchars($p['txn_number']); ?></a></td>
-                    <td><?php echo htmlspecialchars($p['payment_method']); ?></td>
+                    <td>
+                        <?php 
+                        if (!empty($p['account_name'])) {
+                            echo htmlspecialchars($p['account_name']);
+                        } else {
+                            echo htmlspecialchars(ucfirst($p['payment_method'] ?? 'Unknown'));
+                        }
+                        ?>
+                    </td>
                     <td><?php echo htmlspecialchars($p['status']); ?></td>
                     <td style="text-align: right; font-weight: 600;">Rs. <?php echo number_format($p['amount'], 2); ?></td>
                 </tr>
