@@ -102,7 +102,7 @@ $bs_balances = $db->fetchAll("
     WHERE h.txn_date <= ? AND a.account_type IN ('asset', 'liability', 'equity') AND h.is_deleted = 0 AND h.status != 'void'
     GROUP BY a.id, a.account_code, a.account_name, a.normal_balance, a.account_type
     HAVING bal != 0
-    ORDER BY a.account_code ASC
+    ORDER BY a.account_name ASC
 ", [$end]);
 
 $company_name = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'name'")['meta_value'] ?? 'SMS ERP';

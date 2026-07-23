@@ -26,7 +26,7 @@ $vendors = $db->fetchAll("
     ) AS total_paid
     FROM vendors v 
     WHERE v.is_deleted = 0 $status_filter
-    ORDER BY v.updated_at DESC
+    ORDER BY v.company_name ASC
 ");
 ?>
 <div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
@@ -48,7 +48,6 @@ $vendors = $db->fetchAll("
         <table class="ns-table">
             <thead>
                 <tr>
-                    <th>Code</th>
                     <th>Company Name</th>
                     <th>Contact</th>
                     <th>Phone</th>
@@ -65,7 +64,6 @@ $vendors = $db->fetchAll("
                     $remaining = $row['total_purchase'] - $row['total_paid'];
                 ?>
                 <tr>
-                    <td style="font-weight: 600;"><?php echo htmlspecialchars($row['vendor_code']); ?></td>
                     <td><?php echo htmlspecialchars($row['company_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['contact_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>

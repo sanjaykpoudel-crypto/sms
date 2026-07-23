@@ -790,7 +790,6 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                     <td style="text-align: center; color: #64748b; font-weight: 600;"><?php echo $idx + 1; ?></td>
                     <td>
                         <div style="padding-left: <?php echo $isDr ? '0' : '20px'; ?>">
-                            <span style="font-weight: 700; color: #475569; margin-right: 6px;"><?php echo htmlspecialchars($je['account_code']); ?></span>
                             <span style="font-weight: 600; color: #1e293b;"><?php echo htmlspecialchars($je['account_name']); ?></span>
                         </div>
                     </td>

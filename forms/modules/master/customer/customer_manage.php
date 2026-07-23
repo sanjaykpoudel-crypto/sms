@@ -24,10 +24,6 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
-                    <label class="ns-label">Customer Code</label>
-                    <input type="text" name="customer_code" class="ns-input" value="<?php echo $id ? ($data['customer_code'] ?? '') : getNextTransactionNumber('customer'); ?>" readonly style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
-                </div>
-                <div class="ns-form-group">
                     <label class="ns-label">Full Name *</label>
                     <input type="text" name="full_name" class="ns-input" value="<?php echo $data['full_name'] ?? ''; ?>" required>
                 </div>
@@ -80,7 +76,7 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <select name="receivable_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
                         <?php foreach($accounts as $acc): if(in_array($acc['account_subtype'], ['receivable', 'other'])): ?>
-                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['receivable_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name'] . ' (' . $acc['account_code'] . ')'); ?></option>
+                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['receivable_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
                         <?php endif; endforeach; ?>
                     </select>
                 </div>

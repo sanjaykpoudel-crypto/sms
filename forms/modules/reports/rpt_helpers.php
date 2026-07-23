@@ -254,14 +254,20 @@ function rpt_filter_bar(string $title, array $filters, string $export_id = '') {
 }
 
 function rpt_currency(float $v): string {
-    $db = db();
-    $dp = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'decimal_places'")['meta_value'] ?? 2;
-    return 'Rs '.number_format($v, (int)$dp);
+    static $dp = null;
+    if ($dp === null) {
+        $db = db();
+        $dp = (int)($db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'decimal_places'")['meta_value'] ?? 2);
+    }
+    return 'Rs '.number_format($v, $dp);
 }
 
 function rpt_date($date): string {
-    $db = db();
-    $df = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'date_format'")['meta_value'] ?? 'Y-m-d';
+    static $df = null;
+    if ($df === null) {
+        $db = db();
+        $df = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'date_format'")['meta_value'] ?? 'Y-m-d';
+    }
     return date($df, strtotime($date));
 }
 

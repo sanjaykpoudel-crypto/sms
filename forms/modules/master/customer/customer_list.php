@@ -39,7 +39,7 @@ $customers = $db->fetchAll(
     )) AS total_due
     FROM customers c 
     WHERE c.is_deleted = 0 $status_filter
-    ORDER BY c.updated_at DESC
+    ORDER BY c.full_name ASC
 "
 );
 ?>
@@ -62,7 +62,6 @@ $customers = $db->fetchAll(
         <table class="ns-table">
             <thead>
                 <tr>
-                    <th>Code</th>
                     <th>Full Name</th>
                     <th>Type</th>
                     <th>Phone</th>
@@ -79,7 +78,6 @@ $customers = $db->fetchAll(
                     $remaining = $row['total_due'];
                 ?>
                 <tr>
-                    <td style="font-weight: 600;"><?php echo htmlspecialchars($row['customer_code']); ?></td>
                     <td><?php echo htmlspecialchars($row['full_name']); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['customer_type'])); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>

@@ -19,6 +19,14 @@ $items = $db->fetchAll("
     ORDER BY current_stock ASC
 ");
 
+$only_low_stock = ($_GET['filter'] ?? '') === 'low_stock';
+
+if ($only_low_stock) {
+    $items = array_filter($items, function($r) {
+        return (float)$r['current_stock'] <= (float)($r['reorder_level'] ?? 0);
+    });
+}
+
 $out_of_stock_count = 0;
 $low_stock_count = 0;
 $total_cost_value = 0;
@@ -59,7 +67,6 @@ foreach ($items as $r) {
         <table class="ns-table" id="tbl-less-stock">
             <thead>
                 <tr>
-                    <th>SKU</th>
                     <th>Item Name</th>
                     <th>Category</th>
                     <th style="text-align:right">Current Stock</th>
@@ -88,7 +95,6 @@ foreach ($items as $r) {
                 }
             ?>
                 <tr style="background:<?= $row_bg ?>">
-                    <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
                     <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#e74c3c' : ($status == 'LOW STOCK' ? '#e67e22' : '#2c3e50') ?>"><?= number_format($stock, 0) ?></td>

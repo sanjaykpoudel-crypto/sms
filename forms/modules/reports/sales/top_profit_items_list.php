@@ -76,7 +76,6 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
             <thead>
                 <tr>
                     <th>Rank</th>
-                    <th>SKU</th>
                     <th>Item Name</th>
                     <th>Category</th>
                     <th style="text-align:right">Qty Sold</th>
@@ -92,7 +91,6 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
             ?>
                 <tr>
                     <td style="font-weight:700;color:#7f8c8d">#<?= $rank++ ?></td>
-                    <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
                     <td style="text-align:right;font-weight:600"><?= number_format($r['total_qty'], 0) ?></td>
@@ -106,7 +104,7 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
             <?php if (!empty($items)): ?>
             <tfoot>
                 <tr style="background:#f8f9fa;font-weight:800;border-top:2px solid #ccc">
-                    <td colspan="4">TOTALS</td>
+                    <td colspan="3">TOTALS</td>
                     <td style="text-align:right"><?= number_format($sum_qty, 0) ?></td>
                     <td style="text-align:right"><?= rpt_currency($sum_revenue) ?></td>
                     <td style="text-align:right"><?= rpt_currency($sum_cost) ?></td>

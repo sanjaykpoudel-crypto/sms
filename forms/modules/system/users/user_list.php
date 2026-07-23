@@ -4,7 +4,7 @@ $db = db();
 $show_all = isset($_GET['show_all']) && $_GET['show_all'] == '1';
 $status_filter = $show_all ? "" : " AND is_active = 1 ";
 
-$list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter ORDER BY updated_at DESC");
+$list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter ORDER BY full_name ASC");
 ?>
 <div class="ns-page-header">
     <h1 class="ns-page-title">

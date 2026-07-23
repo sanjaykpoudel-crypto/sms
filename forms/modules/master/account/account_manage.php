@@ -23,10 +23,6 @@ if ($id) {
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
-                    <label class="ns-label">Account Code *</label>
-                    <input type="text" name="account_code" class="ns-input" value="<?php echo $data['account_code'] ?? ''; ?>" required>
-                </div>
-                <div class="ns-form-group">
                     <label class="ns-label">Account Name *</label>
                     <input type="text" name="account_name" class="ns-input" value="<?php echo $data['account_name'] ?? ''; ?>" required>
                 </div>

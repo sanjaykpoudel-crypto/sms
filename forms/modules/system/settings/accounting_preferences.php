@@ -6,7 +6,7 @@ foreach($info as $row) {
     $settings[$row['meta_field']] = $row['meta_value'];
 }
 
-$accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+$accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 $customers = $db->fetchAll("SELECT id, customer_code, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $vendors = $db->fetchAll("SELECT id, vendor_code, company_name FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
 
@@ -15,7 +15,7 @@ function account_select($name, $current_val, $accounts) {
     $html .= '<option value="">-- Select Account --</option>';
     foreach($accounts as $acc) {
         $selected = ($current_val == $acc['id']) ? 'selected' : '';
-        $html .= '<option value="'.$acc['id'].'" '.$selected.'>['.$acc['account_code'].'] '.$acc['account_name'].'</option>';
+        $html .= '<option value="'.$acc['id'].'" '.$selected.'>'.htmlspecialchars($acc['account_name']).'</option>';
     }
     $html .= '</select>';
     return $html;
@@ -27,8 +27,7 @@ function entity_select($name, $current_val, $entities, $type = 'Customer') {
     foreach($entities as $ent) {
         $selected = ($current_val == $ent['id']) ? 'selected' : '';
         $label = ($type == 'Customer') ? $ent['full_name'] : $ent['company_name'];
-        $code = ($type == 'Customer') ? $ent['customer_code'] : $ent['vendor_code'];
-        $html .= '<option value="'.$ent['id'].'" '.$selected.'>['.$code.'] '.$label.'</option>';
+        $html .= '<option value="'.$ent['id'].'" '.$selected.'>'.htmlspecialchars($label).'</option>';
     }
     $html .= '</select>';
     return $html;
@@ -124,53 +123,6 @@ function entity_select($name, $current_val, $entities, $type = 'Customer') {
                 <div class="ns-form-group">
                     <label class="ns-label">Default Vendor</label>
                     <?php echo entity_select('default_vendor_id', $settings['default_vendor_id'] ?? '', $vendors, 'Vendor'); ?>
-                </div>
-            </div>
-
-            <div class="ns-section-title">Fiscal Year Closing Preferences</div>
-            <div class="ns-form-row">
-                <div class="ns-form-group">
-                    <label class="ns-label">Retained Earnings Account</label>
-                    <?php echo account_select('fy_retained_earnings_account', $settings['fy_retained_earnings_account'] ?? 'acc-3200', $accounts); ?>
-                </div>
-                <div class="ns-form-group">
-                    <label class="ns-label">Income Summary Account</label>
-                    <?php echo account_select('fy_income_summary_account', $settings['fy_income_summary_account'] ?? '', $accounts); ?>
-                </div>
-                <div class="ns-form-group">
-                    <label class="ns-label">Dividend Payable Account</label>
-                    <?php echo account_select('fy_dividend_payable_account', $settings['fy_dividend_payable_account'] ?? '', $accounts); ?>
-                </div>
-            </div>
-            <div class="ns-form-row">
-                <div class="ns-form-group">
-                    <label class="ns-label">Opening Balance Journal Type</label>
-                    <select name="fy_opening_journal_type" class="ns-select">
-                        <option value="Journal" <?php echo (($settings['fy_opening_journal_type'] ?? 'Journal') === 'Journal') ? 'selected' : ''; ?>>Journal</option>
-                    </select>
-                </div>
-                <div class="ns-form-group">
-                    <label class="ns-label">Closing Journal Prefix</label>
-                    <input type="text" name="fy_closing_prefix" class="ns-input" value="<?php echo htmlspecialchars($settings['fy_closing_prefix'] ?? 'JE-CLOSE-'); ?>" placeholder="e.g. JE-CLOSE-">
-                </div>
-                <div class="ns-form-group">
-                    <label class="ns-label">Reclose Journal Action</label>
-                    <select name="fy_reclose_behavior" class="ns-select">
-                        <option value="delete" <?php echo (($settings['fy_reclose_behavior'] ?? 'delete') === 'delete') ? 'selected' : ''; ?>>Delete Previous Closing Journal</option>
-                        <option value="reverse" <?php echo (($settings['fy_reclose_behavior'] ?? 'delete') === 'reverse') ? 'selected' : ''; ?>>Reverse Previous Closing Journal</option>
-                    </select>
-                </div>
-            </div>
-            <div class="ns-form-row">
-                <div class="ns-form-group" style="display: flex; align-items: center; gap: 8px;">
-                    <input type="hidden" name="fy_auto_create_next" value="0">
-                    <input type="checkbox" name="fy_auto_create_next" value="1" <?php echo ($settings['fy_auto_create_next'] ?? '1') == '1' ? 'checked' : ''; ?>>
-                    <label class="ns-label" style="margin: 0;">Auto-create Next Fiscal Year</label>
-                </div>
-                <div class="ns-form-group" style="display: flex; align-items: center; gap: 8px;">
-                    <input type="hidden" name="fy_auto_lock_prev" value="0">
-                    <input type="checkbox" name="fy_auto_lock_prev" value="1" <?php echo ($settings['fy_auto_lock_prev'] ?? '1') == '1' ? 'checked' : ''; ?>>
-                    <label class="ns-label" style="margin: 0;">Lock Previous Periods Automatically</label>
                 </div>
             </div>
 

@@ -93,7 +93,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
             </thead>
             <tbody>
                 <?php 
-                $accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+                $accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
                 foreach ($lines as $i => $line):
                     $debit_val = ($line['entry_type'] === 'debit') ? (float)$line['amount'] : 0.00;
                     $credit_val = ($line['entry_type'] === 'credit') ? (float)$line['amount'] : 0.00;
@@ -107,7 +107,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                             <option value="">Select Account</option>
                             <?php foreach($accounts as $acc): ?>
                                 <option value="<?php echo $acc['id']; ?>" <?php echo ($acc['id'] == $line['account_id']) ? 'selected' : ''; ?>>
-                                    <?php echo $acc['account_code']; ?> - <?php echo $acc['account_name']; ?>
+                                    <?php echo htmlspecialchars($acc['account_name']); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -219,7 +219,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
 
         let accountOptions = '<option value="">Select Account</option>';
         accounts.forEach(acc => {
-            accountOptions += `<option value="${acc.id}">${acc.account_code} - ${acc.account_name}</option>`;
+            accountOptions += `<option value="${acc.id}">${acc.account_name}</option>`;
         });
 
         tr.innerHTML = `

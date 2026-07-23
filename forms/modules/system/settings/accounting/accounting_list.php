@@ -10,7 +10,7 @@ $type_labels = [
 ];
 
 $db = db();
-$items = $db->fetchAll("SELECT * FROM reference_codes ORDER BY updated_at DESC");
+$items = $db->fetchAll("SELECT * FROM reference_codes ORDER BY name ASC");
 ?>
 
 <div class="ns-page-header">

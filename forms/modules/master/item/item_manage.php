@@ -25,10 +25,6 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
-                    <label class="ns-label">SKU / Item Code <span class="ns-required">*</span></label>
-                    <input type="text" name="sku" class="ns-input" value="<?php echo $id ? ($data['sku'] ?? '') : getNextTransactionNumber('item'); ?>" required>
-                </div>
-                <div class="ns-form-group">
                     <label class="ns-label">Item Name <span class="ns-required">*</span></label>
                     <input type="text" name="item_name" class="ns-input" value="<?php echo htmlspecialchars($data['item_name'] ?? ''); ?>" required>
                 </div>
@@ -158,7 +154,7 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <select name="inventory_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
                         <?php foreach($accounts as $acc): if(in_array($acc['account_subtype'], ['inventory'])): ?>
-                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['inventory_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name'] . ' (' . $acc['account_code'] . ')'); ?></option>
+                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['inventory_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
                         <?php endif; endforeach; ?>
                     </select>
                 </div>
@@ -167,7 +163,7 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <select name="cogs_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
                         <?php foreach($accounts as $acc): if(in_array($acc['account_subtype'], ['cogs', 'expense'])): ?>
-                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['cogs_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name'] . ' (' . $acc['account_code'] . ')'); ?></option>
+                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['cogs_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
                         <?php endif; endforeach; ?>
                     </select>
                 </div>
@@ -178,7 +174,7 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <select name="income_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
                         <?php foreach($accounts as $acc): if(in_array($acc['account_subtype'], ['sales', 'income', 'other'])): ?>
-                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['income_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name'] . ' (' . $acc['account_code'] . ')'); ?></option>
+                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['income_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
                         <?php endif; endforeach; ?>
                     </select>
                 </div>

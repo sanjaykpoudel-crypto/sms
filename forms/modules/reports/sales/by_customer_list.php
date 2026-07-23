@@ -77,7 +77,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-sales-cust">
       <thead><tr>
-        <th>Code</th><th>Customer Name</th><th>Type</th>
+        <th>Customer Name</th><th>Type</th>
         <th style="text-align:right">Transactions</th>
         <th style="text-align:right">Total Sales</th>
         <th style="text-align:right">Paid</th>
@@ -87,7 +87,6 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
       <tbody>
       <?php if (!empty($rows)): foreach ($rows as $r): ?>
         <tr>
-          <td style="font-weight:600"><?= htmlspecialchars($r['customer_code']) ?></td>
           <td><?= htmlspecialchars($r['full_name']) ?></td>
           <td><?= ucfirst($r['customer_type']) ?></td>
           <td style="text-align:right"><?= $r['txn_count'] ?></td>
@@ -99,7 +98,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="4">TOTAL</td>
+        <td colspan="3">TOTAL</td>
         <td style="text-align:right"><?= rpt_currency($total_sales) ?></td>
         <td style="text-align:right"><?= rpt_currency($total_paid) ?></td>
         <td style="text-align:right;color:#c00"><?= rpt_currency($total_balance) ?></td>

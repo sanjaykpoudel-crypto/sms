@@ -133,6 +133,24 @@ if (!function_exists('generate_uuid')) {
 }
 
 /**
+ * Resolves payment method ('cash', 'esewa', 'khalti', 'bank_transfer') from account name.
+ */
+if (!function_exists('resolve_payment_method')) {
+    function resolve_payment_method($account_name) {
+        $name = strtolower($account_name ?? '');
+        if (strpos($name, 'cash') !== false) {
+            return 'cash';
+        } elseif (strpos($name, 'esewa') !== false) {
+            return 'esewa';
+        } elseif (strpos($name, 'khalti') !== false) {
+            return 'khalti';
+        }
+        return 'bank_transfer';
+    }
+}
+
+
+/**
  * Calculates fiscal year, month and period string from date
  */
 function calculate_fiscal_info($date) {
@@ -308,7 +326,7 @@ function sync_opening_balance_journal_entries($pdo, $date = null) {
         }
 
         $entries[] = [
-            'id' => sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x', mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0x0fff) | 0x4000, mt_rand(0, 0x3fff) | 0x8000, mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)),
+            'id' => generate_uuid(),
             'account_id' => $acc['id'],
             'entry_type' => $entry_type,
             'amount' => $balance,
@@ -362,7 +380,7 @@ function sync_opening_balance_journal_entries($pdo, $date = null) {
         }
 
         $entries[] = [
-            'id' => sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x', mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0x0fff) | 0x4000, mt_rand(0, 0x3fff) | 0x8000, mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)),
+            'id' => generate_uuid(),
             'account_id' => $offset_id,
             'entry_type' => $offset_type,
             'amount' => $offset_amount,
@@ -555,16 +573,7 @@ function sync_daily_pos_summary($date) {
         $pay_amount = (float)$pay['total_amount'];
         
         $acc_info = $db->fetchOne("SELECT account_name FROM accounts WHERE id = ?", [$acc_id]);
-        $account_name = strtolower($acc_info['account_name'] ?? '');
-        
-        $mapped_method = 'bank_transfer';
-        if (strpos($account_name, 'cash') !== false) {
-            $mapped_method = 'cash';
-        } elseif (strpos($account_name, 'esewa') !== false) {
-            $mapped_method = 'esewa';
-        } elseif (strpos($account_name, 'khalti') !== false) {
-            $mapped_method = 'khalti';
-        }
+        $mapped_method = resolve_payment_method($acc_info['account_name'] ?? '');
         
         $pdo->prepare("
             INSERT INTO payments (id, header_id, payment_type, customer_id, payment_method, bank_account_id, amount, payment_date, created_by, applied_to_txn_id)

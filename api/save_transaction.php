@@ -46,6 +46,8 @@ try {
 
     $fiscal = calculate_fiscal_info($txn_date);
 
+    $affected_doc_ids = [];
+
     if (!$id) {
         $id = generate_uuid();
         $txn_number = getNextTransactionNumber($header_txn_type);
@@ -66,7 +68,6 @@ try {
             $txn_date, $reference_number, $memo, $id
         ]);
         
-        $affected_doc_ids = [];
         $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$id]);
         foreach ($old_links as $link) {
             if (!empty($link['applied_to_id'])) $affected_doc_ids[] = $link['applied_to_id'];
@@ -75,8 +76,6 @@ try {
         $db->execute("DELETE FROM payments WHERE header_id = ?", [$id]);
         $db->execute("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?", [$id, $id]);
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
-    } else {
-        $affected_doc_ids = [];
     }
 
     $bank_account_ids = $_POST['bank_account_id'] ?? [];
@@ -93,16 +92,7 @@ try {
         
         // Dynamically resolve payment method based on the account name
         $acc_info = $db->fetchOne("SELECT account_name FROM accounts WHERE id = ?", [$acc_id]);
-        $account_name = strtolower($acc_info['account_name'] ?? '');
-        
-        $mapped_method = 'bank_transfer';
-        if (strpos($account_name, 'cash') !== false) {
-            $mapped_method = 'cash';
-        } elseif (strpos($account_name, 'esewa') !== false) {
-            $mapped_method = 'esewa';
-        } elseif (strpos($account_name, 'khalti') !== false) {
-            $mapped_method = 'khalti';
-        }
+        $mapped_method = resolve_payment_method($acc_info['account_name'] ?? '');
         
         $db->execute("INSERT INTO payments (id, header_id, payment_type, vendor_id, customer_id, payment_method, bank_account_id, amount, transaction_reference, payment_date) 
                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [

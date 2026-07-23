@@ -3,7 +3,7 @@ require_once 'database/DBConnection.php';
 $db = db();
 
 // Fetch all bank and cash accounts
-$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_deleted = 0 AND is_active = 1 ORDER BY account_code ASC");
+$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
 
 // Fetch existing opening balances transaction date if any
 $opening_txn = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
@@ -39,7 +39,6 @@ $opening_date = $opening_txn ? $opening_txn['txn_date'] : (date('Y') . '-01-01')
                 <table class="ns-table">
                     <thead>
                         <tr>
-                            <th>Account Code</th>
                             <th>Account Name</th>
                             <th style="width: 250px; text-align: right; padding-right: 25px;">Opening Balance</th>
                         </tr>
@@ -47,14 +46,13 @@ $opening_date = $opening_txn ? $opening_txn['txn_date'] : (date('Y') . '-01-01')
                     <tbody>
                         <?php if (empty($accounts)): ?>
                         <tr>
-                            <td colspan="3" style="text-align: center; color: #888; padding: 30px;">
+                            <td colspan="2" style="text-align: center; color: #888; padding: 30px;">
                                 <i class="fas fa-university" style="font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.3;"></i>
                                 No active bank accounts found.
                             </td>
                         </tr>
                         <?php else: foreach ($accounts as $row): ?>
                         <tr>
-                            <td style="font-weight: 600;"><?php echo htmlspecialchars($row['account_code']); ?></td>
                             <td><?php echo htmlspecialchars($row['account_name']); ?></td>
                             <td style="text-align: right; padding-right: 25px;">
                                 <input type="number" 

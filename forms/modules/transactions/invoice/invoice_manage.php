@@ -38,7 +38,7 @@ $all_customers = $db->fetchAll("
     GROUP BY c.id
     ORDER BY c.full_name ASC
 ");
-$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-file-invoice-dollar"
@@ -220,8 +220,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                                 <select name="item_id[]" class="ns-select" onchange="invoiceFetchItem(this)" required>
                                     <option value="">Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
-                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?> (<?php echo $i['sku']; ?>)
-                                        </option>
+                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </td>

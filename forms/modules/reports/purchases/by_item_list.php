@@ -56,7 +56,7 @@ $total_qty  = array_sum(array_column($rows, 'qty_purchased'));
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-pur-item">
       <thead><tr>
-        <th>SKU</th><th>Item Name</th><th>Category</th>
+        <th>Item Name</th><th>Category</th>
         <th style="text-align:right">Qty Purchased</th>
         <th style="text-align:right">Avg Cost Price</th>
         <th style="text-align:right">Total Cost</th>
@@ -64,7 +64,6 @@ $total_qty  = array_sum(array_column($rows, 'qty_purchased'));
       <tbody>
       <?php if (!empty($rows)): foreach ($rows as $r): ?>
         <tr>
-          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td style="text-align:right"><?= number_format($r['qty_purchased'],2) ?></td>
@@ -74,7 +73,7 @@ $total_qty  = array_sum(array_column($rows, 'qty_purchased'));
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="3">TOTAL</td>
+        <td colspan="2">TOTAL</td>
         <td style="text-align:right"><?= number_format($total_qty,2) ?></td>
         <td></td>
         <td style="text-align:right"><?= rpt_currency($total_cost) ?></td>

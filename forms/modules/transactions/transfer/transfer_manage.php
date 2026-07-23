@@ -54,7 +54,7 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
                         <option value="">Select Source Account</option>
                         <?php foreach($bank_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['from_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_name']); ?> (<?php echo $acc['account_code']; ?>)
+                                <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -65,7 +65,7 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
                         <option value="">Select Destination Account</option>
                         <?php foreach($bank_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['to_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_name']); ?> (<?php echo $acc['account_code']; ?>)
+                                <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

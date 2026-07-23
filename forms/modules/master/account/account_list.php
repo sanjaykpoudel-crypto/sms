@@ -34,7 +34,7 @@ $accounts = $db->fetchAll("
     LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     WHERE a.is_deleted = 0 $status_filter
     GROUP BY a.id
-    ORDER BY a.updated_at DESC
+    ORDER BY a.account_name ASC
 ");
 ?>
 <style>
@@ -71,7 +71,6 @@ $accounts = $db->fetchAll("
         <table class="ns-table">
             <thead>
                 <tr>
-                    <th>Account Code</th>
                     <th>Name</th>
                     <th>Type</th>
                     <th>Subtype</th>
@@ -84,8 +83,7 @@ $accounts = $db->fetchAll("
             <tbody>
                 <?php foreach ($accounts as $row): ?>
                 <tr>
-                    <td style="font-weight: 600;"><?php echo htmlspecialchars($row['account_code']); ?></td>
-                    <td><?php echo htmlspecialchars($row['account_name']); ?></td>
+                    <td style="font-weight: 600;"><?php echo htmlspecialchars($row['account_name']); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['account_type'])); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['account_subtype'])); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['normal_balance'])); ?></td>

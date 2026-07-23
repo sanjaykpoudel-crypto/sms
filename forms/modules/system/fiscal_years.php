@@ -30,6 +30,14 @@ if ($selected_id) {
         }
     }
 }
+
+// Fetch settings & accounts for Closing Preferences tab
+$settings_rows = $db->fetchAll("SELECT meta_field, meta_value FROM system_info");
+$settings = [];
+foreach($settings_rows as $srow) {
+    $settings[$srow['meta_field']] = $srow['meta_value'];
+}
+$accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <style>
 .fy-dashboard { display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
@@ -79,6 +87,12 @@ if ($selected_id) {
 .ns-modal-close { cursor: pointer; color: #888; font-size: 18px; transition: color 0.2s; }
 .ns-modal-close:hover { color: #333; }
 .ns-modal-footer { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eef0f2; padding-top: 12px; margin-top: 18px; }
+
+/* Tabs Styling */
+.ns-tabs { display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 20px; }
+.ns-tab { padding: 12px 20px; font-weight: 600; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; display: flex; align-items: center; gap: 8px; }
+.ns-tab:hover { color: #003087; }
+.ns-tab.active { color: #003087; border-bottom-color: #003087; }
 </style>
 
 <div class="ns-page-header">
@@ -88,118 +102,205 @@ if ($selected_id) {
     </h1>
 </div>
 
-<div class="fy-dashboard">
-    <!-- LEFT: Periods List -->
-    <div class="fy-list-panel">
-        <div class="fy-header-bar">
-            <div class="fy-header-title"><i class="fas fa-calendar-alt"></i> Accounting Periods</div>
+<!-- TABS NAVIGATION -->
+<div class="ns-tabs">
+    <div class="ns-tab active" onclick="switchFyTab('tab-periods', this)"><i class="fas fa-calendar-alt"></i> Accounting Periods</div>
+    <div class="ns-tab" onclick="switchFyTab('tab-preferences', this)"><i class="fas fa-sliders-h"></i> Closing Preferences & Rules</div>
+</div>
+
+<!-- TAB 1: PERIODS DASHBOARD -->
+<div id="tab-periods" class="ns-fy-tab-content">
+    <div class="fy-dashboard">
+        <!-- LEFT: Periods List -->
+        <div class="fy-list-panel">
+            <div class="fy-header-bar">
+                <div class="fy-header-title"><i class="fas fa-calendar-alt"></i> Accounting Periods</div>
+            </div>
+            <div style="max-height: 600px; overflow-y: auto;">
+                <?php if (empty($list)): ?>
+                    <div style="padding: 30px; text-align: center; color: #888; font-size: 13px;">No accounting periods defined.</div>
+                <?php else: foreach ($list as $row): 
+                    $active_class = ($row['id'] === $selected_id) ? 'active' : '';
+                    $badge_class = 'badge-open';
+                    if ($row['status'] === 'closed') $badge_class = 'badge-closed';
+                    else if ($row['status'] === 'reopened') $badge_class = 'badge-reopened';
+                ?>
+                    <div class="fy-item-card <?= $active_class ?>" onclick="selectFY('<?= $row['id'] ?>')">
+                        <div class="fy-item-name"><?= htmlspecialchars($row['name']) ?></div>
+                        <div class="fy-item-dates">Period: <?= $row['start_date'] ?> to <?= $row['end_date'] ?></div>
+                        <span class="fy-status-badge <?= $badge_class ?>"><?= $row['status'] ?></span>
+                    </div>
+                <?php endforeach; endif; ?>
+            </div>
         </div>
-        <div style="max-height: 600px; overflow-y: auto;">
-            <?php if (empty($list)): ?>
-                <div style="padding: 30px; text-align: center; color: #888; font-size: 13px;">No accounting periods defined.</div>
-            <?php else: foreach ($list as $row): 
-                $active_class = ($row['id'] === $selected_id) ? 'active' : '';
-                $badge_class = 'badge-open';
-                if ($row['status'] === 'closed') $badge_class = 'badge-closed';
-                else if ($row['status'] === 'reopened') $badge_class = 'badge-reopened';
-            ?>
-                <div class="fy-item-card <?= $active_class ?>" onclick="selectFY('<?= $row['id'] ?>')">
-                    <div class="fy-item-name"><?= htmlspecialchars($row['name']) ?></div>
-                    <div class="fy-item-dates">Period: <?= $row['start_date'] ?> to <?= $row['end_date'] ?></div>
-                    <span class="fy-status-badge <?= $badge_class ?>"><?= $row['status'] ?></span>
-                </div>
-            <?php endforeach; endif; ?>
+
+        <!-- RIGHT: Period Details and Actions -->
+        <div class="fy-detail-panel">
+            <div class="fy-header-bar">
+                <div class="fy-header-title"><i class="fas fa-info-circle"></i> Period Dashboard</div>
+                <?php if ($selected_fy): ?>
+                    <button class="ns-btn" onclick="openFYModal(<?= htmlspecialchars(json_encode($selected_fy)) ?>)" style="padding: 2px 10px; font-size: 11px;"><i class="fas fa-edit"></i> Edit</button>
+                <?php endif; ?>
+            </div>
+            
+            <div class="fy-detail-body">
+                <?php if (!$selected_fy): ?>
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #888;">
+                        <i class="fas fa-calendar-check" style="font-size: 48px; opacity: 0.25; margin-bottom: 16px;"></i>
+                        <div style="font-size: 16px; font-weight: 600;">No Period Selected</div>
+                        <div style="font-size: 12px; margin-top: 6px;">Select an accounting period from the list on the left to manage it.</div>
+                    </div>
+                <?php else: 
+                    $is_closed = ($selected_fy['status'] === 'closed');
+                ?>
+                    <div class="fy-meta-grid">
+                        <div class="fy-meta-item">
+                            <div class="lbl">Fiscal Year</div>
+                            <div class="val" style="color:#003087; font-size:15px;"><?= htmlspecialchars($selected_fy['name']) ?></div>
+                        </div>
+                        <div class="fy-meta-item">
+                            <div class="lbl">Start / End Date</div>
+                            <div class="val"><?= $selected_fy['start_date'] ?> / <?= $selected_fy['end_date'] ?></div>
+                        </div>
+                        <div class="fy-meta-item">
+                            <div class="lbl">Status</div>
+                            <div class="val">
+                                <span class="badge" style="background: <?= $is_closed ? '#f3f4f6' : '#e6fffa'; ?>; color: <?= $is_closed ? '#4b5563' : '#047481'; ?>; padding: 2px 8px; border-radius: 4px; border: 1px solid currentColor; font-size: 11px; text-transform: uppercase; font-weight: 800;">
+                                    <?= $selected_fy['status'] ?>
+                                </span>
+                            </div>
+                        </div>
+                        <?php if ($is_closed): ?>
+                            <div class="fy-meta-item">
+                                <div class="lbl">Closed By</div>
+                                <div class="val"><?= htmlspecialchars($selected_fy['closed_by_name'] ?? $selected_fy['closed_by'] ?? 'System') ?></div>
+                            </div>
+                            <div class="fy-meta-item">
+                                <div class="lbl">Closed Date / Time</div>
+                                <div class="val"><?= $selected_fy['closing_date'] ?> <?= $selected_fy['closed_timestamp'] ? date('H:i', strtotime($selected_fy['closed_timestamp'])) : '' ?></div>
+                            </div>
+                        <?php elseif ($selected_fy['status'] === 'reopened'): ?>
+                            <div class="fy-meta-item">
+                                <div class="lbl">Reopened By</div>
+                                <div class="val"><?= htmlspecialchars($selected_fy['reopened_by_name'] ?? $selected_fy['reopened_by'] ?? 'User') ?></div>
+                            </div>
+                            <div class="fy-meta-item">
+                                <div class="lbl">Reopened Timestamp</div>
+                                <div class="val"><?= $selected_fy['reopened_timestamp'] ?></div>
+                            </div>
+                        <?php endif; ?>
+                        <?php if (!empty($selected_fy['notes'])): ?>
+                            <div class="fy-meta-item" style="grid-column: 1 / -1;">
+                                <div class="lbl">Notes / Reason</div>
+                                <div class="val" style="font-weight: 500; font-style: italic; color: #475569;"><?= nl2br(htmlspecialchars($selected_fy['notes'])) ?></div>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="fy-actions-bar">
+                        <button class="ns-btn" id="btn-validate" onclick="runValidation()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-tasks"></i> Validate Period</button>
+                        <button class="ns-btn" id="btn-preview" onclick="runPreview()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-eye"></i> Preview Closing</button>
+                        <button class="ns-btn ns-btn-primary" id="btn-close" onclick="openCloseModal()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-lock"></i> Close Fiscal Year</button>
+                        <button class="ns-btn" id="btn-reopen" onclick="openReopenModal()" <?= !$is_closed ? 'disabled' : '' ?> style="color:#d32f2f; border-color: currentColor;" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i class="fas fa-unlock"></i> Reopen Fiscal Year</button>
+                        
+                        <?php if (!empty($selected_fy['closing_journal_id'])): ?>
+                            <a href="?page=transactions/view&id=<?= $selected_fy['closing_journal_id'] ?>" class="ns-btn" id="btn-journal"><i class="fas fa-file-invoice"></i> View Closing Journal</a>
+                        <?php endif; ?>
+                        
+                        <button class="ns-btn" id="btn-print" onclick="printReport()" <?= !$is_closed ? 'disabled' : '' ?>><i class="fas fa-print"></i> Print Closing Report</button>
+                    </div>
+
+                    <!-- Operations Result Container -->
+                    <div class="fy-results-container" id="results-box">
+                        <div class="results-header">
+                            <span id="results-title">Validation Checks</span>
+                            <button class="ns-btn" style="padding: 2px 8px; font-size: 11px;" onclick="closeResultsBox()"><i class="fas fa-times"></i> Close</button>
+                        </div>
+                        <div id="results-content">
+                            <!-- Ajax populated -->
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
+</div>
 
-    <!-- RIGHT: Period Details and Actions -->
-    <div class="fy-detail-panel">
-        <div class="fy-header-bar">
-            <div class="fy-header-title"><i class="fas fa-info-circle"></i> Period Dashboard</div>
-            <?php if ($selected_fy): ?>
-                <button class="ns-btn" onclick="openFYModal(<?= htmlspecialchars(json_encode($selected_fy)) ?>)" style="padding: 2px 10px; font-size: 11px;"><i class="fas fa-edit"></i> Edit</button>
-            <?php endif; ?>
-        </div>
-        
-        <div class="fy-detail-body">
-            <?php if (!$selected_fy): ?>
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #888;">
-                    <i class="fas fa-calendar-check" style="font-size: 48px; opacity: 0.25; margin-bottom: 16px;"></i>
-                    <div style="font-size: 16px; font-weight: 600;">No Period Selected</div>
-                    <div style="font-size: 12px; margin-top: 6px;">Select an accounting period from the list on the left to manage it.</div>
+<!-- TAB 2: CLOSING PREFERENCES & RULES -->
+<div id="tab-preferences" class="ns-fy-tab-content" style="display:none;">
+    <div style="background:#fff; border:1px solid #dde2e8; border-radius:8px; padding:24px; box-shadow:0 1px 4px rgba(0,0,0,.05);">
+        <form id="fy-prefs-form" onsubmit="return handleFyPrefsSave(event)">
+            <div style="font-size:15px; font-weight:800; color:#003087; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:20px; border-bottom:1px solid #eef0f2; padding-bottom:10px;">
+                <i class="fas fa-sliders-h"></i> Fiscal Year Closing Preferences & Rules
+            </div>
+            
+            <div class="ns-form-row">
+                <div class="ns-form-group">
+                    <label class="ns-label">Retained Earnings Account <span class="ns-required">*</span></label>
+                    <select name="fy_retained_earnings_account" class="ns-select" required>
+                        <option value="">-- Select Account --</option>
+                        <?php foreach($accounts as $acc): ?>
+                            <option value="<?php echo $acc['id']; ?>" <?php echo ($settings['fy_retained_earnings_account'] ?? 'acc-3200') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
-            <?php else: 
-                $is_closed = ($selected_fy['status'] === 'closed');
-            ?>
-                <div class="fy-meta-grid">
-                    <div class="fy-meta-item">
-                        <div class="lbl">Fiscal Year</div>
-                        <div class="val" style="color:#003087; font-size:15px;"><?= htmlspecialchars($selected_fy['name']) ?></div>
-                    </div>
-                    <div class="fy-meta-item">
-                        <div class="lbl">Start / End Date</div>
-                        <div class="val"><?= $selected_fy['start_date'] ?> / <?= $selected_fy['end_date'] ?></div>
-                    </div>
-                    <div class="fy-meta-item">
-                        <div class="lbl">Status</div>
-                        <div class="val">
-                            <span class="badge" style="background: <?= $is_closed ? '#f3f4f6' : '#e6fffa'; ?>; color: <?= $is_closed ? '#4b5563' : '#047481'; ?>; padding: 2px 8px; border-radius: 4px; border: 1px solid currentColor; font-size: 11px; text-transform: uppercase; font-weight: 800;">
-                                <?= $selected_fy['status'] ?>
-                            </span>
-                        </div>
-                    </div>
-                    <?php if ($is_closed): ?>
-                        <div class="fy-meta-item">
-                            <div class="lbl">Closed By</div>
-                            <div class="val"><?= htmlspecialchars($selected_fy['closed_by_name'] ?? $selected_fy['closed_by'] ?? 'System') ?></div>
-                        </div>
-                        <div class="fy-meta-item">
-                            <div class="lbl">Closed Date / Time</div>
-                            <div class="val"><?= $selected_fy['closing_date'] ?> <?= $selected_fy['closed_timestamp'] ? date('H:i', strtotime($selected_fy['closed_timestamp'])) : '' ?></div>
-                        </div>
-                    <?php elseif ($selected_fy['status'] === 'reopened'): ?>
-                        <div class="fy-meta-item">
-                            <div class="lbl">Reopened By</div>
-                            <div class="val"><?= htmlspecialchars($selected_fy['reopened_by_name'] ?? $selected_fy['reopened_by'] ?? 'User') ?></div>
-                        </div>
-                        <div class="fy-meta-item">
-                            <div class="lbl">Reopened Timestamp</div>
-                            <div class="val"><?= $selected_fy['reopened_timestamp'] ?></div>
-                        </div>
-                    <?php endif; ?>
-                    <?php if (!empty($selected_fy['notes'])): ?>
-                        <div class="fy-meta-item" style="grid-column: 1 / -1;">
-                            <div class="lbl">Notes / Reason</div>
-                            <div class="val" style="font-weight: 500; font-style: italic; color: #475569;"><?= nl2br(htmlspecialchars($selected_fy['notes'])) ?></div>
-                        </div>
-                    <?php endif; ?>
+                <div class="ns-form-group">
+                    <label class="ns-label">Income Summary Account</label>
+                    <select name="fy_income_summary_account" class="ns-select">
+                        <option value="">-- Select Account --</option>
+                        <?php foreach($accounts as $acc): ?>
+                            <option value="<?php echo $acc['id']; ?>" <?php echo ($settings['fy_income_summary_account'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Dividend Payable Account</label>
+                    <select name="fy_dividend_payable_account" class="ns-select">
+                        <option value="">-- Select Account --</option>
+                        <?php foreach($accounts as $acc): ?>
+                            <option value="<?php echo $acc['id']; ?>" <?php echo ($settings['fy_dividend_payable_account'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
 
-                <div class="fy-actions-bar">
-                    <button class="ns-btn" id="btn-validate" onclick="runValidation()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-tasks"></i> Validate Period</button>
-                    <button class="ns-btn" id="btn-preview" onclick="runPreview()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-eye"></i> Preview Closing</button>
-                    <button class="ns-btn ns-btn-primary" id="btn-close" onclick="openCloseModal()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-lock"></i> Close Fiscal Year</button>
-                    <button class="ns-btn" id="btn-reopen" onclick="openReopenModal()" <?= !$is_closed ? 'disabled' : '' ?> style="color:#d32f2f; border-color: currentColor;" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i class="fas fa-unlock"></i> Reopen Fiscal Year</button>
-                    
-                    <?php if (!empty($selected_fy['closing_journal_id'])): ?>
-                        <a href="?page=transactions/view&id=<?= $selected_fy['closing_journal_id'] ?>" class="ns-btn" id="btn-journal"><i class="fas fa-file-invoice"></i> View Closing Journal</a>
-                    <?php endif; ?>
-                    
-                    <button class="ns-btn" id="btn-print" onclick="printReport()" <?= !$is_closed ? 'disabled' : '' ?>><i class="fas fa-print"></i> Print Closing Report</button>
+            <div class="ns-form-row" style="margin-top: 15px;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Opening Balance Journal Type</label>
+                    <select name="fy_opening_journal_type" class="ns-select">
+                        <option value="Journal" <?php echo (($settings['fy_opening_journal_type'] ?? 'Journal') === 'Journal') ? 'selected' : ''; ?>>Journal</option>
+                    </select>
                 </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Closing Journal Prefix</label>
+                    <input type="text" name="fy_closing_prefix" class="ns-input" value="<?php echo htmlspecialchars($settings['fy_closing_prefix'] ?? 'JE-CLOSE-'); ?>" placeholder="e.g. JE-CLOSE-">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Reclose Journal Action</label>
+                    <select name="fy_reclose_behavior" class="ns-select">
+                        <option value="delete" <?php echo (($settings['fy_reclose_behavior'] ?? 'delete') === 'delete') ? 'selected' : ''; ?>>Delete Previous Closing Journal</option>
+                        <option value="reverse" <?php echo (($settings['fy_reclose_behavior'] ?? 'delete') === 'reverse') ? 'selected' : ''; ?>>Reverse Previous Closing Journal</option>
+                    </select>
+                </div>
+            </div>
 
-                <!-- Operations Result Container -->
-                <div class="fy-results-container" id="results-box">
-                    <div class="results-header">
-                        <span id="results-title">Validation Checks</span>
-                        <button class="ns-btn" style="padding: 2px 8px; font-size: 11px;" onclick="closeResultsBox()"><i class="fas fa-times"></i> Close</button>
-                    </div>
-                    <div id="results-content">
-                        <!-- Ajax populated -->
-                    </div>
+            <div class="ns-form-row" style="margin-top: 15px;">
+                <div class="ns-form-group" style="display: flex; align-items: center; gap: 8px;">
+                    <input type="hidden" name="fy_auto_create_next" value="0">
+                    <input type="checkbox" name="fy_auto_create_next" value="1" <?php echo ($settings['fy_auto_create_next'] ?? '1') == '1' ? 'checked' : ''; ?>>
+                    <label class="ns-label" style="margin: 0;">Auto-create Next Fiscal Year</label>
                 </div>
-            <?php endif; ?>
-        </div>
+                <div class="ns-form-group" style="display: flex; align-items: center; gap: 8px;">
+                    <input type="hidden" name="fy_auto_lock_prev" value="0">
+                    <input type="checkbox" name="fy_auto_lock_prev" value="1" <?php echo ($settings['fy_auto_lock_prev'] ?? '1') == '1' ? 'checked' : ''; ?>>
+                    <label class="ns-label" style="margin: 0;">Lock Previous Periods Automatically</label>
+                </div>
+            </div>
+
+            <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid #eee; display: flex; justify-content: flex-end;">
+                <button type="submit" class="ns-btn ns-btn-primary" id="btn-save-fy-prefs"><i class="fas fa-save"></i> Save Closing Preferences</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -603,6 +704,45 @@ function executeReopen(e) {
 function printReport() {
     const fy_id = '<?= $selected_id ?>';
     window.open('?page=system/fiscal_years/print&id=' + fy_id, '_blank');
+}
+
+// Tab Switching
+function switchFyTab(tabId, el) {
+    $('.ns-fy-tab-content').hide();
+    $('.ns-tabs .ns-tab').removeClass('active');
+    $('#' + tabId).show();
+    $(el).addClass('active');
+}
+
+// Save Closing Preferences
+function handleFyPrefsSave(e) {
+    if (e) e.preventDefault();
+    const $btn = $('#btn-save-fy-prefs');
+    const originalText = $btn.html();
+    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Saving...');
+    
+    $.ajax({
+        url: 'api/system_settings.php',
+        method: 'POST',
+        data: $('#fy-prefs-form').serialize(),
+        dataType: 'json',
+        success: function(res) {
+            $btn.prop('disabled', false).html(originalText);
+            if (res.status === 'success') {
+                if (typeof nsNotify === 'function') nsNotify('Closing preferences saved successfully');
+                else alert('Closing preferences saved successfully');
+            } else {
+                if (typeof nsNotify === 'function') nsNotify('Error: ' + res.message, 'error');
+                else alert('Error: ' + res.message);
+            }
+        },
+        error: function() {
+            $btn.prop('disabled', false).html(originalText);
+            if (typeof nsNotify === 'function') nsNotify('An error occurred while saving preferences.', 'error');
+            else alert('An error occurred while saving preferences.');
+        }
+    });
+    return false;
 }
 
 // Number Formatting helper

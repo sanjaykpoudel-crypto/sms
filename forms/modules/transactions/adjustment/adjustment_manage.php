@@ -20,7 +20,7 @@ if ($id) {
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku, cost_price, current_stock FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
-$expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+$expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-warehouse" style="margin-right: 10px; color: var(--ns-accent);"></i>
@@ -52,7 +52,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                         <option value="">Select Account</option>
                         <?php foreach($expense_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['party_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo $acc['account_code'] . ' - ' . htmlspecialchars($acc['account_name']); ?>
+                                <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -105,7 +105,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                                 <select name="item_id[]" class="ns-select" onchange="adjFetchItem(this)" required>
                                     <option value="">Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
-                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?> (<?php echo $i['sku']; ?>)</option>
+                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </td>

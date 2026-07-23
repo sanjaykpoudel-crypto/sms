@@ -42,7 +42,7 @@ $low_stock_count = count(array_filter($filtered_rows, fn($r) => $r['stock_qty'] 
 </style>
 
 <?php 
-$catQuery = $db->fetchAll("SELECT id, name FROM reference_codes WHERE type = 'category' AND is_active = 1 ORDER BY updated_at DESC");
+$catQuery = $db->fetchAll("SELECT id, name FROM reference_codes WHERE type = 'category' AND is_active = 1 ORDER BY name ASC");
 $catOptions = ['' => 'All Categories'];
 foreach($catQuery as $c) $catOptions[$c['id']] = $c['name'];
 
@@ -51,7 +51,7 @@ rpt_filter_bar('Stock Summary', [
 ], 'tbl-stock'); ?>
 
 <div class="rpt-summary">
-    <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total SKUs</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total Items</div></div>
     <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_value) ?></div><div class="lbl">Stock Value (Cost)</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= $low_stock_count ?></div><div class="lbl">Low / Out of Stock</div></div>
 </div>
@@ -60,7 +60,7 @@ rpt_filter_bar('Stock Summary', [
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-stock">
       <thead><tr>
-        <th>SKU</th><th>Item Name</th><th>Category</th><th>Unit</th>
+        <th>Item Name</th><th>Category</th><th>Unit</th>
         <th style="text-align:right">Stock Qty</th>
         <th style="text-align:right">Reorder Lvl</th>
         <th style="text-align:right">Cost Price</th>
@@ -76,7 +76,6 @@ rpt_filter_bar('Stock Summary', [
             $row_class = $is_out ? 'stock-out' : ($is_low ? 'stock-low' : '');
       ?>
         <tr class="<?= $row_class ?>">
-          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td><?= htmlspecialchars($r['unit_type'] ?? '') ?></td>

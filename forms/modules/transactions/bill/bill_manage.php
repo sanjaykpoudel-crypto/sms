@@ -27,7 +27,7 @@ if ($id) {
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
 $all_vendors = $db->fetchAll("SELECT id, company_name, phone, email, pan_number, vat_number FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
-$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
+$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-file-invoice" style="margin-right: 10px; color: var(--ns-accent);"></i>
@@ -167,7 +167,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                                 <select name="item_id[]" class="ns-select" onchange="billFetchItem(this)" required>
                                     <option value="">Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
-                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?> (<?php echo $i['sku']; ?>)</option>
+                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </td>

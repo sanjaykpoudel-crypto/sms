@@ -17,13 +17,14 @@ $sql = "
         h.txn_date, 
         h.txn_number, 
         h.txn_type,
-        SUM(DISTINCT p.amount) as total_amount,
-        GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') as methods,
+        COALESCE(h.net_amount, SUM(p.amount), 0) as total_amount,
+        GROUP_CONCAT(DISTINCT COALESCE(acc.account_name, p.payment_method) SEPARATOR ', ') as methods,
         MAX(COALESCE(c.full_name, v.company_name)) as party_name,
         h.created_by,
         GROUP_CONCAT(DISTINCT COALESCE(ci.invoice_number, vb.vendor_invoice_number) ORDER BY COALESCE(ci.invoice_number, vb.vendor_invoice_number) SEPARATOR ', ') as applied_refs
     FROM transaction_headers h
     LEFT JOIN payments p ON h.id = p.header_id
+    LEFT JOIN accounts acc ON p.bank_account_id = acc.id
     LEFT JOIN customers c ON p.customer_id = c.id
     LEFT JOIN vendors v ON p.vendor_id = v.id
     LEFT JOIN transaction_links tl ON tl.parent_id = h.id

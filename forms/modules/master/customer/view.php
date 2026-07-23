@@ -176,7 +176,6 @@ if (!function_exists('getDiff')) {
         <div class="view-title">
             <h1><?php echo htmlspecialchars($customer['full_name']); ?></h1>
         </div>
-        <div class="view-subtitle">Customer Code: <?php echo htmlspecialchars($customer['customer_code']); ?></div>
     </div>
     <div class="view-actions">
         <a href="?page=master/customer/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Customer</a>
@@ -196,10 +195,6 @@ if (!function_exists('getDiff')) {
     <div class="detail-grid">
         <!-- Column 1 -->
         <div>
-            <div class="detail-group">
-                <div class="detail-label">Customer Code</div>
-                <div class="detail-value"><?php echo htmlspecialchars($customer['customer_code']); ?></div>
-            </div>
             <div class="detail-group">
                 <div class="detail-label">Full Name</div>
                 <div class="detail-value"><?php echo htmlspecialchars($customer['full_name']); ?></div>

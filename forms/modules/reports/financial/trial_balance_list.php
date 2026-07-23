@@ -25,7 +25,7 @@ $sql = "
     WHERE j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     GROUP BY a.id, a.account_code, a.account_name, a.account_type
     HAVING (total_debit != 0 OR total_credit != 0)
-    ORDER BY a.account_code ASC
+    ORDER BY a.account_name ASC
 ";
 
 $gl_data = $db->fetchAll($sql, [$start_date, $as_of]);

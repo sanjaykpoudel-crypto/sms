@@ -66,7 +66,7 @@ $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 
 ], 'tbl-inv-valuation'); ?>
 
 <div class="rpt-summary">
-    <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total SKUs</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total Items</div></div>
     <div class="rpt-summary-card"><div class="val"><?= number_format($total_qty, 0) ?></div><div class="lbl">Total Stock Qty</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#003087"><?= rpt_currency($total_cost_val) ?></div><div class="lbl">Valuation at Cost</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#2ecc71"><?= rpt_currency($total_retail_val) ?></div><div class="lbl">Valuation at Retail</div></div>
@@ -79,7 +79,6 @@ $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 
     <table class="ns-table" id="tbl-inv-valuation">
       <thead>
         <tr>
-          <th>SKU</th>
           <th>Item Name</th>
           <th>Category</th>
           <th>Unit</th>
@@ -100,7 +99,6 @@ $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 
         $markup = $cost_val > 0 ? ($profit / $cost_val) * 100 : 0;
       ?>
         <tr>
-          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td><?= htmlspecialchars($r['unit_type'] ?? '') ?></td>
@@ -116,7 +114,7 @@ $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 
       </tbody>
       <tfoot>
         <tr style="font-weight:700;background:#f8f9fa">
-          <td colspan="4">TOTAL</td>
+          <td colspan="3">TOTAL</td>
           <td style="text-align:right"><?= number_format($total_qty,0) ?></td>
           <td style="text-align:right">-</td>
           <td style="text-align:right;color:#003087"><?= rpt_currency($total_cost_val) ?></td>

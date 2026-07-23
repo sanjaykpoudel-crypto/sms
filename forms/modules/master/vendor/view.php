@@ -176,7 +176,6 @@ if (!function_exists('getDiff')) {
         <div class="view-title">
             <h1><?php echo htmlspecialchars($vendor['company_name']); ?></h1>
         </div>
-        <div class="view-subtitle">Vendor Code: <?php echo htmlspecialchars($vendor['vendor_code']); ?></div>
     </div>
     <div class="view-actions">
         <a href="?page=master/vendor/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Vendor</a>
@@ -196,10 +195,6 @@ if (!function_exists('getDiff')) {
     <div class="detail-grid">
         <!-- Column 1 -->
         <div>
-            <div class="detail-group">
-                <div class="detail-label">Vendor Code</div>
-                <div class="detail-value"><?php echo htmlspecialchars($vendor['vendor_code']); ?></div>
-            </div>
             <div class="detail-group">
                 <div class="detail-label">Company Name</div>
                 <div class="detail-value"><?php echo htmlspecialchars($vendor['company_name']); ?></div>

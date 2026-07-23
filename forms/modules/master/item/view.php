@@ -164,7 +164,6 @@ function getDiff($oldJson, $newJson) {
         <div class="view-title">
             <h1><?php echo htmlspecialchars($item['item_name']); ?></h1>
         </div>
-        <div class="view-subtitle">Item SKU: <?php echo htmlspecialchars($item['sku']); ?></div>
     </div>
     <div class="view-actions">
         <a href="?page=master/item/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Item</a>
@@ -183,10 +182,6 @@ function getDiff($oldJson, $newJson) {
     <div class="detail-grid">
         <!-- Column 1 -->
         <div>
-            <div class="detail-group">
-                <div class="detail-label">SKU</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['sku']); ?></div>
-            </div>
             <div class="detail-group">
                 <div class="detail-label">Item Name</div>
                 <div class="detail-value"><?php echo htmlspecialchars($item['item_name']); ?></div>

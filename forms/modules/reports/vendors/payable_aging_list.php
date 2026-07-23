@@ -83,7 +83,6 @@ foreach ($rows as $r) {
     <table class="ns-table" id="tbl-ap-aging">
       <thead>
         <tr>
-          <th>Code</th>
           <th>Vendor Company Name</th>
           <th style="text-align:right">Total Outstanding</th>
           <th style="text-align:right">0 - 30 Days</th>
@@ -95,7 +94,6 @@ foreach ($rows as $r) {
       <tbody>
         <?php foreach ($rows as $r): ?>
           <tr>
-            <td style="font-weight:700; color:#888;"><?= $r['vendor_code'] ?></td>
             <td style="font-weight:600;"><?= htmlspecialchars($r['vendor_name']) ?></td>
             <td style="text-align:right; font-weight:700; color:#c00;"><?= rpt_currency($r['total_due']) ?></td>
             <td style="text-align:right; color:<?= $r['bucket_30'] > 0 ? '#1a7f37' : '#ccc' ?>"><?= $r['bucket_30'] > 0 ? rpt_currency($r['bucket_30']) : '—' ?></td>
@@ -108,7 +106,6 @@ foreach ($rows as $r) {
       <tfoot>
         <tr style="font-weight:900; background:#003087; color:#fff">
           <th>TOTALS</th>
-          <th></th>
           <th style="text-align:right"><?= rpt_currency($total_due) ?></th>
           <th style="text-align:right"><?= rpt_currency($total_30) ?></th>
           <th style="text-align:right"><?= rpt_currency($total_60) ?></th>

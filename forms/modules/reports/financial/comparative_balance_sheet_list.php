@@ -122,7 +122,7 @@ $other_asset_accounts = $db->fetchAll("
       AND id != 'acc-1010' 
       AND account_subtype != 'bank'
       AND is_deleted = 0 AND is_active = 1
-    ORDER BY account_code ASC
+    ORDER BY account_name ASC
 ");
 $other_assets_rows = [];
 $other_assets_total_this = 0.0;
@@ -158,7 +158,7 @@ $other_liability_accounts = $db->fetchAll("
     WHERE account_type = 'liability' 
       AND account_subtype NOT IN ('payable', 'tax')
       AND is_deleted = 0 AND is_active = 1
-    ORDER BY account_code ASC
+    ORDER BY account_name ASC
 ");
 $other_liab_rows = [];
 $other_liab_total_this = 0.0;
@@ -190,7 +190,7 @@ $equity_accounts_list = $db->fetchAll("
     SELECT id, account_code, account_name FROM accounts 
     WHERE account_type = 'equity' 
       AND is_deleted = 0 AND is_active = 1
-    ORDER BY account_code ASC
+    ORDER BY account_name ASC
 ");
 $equity_rows = [];
 $equity_total_this = 0.0;

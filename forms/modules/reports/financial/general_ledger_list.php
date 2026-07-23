@@ -26,10 +26,10 @@ if ($raw_account === 'bank' || $raw_account === 'all_bank') {
 }
 
 // Fetch active accounts for the filter dropdown
-$accounts_list = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active=1 AND is_deleted=0 ORDER BY account_code ASC");
+$accounts_list = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active=1 AND is_deleted=0 ORDER BY account_name ASC");
 $acct_options = ['' => 'All Accounts'];
 foreach ($accounts_list as $a) { 
-    $acct_options[$a['id']] = $a['account_code'].' - '.$a['account_name']; 
+    $acct_options[$a['id']] = $a['account_name']; 
 }
 
 require_once 'api/reference_helper.php';
@@ -155,7 +155,7 @@ $closing_bal = $opening_bal + $net_change;
           <td style="font-weight:700"><?= htmlspecialchars($r['txn_number']) ?></td>
           <td><span class="ns-badge" style="background:#eef2ff;color:#003087;font-size:10px"><?= strtoupper($r['txn_type']) ?></span></td>
           <td style="font-size:12px"><?= htmlspecialchars($r['party']) ?></td>
-          <td style="font-weight:600;font-size:12px"><?= $r['account_code'] ?> - <?= htmlspecialchars($r['account_name']) ?></td>
+          <td style="font-weight:600;font-size:12px"><?= htmlspecialchars($r['account_name']) ?></td>
           <td style="font-size:11px;color:#666;max-width:200px" class="ns-text-truncate"><?= htmlspecialchars($r['memo'] ?? '-') ?></td>
           <td style="text-align:right;color:#003087;font-weight:700"><?= $r['entry_type']==='debit' ? rpt_currency($r['amount']) : '-' ?></td>
           <td style="text-align:right;color:#c00;font-weight:700"><?= $r['entry_type']==='credit' ? rpt_currency($r['amount']) : '-' ?></td>

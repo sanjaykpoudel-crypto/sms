@@ -20,7 +20,7 @@ if ($id) {
 }
 
 // Fetch Accounts for Paid From
-$paid_from_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 AND account_type IN ('asset') ORDER BY account_code ASC");
+$paid_from_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 AND account_type IN ('asset') ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'Enter'; ?> Expense</div>
@@ -53,7 +53,7 @@ $paid_from_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM 
                         <option value="">Select Account</option>
                         <?php foreach($paid_from_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['paid_from_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_code'] . ' - ' . $acc['account_name']); ?>
+                                <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

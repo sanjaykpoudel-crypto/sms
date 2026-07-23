@@ -92,8 +92,8 @@ function handleTransaction($json, $pdo, $db) {
                 }
 
                 // Auto-generate missing master record codes
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
-                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code'];
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
+                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code', 'accounts' => 'account_code'];
                 
                 if (isset($refTypes[$tableName]) && empty($data[$codeFields[$tableName]])) {
                     $data[$codeFields[$tableName]] = getNextTransactionNumber($refTypes[$tableName]);
@@ -111,8 +111,8 @@ function handleTransaction($json, $pdo, $db) {
                 }
 
                 // Increment auto-numbering for master records
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
-                if (isset($refTypes[$tableName])) {
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
+                if (isset($refTypes[$tableName]) && isset($data[$codeFields[$tableName]])) {
                     incrementTransactionNumber($refTypes[$tableName]);
                 }
                 break;
@@ -124,8 +124,8 @@ function handleTransaction($json, $pdo, $db) {
                 $values = [];
                 
                 // Auto-generate missing master codes on update if empty
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
-                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code'];
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
+                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code', 'accounts' => 'account_code'];
                 if (isset($refTypes[$tableName])) {
                     $codeField = $codeFields[$tableName];
                     if (array_key_exists($codeField, $data) && empty($data[$codeField])) {

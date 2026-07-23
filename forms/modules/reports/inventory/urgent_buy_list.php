@@ -59,7 +59,6 @@ foreach ($items as $r) {
         <table class="ns-table" id="tbl-urgent-buy">
             <thead>
                 <tr>
-                    <th>SKU</th>
                     <th>Item Name</th>
                     <th>Category</th>
                     <th style="text-align:right">Current Stock</th>
@@ -94,7 +93,6 @@ foreach ($items as $r) {
                 }
             ?>
                 <tr style="background:<?= $row_bg ?>">
-                    <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
                     <td style="text-align:right;font-weight:800;color:<?= $stock <= 0 ? '#c0392b' : '#d35400' ?>"><?= number_format($stock, 0) ?></td>
@@ -107,7 +105,7 @@ foreach ($items as $r) {
                 </tr>
             <?php endforeach; else: ?>
                 <tr>
-                    <td colspan="10" style="text-align:center;color:#27ae60;font-weight:bold;padding:30px">
+                    <td colspan="9" style="text-align:center;color:#27ae60;font-weight:bold;padding:30px">
                         <i class="fas fa-check-circle" style="font-size:24px;margin-bottom:10px;display:block"></i>
                         All items are fully stocked! No urgent purchases required.
                     </td>
@@ -117,7 +115,7 @@ foreach ($items as $r) {
             <?php if (!empty($items)): ?>
             <tfoot>
                 <tr style="background:#f8f9fa;font-weight:800;border-top:2px solid #ccc">
-                    <td colspan="6">TOTAL EST. REPLENISHMENT BUDGET</td>
+                    <td colspan="5">TOTAL EST. REPLENISHMENT BUDGET</td>
                     <td style="text-align:right;color:#2980b9"><?= number_format($total_replenish_qty, 0) ?></td>
                     <td></td>
                     <td style="text-align:right;color:#c0392b"><?= rpt_currency($total_replenish_cost) ?></td>

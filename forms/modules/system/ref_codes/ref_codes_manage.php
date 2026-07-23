@@ -14,7 +14,7 @@ $txn_types = [
     'purchase_order'   => ['label' => 'Purchase Order', 'default_prefix' => 'PO', 'icon' => 'fa-shopping-cart', 'group' => 'Purchases & Payables'],
     'journal_entry'    => ['label' => 'Journal Entry', 'default_prefix' => 'JV', 'icon' => 'fa-book', 'group' => 'Financials'],
     'expense'          => ['label' => 'Expense Record', 'default_prefix' => 'EXP', 'icon' => 'fa-receipt', 'group' => 'Financials'],
-    'item'             => ['label' => 'Items (SKU)', 'default_prefix' => 'ITM', 'icon' => 'fa-box', 'group' => 'Master Records'],
+    'item'             => ['label' => 'Item IDs', 'default_prefix' => 'ITM', 'icon' => 'fa-box', 'group' => 'Master Records'],
     'customer'         => ['label' => 'Customer IDs', 'default_prefix' => 'CUST', 'icon' => 'fa-users', 'group' => 'Master Records'],
     'vendor'           => ['label' => 'Vendor IDs', 'default_prefix' => 'VEND', 'icon' => 'fa-truck', 'group' => 'Master Records']
 ];

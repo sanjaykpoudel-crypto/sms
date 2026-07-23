@@ -49,7 +49,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-sales-item">
       <thead><tr>
-        <th>SKU</th><th>Item Name</th><th>Category</th>
+        <th>Item Name</th><th>Category</th>
         <th style="text-align:right">Qty Sold</th>
         <th style="text-align:right">Revenue</th>
         <th style="text-align:right">Gross Profit</th>
@@ -61,7 +61,6 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
         $color = $margin >= 20 ? '#1a7f37' : ($margin >= 10 ? '#9a6700' : '#c00');
       ?>
         <tr>
-          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td style="text-align:right"><?= number_format($r['qty_sold'],2) ?></td>
@@ -72,7 +71,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="3">TOTAL</td>
+        <td colspan="2">TOTAL</td>
         <td style="text-align:right"><?= number_format($total_qty,2) ?></td>
         <td style="text-align:right"><?= rpt_currency($total_revenue) ?></td>
         <td style="text-align:right"><?= rpt_currency($total_profit) ?></td>

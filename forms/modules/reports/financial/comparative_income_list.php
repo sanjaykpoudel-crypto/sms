@@ -84,7 +84,7 @@ $accounts = $db->fetchAll("
     SELECT id, account_code, account_name, account_type, account_subtype
     FROM accounts
     WHERE account_type IN ('income', 'expense') AND is_deleted = 0 AND is_active = 1
-    ORDER BY account_code ASC
+    ORDER BY account_name ASC
 ");
 
 // 8. Group accounts into sections
@@ -316,7 +316,7 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                     $var = render_variance_cols($rev['this_val'], $rev['prev_val'], false);
                 ?>
                     <tr>
-                        <td><?= htmlspecialchars($rev['code'] . ' - ' . $rev['name']) ?></td>
+                        <td><?= htmlspecialchars($rev['name']) ?></td>
                         <td><?= rpt_currency($rev['this_val']) ?></td>
                         <td><?= rpt_currency($rev['prev_val']) ?></td>
                         <td><?= $var['amount'] ?></td>
@@ -351,7 +351,7 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                     $var = render_variance_cols($cogs['this_val'], $cogs['prev_val'], true);
                 ?>
                     <tr>
-                        <td><?= htmlspecialchars($cogs['code'] . ' - ' . $cogs['name']) ?></td>
+                        <td><?= htmlspecialchars($cogs['name']) ?></td>
                         <td><?= rpt_currency($cogs['this_val']) ?></td>
                         <td><?= rpt_currency($cogs['prev_val']) ?></td>
                         <td><?= $var['amount'] ?></td>
@@ -398,7 +398,7 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                     $var = render_variance_cols($exp['this_val'], $exp['prev_val'], true);
                 ?>
                     <tr>
-                        <td><?= htmlspecialchars($exp['code'] . ' - ' . $exp['name']) ?></td>
+                        <td><?= htmlspecialchars($exp['name']) ?></td>
                         <td><?= rpt_currency($exp['this_val']) ?></td>
                         <td><?= rpt_currency($exp['prev_val']) ?></td>
                         <td><?= $var['amount'] ?></td>

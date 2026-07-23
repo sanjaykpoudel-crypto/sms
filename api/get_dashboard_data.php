@@ -426,7 +426,7 @@ $bank_accounts = $db->fetchAll("
     FROM accounts
     WHERE (account_subtype IN ('bank', 'cash') OR account_code LIKE '10%')
       AND is_active = 1 AND is_deleted = 0
-    ORDER BY account_code ASC
+    ORDER BY account_name ASC
 ");
 
 $pay_methods = [];

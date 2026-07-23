@@ -8,9 +8,9 @@ $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 $item_id   = $_GET['item_id']   ?? '';
 
-$items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 AND is_active=1 ORDER BY updated_at DESC");
+$items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 AND is_active=1 ORDER BY item_name ASC");
 $item_options = ['' => 'All Items'];
-foreach ($items as $it) { $item_options[$it['id']] = $it['sku'].' - '.$it['item_name']; }
+foreach ($items as $it) { $item_options[$it['id']] = $it['item_name']; }
 
 $params = [
     'date_from' => $date_from,
@@ -60,7 +60,7 @@ $rows = $db->fetchAll("
     LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     WHERE i.is_deleted = 0 AND i.is_active = 1 $item_clause
     GROUP BY i.id, i.sku, i.item_name, i.cost_price
-    ORDER BY i.sku, i.item_name
+    ORDER BY i.item_name ASC
 ", $params);
 
 $filtered_rows = [];
@@ -89,7 +89,7 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-stock-ledger">
       <thead><tr>
-        <th>SKU</th><th>Item Name</th>
+        <th>Item Name</th>
         <th style="text-align:right">Opening Qty</th>
         <th style="text-align:right">Qty In</th>
         <th style="text-align:right">Qty Out</th>
@@ -99,7 +99,7 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
       </tr></thead>
       <tbody>
       <?php if (empty($filtered_rows)): ?>
-        <tr><td colspan="8" style="text-align:center;color:#888;padding:30px">No stock items found.</td></tr>
+        <tr><td colspan="7" style="text-align:center;color:#888;padding:30px">No stock items found.</td></tr>
       <?php else: 
         $grand_opening = 0;
         $grand_closing = 0;
@@ -112,7 +112,6 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
             $grand_value += $stock_value;
       ?>
         <tr>
-          <td style="font-weight:600"><?= htmlspecialchars($r['sku']) ?></td>
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td style="text-align:right;color:#666"><?= number_format($r['opening_qty'],0) ?></td>
           <td style="text-align:right;color:#1a7f37;font-weight:600"><?= $r['qty_in']>0 ? number_format($r['qty_in'],0) : '—' ?></td>
@@ -124,7 +123,7 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="2">TOTAL</td>
+        <td colspan="1">TOTAL</td>
         <td style="text-align:right;color:#666"><?= number_format($grand_opening,0) ?></td>
         <td style="text-align:right;color:#1a7f37"><?= number_format($total_in,0) ?></td>
         <td style="text-align:right;color:#c00"><?= number_format($total_out,0) ?></td>

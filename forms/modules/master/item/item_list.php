@@ -18,7 +18,7 @@ FROM items i
 LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category' 
 LEFT JOIN reference_codes r2 ON i.unit_type = r2.id AND r2.type IN ('unit', 'units') 
 WHERE i.is_deleted = 0 $status_filter
-ORDER BY i.updated_at DESC");
+ORDER BY i.item_name ASC");
 ?>
 <div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
     <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
@@ -39,7 +39,6 @@ ORDER BY i.updated_at DESC");
         <table class="ns-table">
             <thead>
                 <tr>
-                    <th>SKU</th>
                     <th>Item Name</th>
                     <th>Category</th>
                     <th style="text-align: center;">Units</th>
@@ -53,7 +52,6 @@ ORDER BY i.updated_at DESC");
             <tbody>
                 <?php foreach ($items as $row): ?>
                 <tr>
-                    <td style="font-weight: 600;"><?php echo htmlspecialchars($row['sku']); ?></td>
                     <td><?php echo htmlspecialchars($row['item_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['category_name'] ?? ($row['item_category'] ? ucfirst($row['item_category']) : 'Uncategorized')); ?></td>
                     <td style="text-align: center;"><?php echo htmlspecialchars($row['unit_name'] ?? $row['unit_type']); ?></td>
