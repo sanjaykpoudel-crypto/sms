@@ -48,6 +48,7 @@ $vendors = $db->fetchAll("
         <table class="ns-table">
             <thead>
                 <tr>
+                    <th width="50" style="text-align: center;">#</th>
                     <th>Company Name</th>
                     <th>Contact</th>
                     <th>Phone</th>
@@ -60,10 +61,11 @@ $vendors = $db->fetchAll("
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($vendors as $row): 
+                <?php $sn = 1; foreach ($vendors as $row): 
                     $remaining = $row['total_purchase'] - $row['total_paid'];
                 ?>
                 <tr>
+                    <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td><?php echo htmlspecialchars($row['company_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['contact_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>

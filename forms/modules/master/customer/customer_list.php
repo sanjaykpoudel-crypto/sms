@@ -62,6 +62,7 @@ $customers = $db->fetchAll(
         <table class="ns-table">
             <thead>
                 <tr>
+                    <th width="50" style="text-align: center;">#</th>
                     <th>Full Name</th>
                     <th>Type</th>
                     <th>Phone</th>
@@ -74,10 +75,11 @@ $customers = $db->fetchAll(
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($customers as $row): 
+                <?php $sn = 1; foreach ($customers as $row): 
                     $remaining = $row['total_due'];
                 ?>
                 <tr>
+                    <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td><?php echo htmlspecialchars($row['full_name']); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['customer_type'])); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>

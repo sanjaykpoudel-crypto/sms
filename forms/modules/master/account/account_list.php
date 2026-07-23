@@ -71,6 +71,7 @@ $accounts = $db->fetchAll("
         <table class="ns-table">
             <thead>
                 <tr>
+                    <th width="50" style="text-align: center;">#</th>
                     <th>Name</th>
                     <th>Type</th>
                     <th>Subtype</th>
@@ -81,8 +82,9 @@ $accounts = $db->fetchAll("
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($accounts as $row): ?>
+                <?php $sn = 1; foreach ($accounts as $row): ?>
                 <tr>
+                    <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td style="font-weight: 600;"><?php echo htmlspecialchars($row['account_name']); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['account_type'])); ?></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['account_subtype'])); ?></td>

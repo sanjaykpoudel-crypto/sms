@@ -39,6 +39,7 @@ ORDER BY i.item_name ASC");
         <table class="ns-table">
             <thead>
                 <tr>
+                    <th width="50" style="text-align: center;">#</th>
                     <th>Item Name</th>
                     <th>Category</th>
                     <th style="text-align: center;">Units</th>
@@ -50,8 +51,9 @@ ORDER BY i.item_name ASC");
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($items as $row): ?>
+                <?php $sn = 1; foreach ($items as $row): ?>
                 <tr>
+                    <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td><?php echo htmlspecialchars($row['item_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['category_name'] ?? ($row['item_category'] ? ucfirst($row['item_category']) : 'Uncategorized')); ?></td>
                     <td style="text-align: center;"><?php echo htmlspecialchars($row['unit_name'] ?? $row['unit_type']); ?></td>

@@ -25,6 +25,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
         <table class="ns-table">
             <thead>
                 <tr>
+                    <th width="50" style="text-align: center;">#</th>
                     <th>Name</th>
                     <th>Username</th>
                     <th>Email</th>
@@ -34,8 +35,9 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($list as $row): ?>
+                <?php $sn = 1; foreach ($list as $row): ?>
                 <tr>
+                    <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td style="font-weight: 600; color: #0055aa;"><?php echo htmlspecialchars($row['full_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['username']); ?></td>
                     <td><?php echo htmlspecialchars($row['email']); ?></td>
@@ -56,7 +58,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
                 <?php endforeach; ?>
                 <?php if (empty($list)): ?>
                 <tr>
-                    <td colspan="6" style="text-align: center; padding: 20px; color: #999;">No users found.</td>
+                    <td colspan="7" style="text-align: center; padding: 20px; color: #999;">No users found.</td>
                 </tr>
                 <?php endif; ?>
             </tbody>
