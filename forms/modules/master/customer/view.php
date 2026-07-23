@@ -178,8 +178,8 @@ if (!function_exists('getDiff')) {
         </div>
     </div>
     <div class="view-actions">
-        <a href="?page=master/customer/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Customer</a>
-        <a href="?page=master/customer" class="ns-btn">Back to List</a>
+        <a href="?page=master/customer/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
+        <a href="?page=master/customer" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

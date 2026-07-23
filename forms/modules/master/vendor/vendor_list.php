@@ -33,7 +33,7 @@ $vendors = $db->fetchAll("
     <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         Vendors
     </h1>
-    <a href="?page=master/vendor/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Vendor</a>
+    <a href="?page=master/vendor/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New</a>
 </div>
 
 <div style="display: none;">

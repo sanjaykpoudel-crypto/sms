@@ -58,14 +58,14 @@ if ($id) {
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : ($is_copy ? 'Copy' : 'New'); ?> Cash Denomination</div>
     <div class="ns-page-actions">
-        <button type="button" onclick="submitCashDenom()" class="ns-btn ns-btn-primary">Save</button>
+        <button type="button" onclick="submitCashDenom()" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
         <?php if ($id): ?>
         <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/cash_denom')"><i class="fas fa-trash-alt"></i> Delete</button>
         <button type="button" onclick="copyToNew()" class="ns-btn" style="background: #f39c12; color: #fff; border-color: #e67e22;" title="Copy all data to a new denomination entry">
             <i class="fas fa-copy"></i> Copy to New
         </button>
         <?php endif; ?>
-        <a href="?page=transactions/cash_denom" class="ns-btn">Cancel</a>
+        <a href="?page=transactions/cash_denom" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

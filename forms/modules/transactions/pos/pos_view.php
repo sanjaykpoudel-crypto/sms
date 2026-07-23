@@ -43,11 +43,11 @@ $erp_header = $db->fetchOne("SELECT id, txn_number FROM transaction_headers WHER
     <h1 class="ns-page-title">
         <i class="fas fa-file-invoice-dollar"></i> POS Sale: <?php echo htmlspecialchars($pos['invoice_no']); ?>
         <div style="display: flex; gap: 10px;">
-            <a href="?page=transactions/pos" class="ns-btn"><i class="fas fa-arrow-left"></i> Back to List</a>
-            <a href="api/print_pos.php?id=<?php echo $id; ?>" target="_blank" class="ns-btn ns-btn-primary"><i class="fas fa-print"></i> Print Receipt</a>
+            <a href="api/print_pos.php?id=<?php echo $id; ?>" target="_blank" class="ns-btn ns-btn-primary"><i class="fas fa-print"></i> Print</a>
             <?php if($pos['status'] == 'completed'): ?>
                 <button class="ns-btn ns-btn-danger" onclick="initiateReturn()"><i class="fas fa-undo"></i> Return / Refund</button>
             <?php endif; ?>
+            <a href="?page=transactions/pos" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
         </div>
     </h1>
 </div>

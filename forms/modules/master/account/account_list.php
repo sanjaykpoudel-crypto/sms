@@ -54,7 +54,7 @@ $accounts = $db->fetchAll("
         Chart of Accounts
     </h1>
     <div style="display: flex; gap: 10px; align-items: center;">
-        <a href="?page=master/account/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Account</a>
+        <a href="?page=master/account/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New</a>
         <a href="?page=master/account/opening_balance" class="ns-btn ns-btn-secondary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a>
     </div>
 </div>

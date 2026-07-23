@@ -166,8 +166,8 @@ function getDiff($oldJson, $newJson) {
         </div>
     </div>
     <div class="view-actions">
-        <a href="?page=master/item/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Item</a>
-        <a href="?page=master/item" class="ns-btn">Back to List</a>
+        <a href="?page=master/item/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
+        <a href="?page=master/item" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

@@ -12,7 +12,7 @@ $list = $db->fetchAll("SELECT t.*, c.full_name as customer_name, ci.total_amount
     <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         <i class="fas fa-file-invoice-dollar" style="color: #0284c7; margin-right: 8px;"></i> Sales Invoices
     </h1>
-    <a href="?page=transactions/invoice/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Transaction</a>
+    <a href="?page=transactions/invoice/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New</a>
 </div>
 
 <div class="ns-portlet">

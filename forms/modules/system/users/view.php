@@ -170,8 +170,8 @@ function getDiff($oldJson, $newJson) {
         <div class="view-subtitle">Employee Username: <?php echo htmlspecialchars($user['username']); ?></div>
     </div>
     <div class="view-actions">
-        <a href="?page=system/users/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Employee</a>
-        <a href="?page=system/users" class="ns-btn">Back to List</a>
+        <a href="?page=system/users/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
+        <a href="?page=system/users" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

@@ -204,9 +204,9 @@ $prio_info = $priority_map[$activity['priority']];
         </div>
     </div>
     <div class="view-actions">
-        <a href="?page=activity/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary">Edit Activity</a>
+        <a href="?page=activity/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
         <button class="ns-btn" style="color: #c00;" onclick="deleteAndRedirect('<?php echo $id; ?>')"><i class="fas fa-trash"></i> Delete</button>
-        <a href="?page=activity" class="ns-btn">Back to List</a>
+        <a href="?page=activity" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

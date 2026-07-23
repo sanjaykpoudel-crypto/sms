@@ -9,7 +9,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
 <div class="ns-page-header">
     <h1 class="ns-page-title">
         Employees & Users
-        <a href="?page=system/users/manage" class="ns-btn ns-btn-primary">New Employee</a>
+        <a href="?page=system/users/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New</a>
     </h1>
 </div>
 

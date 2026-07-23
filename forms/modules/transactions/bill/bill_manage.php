@@ -33,7 +33,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
     <div class="ns-form-title"><i class="fas fa-file-invoice" style="margin-right: 10px; color: var(--ns-accent);"></i>
         <?php echo $id ? 'Edit' : 'Enter'; ?> Bill</div>
     <div class="ns-page-actions">
-        <button type="submit" form="bill-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> <?php echo $id ? 'Edit' : 'Save'; ?> Bill</button>
+        <button type="submit" form="bill-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
         <?php if ($id): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/bill')"><i class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>

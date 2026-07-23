@@ -423,7 +423,7 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
             <?php endif; ?>
             
             <a href="?page=transactions/print&id=<?php echo $id; ?>" target="_blank" class="ns-btn ns-btn-primary"><i class="fas fa-print"></i> Print</a>
-            <a href="javascript:history.back()" class="ns-btn"><i class="fas fa-arrow-left"></i> Back</a>
+            <a href="javascript:history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
         </div>
     </div>
 </div>

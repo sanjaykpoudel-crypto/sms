@@ -27,11 +27,11 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'New'; ?> Journal Entry</div>
     <div class="ns-page-actions">
-        <button type="submit" form="journal-form" class="ns-btn ns-btn-primary"><?php echo $id ? 'Edit' : 'Save'; ?></button>
+        <button type="submit" form="journal-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
         <?php if ($id): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/journal')"><i class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
-        <button type="button" onclick="window.location.href='?page=transactions/journal'" class="ns-btn">Cancel</button>
+        <a href="?page=transactions/journal" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 

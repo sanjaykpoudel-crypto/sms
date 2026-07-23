@@ -12,7 +12,7 @@ $list = $db->fetchAll("SELECT t.*, v.company_name as vendor_name, vb.total_amoun
     <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         <i class="fas fa-file-invoice" style="color: #8b5cf6; margin-right: 8px;"></i> Vendor Bills
     </h1>
-    <a href="?page=transactions/bill/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Transaction</a>
+    <a href="?page=transactions/bill/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New</a>
 </div>
 
 <div class="ns-portlet">
