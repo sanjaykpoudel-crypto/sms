@@ -15,40 +15,40 @@ foreach ($customers_list as $c) {
     $customer_options[$c['id']] = $c['full_name'];
 }
 
+$where_cust = ($customer_id !== '') ? " AND (ci.customer_id = '$customer_id' OR p.customer_id = '$customer_id')" : "";
+
 $sql = "
     SELECT 
         hp.txn_date as payment_date,
         hp.txn_number as payment_number,
         hp.id as payment_id,
-        c.full_name as customer_name,
+        COALESCE(c.full_name, c_j.full_name) as customer_name,
         hb.txn_number as invoice_number,
         hb.id as invoice_id,
         hb.txn_date as invoice_date,
-        ci.total_amount as invoice_amount,
+        COALESCE(ci.total_amount, (SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) FROM journal_entries j WHERE j.header_id = hb.id)) as invoice_amount,
         CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(14, 2)) as paid_amount,
         GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') as payment_methods,
         GROUP_CONCAT(DISTINCT a.account_name SEPARATOR ', ') as paid_to
     FROM transaction_links tl
     JOIN transaction_headers hp ON tl.parent_id = hp.id
     JOIN transaction_headers hb ON tl.child_id = hb.id
-    JOIN customer_invoices ci ON hb.id = ci.header_id
+    LEFT JOIN customer_invoices ci ON hb.id = ci.header_id
     LEFT JOIN customers c ON ci.customer_id = c.id
-    LEFT JOIN payments p ON hp.id = p.header_id AND p.customer_id = ci.customer_id
+    LEFT JOIN customers c_j ON hb.party_id = c_j.id
+    LEFT JOIN payments p ON hp.id = p.header_id
     LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE hp.txn_type = 'customer_payment'
       AND hp.is_deleted = 0
       AND hp.status NOT IN ('voided', 'draft')
-      AND hb.txn_type = 'customer_invoice'
+      AND hb.txn_type IN ('customer_invoice', 'Journal', 'journal_entry')
       AND hb.is_deleted = 0
       AND hb.status NOT IN ('voided', 'draft')
-      AND hp.txn_date BETWEEN ? AND ?
+      AND hp.txn_date BETWEEN ? AND ? {$where_cust}
+    GROUP BY tl.id 
+    ORDER BY hp.txn_date DESC, hp.txn_number DESC
 ";
 $params = [$date_from, $date_to];
-if ($customer_id !== '') {
-    $sql .= " AND ci.customer_id = ?";
-    $params[] = $customer_id;
-}
-$sql .= " GROUP BY tl.id ORDER BY hp.txn_date DESC, hp.txn_number DESC";
 $rows = $db->fetchAll($sql, $params);
 
 // Calculate distinct payment count and amounts

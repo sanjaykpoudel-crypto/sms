@@ -202,23 +202,24 @@ function handleTransaction($json, $pdo, $db) {
                     }
 
                     if ($txn_type === 'customer_payment' || $txn_type === 'vendor_payment') {
-                        $party_type = ($txn_type === 'customer_payment') ? 'customer' : 'vendor';
-                        $old_links = $db->fetchAll("SELECT child_id as applied_to_id, link_type FROM transaction_links WHERE parent_id = ?", [$primaryValue]);
-                        foreach ($old_links as $link) {
-                            $link_amount = (float)(explode(':', $link['link_type'])[1] ?? 0);
-                            if ($link_amount <= 0) continue;
-                            if ($party_type === 'customer') {
-                                $pdo->prepare("UPDATE customer_invoices SET amount_paid = amount_paid - ?, balance_due = balance_due + ?, payment_status = CASE WHEN balance_due + ? >= total_amount THEN 'unpaid' ELSE 'partial' END WHERE header_id = ?")->execute([$link_amount, $link_amount, $link_amount, $link['applied_to_id']]);
-                                $pdo->prepare("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM customer_invoices WHERE header_id = ?) >= (SELECT total_amount FROM customer_invoices WHERE header_id = ?) THEN 'open' ELSE 'partial' END WHERE id = ?")->execute([$link['applied_to_id'], $link['applied_to_id'], $link['applied_to_id']]);
-                            } else {
-                                $pdo->prepare("UPDATE vendor_bills SET amount_paid = amount_paid - ?, balance_due = balance_due + ?, payment_status = CASE WHEN balance_due + ? >= total_amount THEN 'unpaid' ELSE 'partial' END WHERE header_id = ?")->execute([$link_amount, $link_amount, $link_amount, $link['applied_to_id']]);
-                                $pdo->prepare("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM vendor_bills WHERE header_id = ?) >= (SELECT total_amount FROM vendor_bills WHERE header_id = ?) THEN 'open' ELSE 'partial' END WHERE id = ?")->execute([$link['applied_to_id'], $link['applied_to_id'], $link['applied_to_id']]);
-                            }
-                        }
+                        // Collect all document IDs linked to this payment before deleting
+                        $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$primaryValue]);
+                        $old_pay_links = $db->fetchAll("SELECT applied_to_txn_id FROM payments WHERE header_id = ? AND applied_to_txn_id IS NOT NULL", [$primaryValue]);
+                        
+                        $affected_doc_ids = [];
+                        foreach ($old_links as $l) { if (!empty($l['applied_to_id'])) $affected_doc_ids[] = $l['applied_to_id']; }
+                        foreach ($old_pay_links as $pl) { if (!empty($pl['applied_to_txn_id'])) $affected_doc_ids[] = $pl['applied_to_txn_id']; }
+                        $affected_doc_ids = array_unique($affected_doc_ids);
+
                         // Delete associated payments, links, and journal entries
                         $pdo->prepare("DELETE FROM payments WHERE header_id = ?")->execute([$primaryValue]);
                         $pdo->prepare("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?")->execute([$primaryValue, $primaryValue]);
                         $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$primaryValue]);
+
+                        // Recalculate status and balance due on linked invoices, bills, and journal entries
+                        foreach ($affected_doc_ids as $doc_id) {
+                            recalculate_document_payment_status($doc_id, $pdo);
+                        }
                     }
                     // Delete cash denomination child rows when deleting a cash_denomination transaction
                     if ($txn_type === 'cash_denomination') {

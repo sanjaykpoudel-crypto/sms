@@ -15,6 +15,11 @@ foreach ($customers_list as $c) {
     $customer_options[$c['id']] = $c['full_name'];
 }
 
+$where_cust = ($customer_id !== '') ? " AND ci.customer_id = '$customer_id'" : "";
+$where_cust_j = ($customer_id !== '') ? " AND (j.party_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
+$where_overdue = ($status === 'overdue') ? " AND ci.due_date < '$as_of_date'" : "";
+$where_overdue_j = ($status === 'overdue') ? " AND th.txn_date < '$as_of_date'" : "";
+
 $sql = "
     SELECT 
         th.id as header_id,
@@ -30,23 +35,35 @@ $sql = "
     JOIN transaction_headers th ON ci.header_id = th.id
     LEFT JOIN customers c ON ci.customer_id = c.id
     WHERE th.is_deleted = 0 
-      AND th.txn_type = 'customer_invoice'
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND ci.balance_due > 0.01
+      AND ci.balance_due > 0.01 {$where_cust} {$where_overdue}
+
+    UNION ALL
+
+    SELECT 
+        th.id as header_id,
+        th.txn_date as invoice_date,
+        th.txn_number as invoice_number,
+        c.full_name as customer_name,
+        th.txn_date as due_date,
+        DATEDIFF(?, th.txn_date) as days_overdue,
+        SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
+        COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
+        (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due
+    FROM journal_entries j
+    JOIN transaction_headers th ON j.header_id = th.id
+    LEFT JOIN customers c ON COALESCE(j.party_id, th.party_id) = c.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
+    WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
+      AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
+      AND th.is_deleted = 0 
+      AND th.status NOT IN ('void', 'voided', 'draft')
+      AND th.txn_type IN ('Journal', 'journal_entry') {$where_cust_j} {$where_overdue_j}
+    GROUP BY th.id, th.txn_date, th.txn_number, c.full_name
+    HAVING balance_due > 0.01
+    ORDER BY due_date ASC, invoice_number DESC
 ";
-$params = [$as_of_date];
-
-if ($customer_id !== '') {
-    $sql .= " AND ci.customer_id = ?";
-    $params[] = $customer_id;
-}
-
-if ($status === 'overdue') {
-    $sql .= " AND ci.due_date < ?";
-    $params[] = $as_of_date;
-}
-
-$sql .= " ORDER BY ci.due_date ASC, th.txn_number DESC";
+$params = [$as_of_date, $as_of_date];
 $rows = $db->fetchAll($sql, $params);
 
 $total_amount  = array_sum(array_column($rows, 'total_amount'));

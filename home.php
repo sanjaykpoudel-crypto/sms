@@ -86,14 +86,14 @@
             <div class="dv4-kpi-sub" id="kpi-net-profit-sub"></div>
         </a>
         <!-- Cash on Hand -->
-        <a class="dv4-kpi kpi-cash dv4-kpi-link" id="kpi-tile-cash" href="#" title="View Cash Ledger">
+        <a class="dv4-kpi kpi-cash dv4-kpi-link" id="kpi-tile-cash" href="?page=reports/financial/general_ledger&account_type=cash" title="View Cash Ledger">
             <i class="fas fa-coins dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Cash on Hand</div>
             <div class="dv4-kpi-value" id="kpi-cash-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-cash-sub"></div>
         </a>
         <!-- Bank Balance -->
-        <a class="dv4-kpi kpi-bank dv4-kpi-link" id="kpi-tile-bank" href="#" title="View Bank Ledger">
+        <a class="dv4-kpi kpi-bank dv4-kpi-link" id="kpi-tile-bank" href="?page=reports/financial/general_ledger&account_type=bank" title="View Bank Ledger">
             <i class="fas fa-university dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Bank Balance</div>
             <div class="dv4-kpi-value" id="kpi-bank-val">—</div>

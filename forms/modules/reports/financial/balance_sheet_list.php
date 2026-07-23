@@ -7,8 +7,9 @@ $db = db();
 $today    = date('Y-m-d');
 $date_to  = $_GET['date_to'] ?? $today;
 
-// Allow user to specify date_from, otherwise fallback to the fiscal year start boundary
-$date_from = $_GET['date_from'] ?? get_report_start_date($date_to);
+// Allow user to specify date_from, otherwise default to 1 month prior to date_to (today)
+$default_from = date('Y-m-d', strtotime('-1 month', strtotime($date_to)));
+$date_from = $_GET['date_from'] ?? $default_from;
 
 $start_date = $date_from;
 $as_of      = $date_to;
@@ -144,8 +145,8 @@ $is_balanced = abs($total_assets - $total_liabilities_equity) < 0.05;
 </style>
 
 <?php rpt_filter_bar('Balance Sheet', [
-    ['name'=>'date_from','label'=>'From Date','type'=>'date','default'=>get_report_start_date($today)],
-    ['name'=>'date_to',  'label'=>'To Date',  'type'=>'date','default'=>$today],
+    ['name'=>'date_from','label'=>'From Date','type'=>'date','default'=>$date_from],
+    ['name'=>'date_to',  'label'=>'To Date',  'type'=>'date','default'=>$date_to],
 ], ''); ?>
 
 <div class="bs-grid">

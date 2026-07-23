@@ -66,24 +66,17 @@ try {
             $txn_date, $reference_number, $memo, $id
         ]);
         
-        // Reverse balance updates before deleting lines
-        $old_links = $db->fetchAll("SELECT child_id as applied_to_id, link_type FROM transaction_links WHERE parent_id = ?", [$id]);
+        $affected_doc_ids = [];
+        $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$id]);
         foreach ($old_links as $link) {
-            // Parse amount from link_type field (stored as "amount:XX.XX")
-            $link_amount = (float)(explode(':', $link['link_type'])[1] ?? 0);
-            if ($link_amount <= 0) continue;
-            if ($party_type === 'customer') {
-                $db->execute("UPDATE customer_invoices SET amount_paid = amount_paid - ?, balance_due = balance_due + ?, payment_status = CASE WHEN balance_due + ? >= total_amount - 0.01 THEN 'unpaid' ELSE 'partial' END WHERE header_id = ?", [$link_amount, $link_amount, $link_amount, $link['applied_to_id']]);
-                $db->execute("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM customer_invoices WHERE header_id = ?) >= (SELECT total_amount FROM customer_invoices WHERE header_id = ?) - 0.01 THEN 'open' ELSE 'partial' END WHERE id = ?", [$link['applied_to_id'], $link['applied_to_id'], $link['applied_to_id']]);
-            } else {
-                $db->execute("UPDATE vendor_bills SET amount_paid = amount_paid - ?, balance_due = balance_due + ?, payment_status = CASE WHEN balance_due + ? >= total_amount - 0.01 THEN 'unpaid' ELSE 'partial' END WHERE header_id = ?", [$link_amount, $link_amount, $link_amount, $link['applied_to_id']]);
-                $db->execute("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM vendor_bills WHERE header_id = ?) >= (SELECT total_amount FROM vendor_bills WHERE header_id = ?) - 0.01 THEN 'open' ELSE 'partial' END WHERE id = ?", [$link['applied_to_id'], $link['applied_to_id'], $link['applied_to_id']]);
-            }
+            if (!empty($link['applied_to_id'])) $affected_doc_ids[] = $link['applied_to_id'];
         }
 
         $db->execute("DELETE FROM payments WHERE header_id = ?", [$id]);
         $db->execute("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?", [$id, $id]);
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+    } else {
+        $affected_doc_ids = [];
     }
 
     $bank_account_ids = $_POST['bank_account_id'] ?? [];
@@ -150,22 +143,18 @@ try {
         }
         if ($apply_amt <= 0) continue;
 
-        if ($party_type === 'customer') {
-            $db->execute("UPDATE customer_invoices SET amount_paid = amount_paid + ?, balance_due = balance_due - ?, 
-                          payment_status = CASE WHEN balance_due - ? <= 0.01 THEN 'paid' ELSE 'partial' END 
-                          WHERE header_id = ?", [$apply_amt, $apply_amt, $apply_amt, $applied_to_id]);
-            $db->execute("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM customer_invoices WHERE header_id = ?) <= 0.01 THEN 'paid' ELSE 'partial' END WHERE id = ?", [$applied_to_id, $applied_to_id]);
-        } else {
-            $db->execute("UPDATE vendor_bills SET amount_paid = amount_paid + ?, balance_due = balance_due - ?, 
-                          payment_status = CASE WHEN balance_due - ? <= 0.01 THEN 'paid' ELSE 'partial' END 
-                          WHERE header_id = ?", [$apply_amt, $apply_amt, $apply_amt, $applied_to_id]);
-            $db->execute("UPDATE transaction_headers SET status = CASE WHEN (SELECT balance_due FROM vendor_bills WHERE header_id = ?) <= 0.01 THEN 'paid' ELSE 'partial' END WHERE id = ?", [$applied_to_id, $applied_to_id]);
-        }
+        $affected_doc_ids[] = $applied_to_id;
 
-        // Record link (parent=payment, child=invoice/bill, link_type encodes the amount)
+        // Record link (parent=payment, child=invoice/bill/journal, link_type encodes the amount)
         $db->execute("INSERT INTO transaction_links (id, parent_id, child_id, link_type) VALUES (?, ?, ?, ?)", [
             generate_uuid(), $id, $applied_to_id, 'payment:' . $apply_amt
         ]);
+    }
+
+    // Recalculate balances and statuses for all affected document IDs
+    $affected_doc_ids = array_unique($affected_doc_ids);
+    foreach ($affected_doc_ids as $doc_id) {
+        recalculate_document_payment_status($doc_id, $pdo);
     }
 
     $pdo->commit();

@@ -15,38 +15,40 @@ foreach ($vendors_list as $v) {
     $vendor_options[$v['id']] = $v['company_name'];
 }
 
+$where_vend = ($vendor_id !== '') ? " AND (vb.vendor_id = '$vendor_id' OR p.vendor_id = '$vendor_id')" : "";
+
 $sql = "
     SELECT 
         hp.txn_date as payment_date,
         hp.txn_number as payment_number,
         hp.id as payment_id,
-        v.company_name as vendor_name,
+        COALESCE(v.company_name, v_j.company_name) as vendor_name,
         hb.txn_number as bill_number,
         hb.id as bill_id,
         hb.txn_date as bill_date,
-        vb.total_amount as bill_amount,
+        COALESCE(vb.total_amount, (SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) FROM journal_entries j WHERE j.header_id = hb.id)) as bill_amount,
         CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(14, 2)) as paid_amount,
         GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') as payment_methods,
         GROUP_CONCAT(DISTINCT a.account_name SEPARATOR ', ') as paid_from
     FROM transaction_links tl
     JOIN transaction_headers hp ON tl.parent_id = hp.id
     JOIN transaction_headers hb ON tl.child_id = hb.id
-    JOIN vendor_bills vb ON hb.id = vb.header_id
+    LEFT JOIN vendor_bills vb ON hb.id = vb.header_id
     LEFT JOIN vendors v ON vb.vendor_id = v.id
-    LEFT JOIN payments p ON hp.id = p.header_id AND p.vendor_id = vb.vendor_id
+    LEFT JOIN vendors v_j ON hb.party_id = v_j.id
+    LEFT JOIN payments p ON hp.id = p.header_id
     LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE hp.txn_type = 'vendor_payment'
       AND hp.is_deleted = 0
-      AND hb.txn_type = 'vendor_bill'
+      AND hp.status NOT IN ('voided', 'draft')
+      AND hb.txn_type IN ('vendor_bill', 'Journal', 'journal_entry')
       AND hb.is_deleted = 0
-      AND hp.txn_date BETWEEN ? AND ?
+      AND hb.status NOT IN ('voided', 'draft')
+      AND hp.txn_date BETWEEN ? AND ? {$where_vend}
+    GROUP BY tl.id 
+    ORDER BY hp.txn_date DESC, hp.txn_number DESC
 ";
 $params = [$date_from, $date_to];
-if ($vendor_id !== '') {
-    $sql .= " AND vb.vendor_id = ?";
-    $params[] = $vendor_id;
-}
-$sql .= " GROUP BY tl.id ORDER BY hp.txn_date DESC, hp.txn_number DESC";
 $rows = $db->fetchAll($sql, $params);
 
 // Calculate distinct payment count

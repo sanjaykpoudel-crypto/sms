@@ -15,8 +15,12 @@ foreach ($vendors_list as $v) {
     $vendor_options[$v['id']] = $v['company_name'];
 }
 
+$where_vend = ($vendor_id !== '') ? " AND vb.vendor_id = '$vendor_id'" : "";
+$where_vend_j = ($vendor_id !== '') ? " AND (j.party_id = '$vendor_id' OR th.party_id = '$vendor_id')" : "";
+
 $sql = "
     SELECT 
+        'vendor_bill' as doc_type,
         th.id as header_id,
         th.txn_date,
         th.txn_number,
@@ -35,16 +39,41 @@ $sql = "
     JOIN transaction_headers th ON vb.header_id = th.id
     LEFT JOIN vendors v ON vb.vendor_id = v.id
     WHERE th.is_deleted = 0 
-      AND th.txn_type = 'vendor_bill'
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_date BETWEEN ? AND ?
+      AND th.txn_date BETWEEN ? AND ? {$where_vend}
+    
+    UNION ALL
+
+    SELECT 
+        'journal' as doc_type,
+        th.id as header_id,
+        th.txn_date,
+        th.txn_number,
+        v.company_name as vendor_name,
+        th.txn_number as vendor_invoice_number,
+        th.txn_date as bill_date,
+        th.txn_date as due_date,
+        0.00 as subtotal,
+        0.00 as discount_amount,
+        0.00 as tax_amount,
+        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
+        COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
+        (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+        CASE WHEN (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
+    FROM journal_entries j
+    JOIN transaction_headers th ON j.header_id = th.id
+    LEFT JOIN vendors v ON COALESCE(j.party_id, th.party_id) = v.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
+    WHERE (j.party_type = 'vendor' OR j.party_type IS NULL)
+      AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
+      AND th.is_deleted = 0 
+      AND th.status NOT IN ('void', 'voided', 'draft')
+      AND th.txn_type IN ('Journal', 'journal_entry')
+      AND th.txn_date BETWEEN ? AND ? {$where_vend_j}
+    GROUP BY th.id, th.txn_date, th.txn_number, v.company_name
+    ORDER BY txn_date DESC, txn_number DESC
 ";
-$params = [$date_from, $date_to];
-if ($vendor_id !== '') {
-    $sql .= " AND vb.vendor_id = ?";
-    $params[] = $vendor_id;
-}
-$sql .= " ORDER BY th.txn_date DESC, th.txn_number DESC";
+$params = [$date_from, $date_to, $date_from, $date_to];
 $rows = $db->fetchAll($sql, $params);
 
 $total_subtotal = array_sum(array_column($rows, 'subtotal'));

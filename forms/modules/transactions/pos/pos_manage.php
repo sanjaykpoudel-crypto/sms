@@ -2,12 +2,24 @@
 require_once 'database/DBConnection.php';
 $db = db();
 
-// Fetch active items with category names
-$items = $db->fetchAll("SELECT i.id, i.sku, i.item_name, r.name as category_name, i.selling_price, i.cost_price, i.current_stock, i.tax_rate 
+// Fetch active items with category names and dynamic calculated stock
+$items = $db->fetchAll("
+    SELECT i.id, i.sku, i.item_name, r.name as category_name, i.selling_price, i.cost_price, i.tax_rate, i.barcode,
+        COALESCE((
+            SELECT SUM(CASE 
+                WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+                WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+                ELSE 0 
+            END)
+            FROM transaction_lines l
+            JOIN transaction_headers h ON l.header_id = h.id
+            WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        ), 0) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
-    WHERE i.is_active = 1 AND i.is_deleted = 0 AND i.current_stock > 0
-    ORDER BY i.item_name ASC");
+    WHERE i.is_active = 1 AND i.is_deleted = 0
+    ORDER BY i.item_name ASC
+");
 
 // Fetch bank/cash accounts for payment
 $payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_active = 1 ORDER BY account_subtype DESC, account_name ASC");
@@ -202,9 +214,28 @@ let cart = [];
 let payments = [];
 let activeCat = 'all';
 
+function refreshPosItems() {
+    fetch('api/get_pos_items.php')
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success' && Array.isArray(res.items)) {
+                items.length = 0;
+                items.push(...res.items);
+                renderGrid(document.getElementById('pos-search').value || '');
+            }
+        })
+        .catch(err => console.error('Real-time fetch error:', err));
+}
+
+function getCartQty(itemId) {
+    const found = cart.find(c => c.id === itemId);
+    return found ? parseFloat(found.qty || 0) : 0;
+}
+
 function init() {
     renderGrid();
     addPaymentLine(); // Initial payment line
+    refreshPosItems(); // Real-time fetch stock & prices
     
     // Search listener
     document.getElementById('pos-search').addEventListener('input', (e) => {
@@ -242,14 +273,29 @@ function renderGrid(search = '') {
         const div = document.createElement('div');
         div.className = 'pos-card';
         div.onclick = () => addToCart(item);
-        const stock = parseFloat(item.current_stock || 0);
-        const stockColor = stock <= 0 ? '#ef4444' : '#10b981';
+        
+        const totalStock = parseFloat(item.current_stock || 0);
+        const inCart = getCartQty(item.id);
+        const availStock = totalStock - inCart;
+        const stockColor = availStock <= 0 ? '#ef4444' : (availStock <= 5 ? '#f59e0b' : '#10b981');
+        const costPrice = parseFloat(item.cost_price || 0);
+        const sellPrice = parseFloat(item.selling_price || 0);
+
         div.innerHTML = `
             <div class="pos-card-name" style="margin-bottom: 4px;">${item.item_name}</div>
-            <div style="font-size: 11px; text-align: left; margin: 5px 0; color: #475569; display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;">
-                <div><span style="font-weight: 600;">Stock:</span> <span style="color: ${stockColor}; font-weight: 700;">${stock.toFixed(0)}</span></div>
-                <div><span style="font-weight: 600;">Cost:</span> Rs ${parseFloat(item.cost_price).toFixed(2)}</div>
-                <div><span style="font-weight: 600;">Sell:</span> Rs ${parseFloat(item.selling_price).toFixed(2)}</div>
+            <div style="font-size: 11px; text-align: left; margin: 5px 0; color: #475569; display: flex; flex-direction: column; gap: 3px; flex-shrink: 0;">
+                <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 2px;">
+                    <span style="font-weight: 600;">Stock:</span> 
+                    <span style="color: ${stockColor}; font-weight: 800;">${availStock.toFixed(0)} ${inCart > 0 ? `<small style="color:#64748b;font-weight:normal">(${inCart} in cart)</small>` : ''}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="font-weight: 600;">Cost:</span> 
+                    <span style="font-weight: 700; color: #0284c7;">Rs ${costPrice.toFixed(2)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="font-weight: 600;">Sell:</span> 
+                    <span style="font-weight: 700; color: #16a34a;">Rs ${sellPrice.toFixed(2)}</span>
+                </div>
             </div>
         `;
         grid.appendChild(div);
@@ -313,6 +359,7 @@ function renderCart() {
         itemsEl.appendChild(div);
     });
     calculateTotals();
+    renderGrid(document.getElementById('pos-search').value || '');
 }
 
 function setPrice(idx, val) {

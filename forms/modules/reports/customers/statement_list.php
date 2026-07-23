@@ -14,22 +14,39 @@ $customer_info = null;
 if ($customer_id) {
     $customer_info = $db->fetchOne("SELECT * FROM customers WHERE id = ?", [$customer_id]);
     
-    // 1. Get Opening Balance (Invoices - Payments before from_date)
+    // 1. Get Opening Balance (Invoices + Tagged Journals - Payments before from_date)
     $inv_before = $db->fetchOne("SELECT SUM(total_amount) as total FROM customer_invoices ci 
                                 JOIN transaction_headers th ON ci.header_id = th.id 
                                 WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
     
+    $jour_before = $db->fetchOne("SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total 
+                                 FROM journal_entries j
+                                 JOIN transaction_headers th ON j.header_id = th.id 
+                                 WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+
     $pay_before = $db->fetchOne("SELECT SUM(p.amount) as total FROM payments p
                                 JOIN transaction_headers th ON p.header_id = th.id
                                 WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
     
-    $opening_balance = $inv_before - $pay_before;
+    $opening_balance = ($inv_before + $jour_before) - $pay_before;
 
     // 2. Get Invoices in range
     $invoices = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Invoice' as type, ci.total_amount as debit, 0 as credit, th.memo
                                FROM customer_invoices ci 
                                JOIN transaction_headers th ON ci.header_id = th.id 
                                WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date, $to_date]);
+
+    // 2b. Get Tagged Journals in range
+    $journals = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Journal' as type,
+                                      SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END) as debit,
+                                      SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) as credit,
+                                      th.memo
+                               FROM journal_entries j
+                               JOIN transaction_headers th ON j.header_id = th.id
+                               WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
+                                 AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+                               GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $customer_id, $from_date, $to_date]);
 
     // 3. Get Payments in range
     $payments = $db->fetchAll("SELECT p.payment_date as date, th.txn_number as number, 'Payment' as type, 0 as debit, SUM(p.amount) as credit, th.memo
@@ -38,7 +55,7 @@ if ($customer_id) {
                                WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0
                                GROUP BY p.header_id", [$customer_id, $from_date, $to_date]);
 
-    $statement_data = array_merge($invoices, $payments);
+    $statement_data = array_merge($invoices, $journals, $payments);
     usort($statement_data, function($a, $b) {
         return strtotime($a['date']) - strtotime($b['date']);
     });
@@ -46,8 +63,20 @@ if ($customer_id) {
     // 4. Aging Data
     $today = date('Y-m-d');
     $aging7 = ['current' => 0, '1_7' => 0, '8_14' => 0, '15_21' => 0, 'over_21' => 0];
-    $open_invoices = $db->fetchAll("SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id]);
-    foreach($open_invoices as $inv) {
+    
+    $open_docs = $db->fetchAll("
+        SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0.01 AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+        UNION ALL
+        SELECT (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due, th.txn_date
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id
+        LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+        GROUP BY th.id, th.txn_date
+        HAVING balance_due > 0.01
+    ", [$customer_id, $customer_id, $customer_id]);
+    
+    foreach($open_docs as $inv) {
         $days = floor((strtotime($today) - strtotime($inv['txn_date'])) / 86400);
         
         // 7-Day aging

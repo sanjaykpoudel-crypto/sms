@@ -84,10 +84,10 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                 <tr>
                     <th width="30">#</th>
                     <th>Account</th>
-                    <th width="150">Debit</th>
-                    <th width="150">Credit</th>
-                    <th width="200">Name / Entity</th>
+                    <th width="140">Debit</th>
+                    <th width="140">Credit</th>
                     <th>Memo</th>
+                    <th width="200">Name / Entity</th>
                     <th width="40"></th>
                 </tr>
             </thead>
@@ -114,6 +114,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                     </td>
                     <td><input type="number" name="debit[]" class="ns-input debit-input" value="<?php echo number_format($debit_val, 2, '.', ''); ?>" step="0.01" oninput="handleDebitInput(this)"></td>
                     <td><input type="number" name="credit[]" class="ns-input credit-input" value="<?php echo number_format($credit_val, 2, '.', ''); ?>" step="0.01" oninput="handleCreditInput(this)"></td>
+                    <td><input type="text" name="line_memo[]" class="ns-input" value="<?php echo htmlspecialchars($line['memo'] ?? ''); ?>"></td>
                     <td>
                         <div style="display: flex; gap: 2px;">
                             <select name="line_party_type[]" class="ns-select" style="width: 70px; font-size: 10px;" onchange="updateLineEntity(this)">
@@ -140,7 +141,6 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                             </select>
                         </div>
                     </td>
-                    <td><input type="text" name="line_memo[]" class="ns-input" value="<?php echo htmlspecialchars($line['memo'] ?? ''); ?>"></td>
                     <td><button type="button" class="ns-btn-link text-danger remove-line-btn" onclick="removeLine(this)" style="background: none; border: none; cursor: pointer; color: #ef4444;"><i class="fas fa-trash"></i></button></td>
                 </tr>
                 <?php endforeach; ?>
@@ -231,6 +231,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
             </td>
             <td><input type="number" name="debit[]" class="ns-input debit-input" value="${newDebit}" step="0.01" oninput="handleDebitInput(this)"></td>
             <td><input type="number" name="credit[]" class="ns-input credit-input" value="${newCredit}" step="0.01" oninput="handleCreditInput(this)"></td>
+            <td><input type="text" name="line_memo[]" class="ns-input"></td>
             <td>
                 <div style="display: flex; gap: 2px;">
                     <select name="line_party_type[]" class="ns-select" style="width: 70px; font-size: 10px;" onchange="updateLineEntity(this)">
@@ -244,7 +245,6 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                     </select>
                 </div>
             </td>
-            <td><input type="text" name="line_memo[]" class="ns-input"></td>
             <td><button type="button" class="ns-btn-link text-danger remove-line-btn" onclick="removeLine(this)" style="background: none; border: none; cursor: pointer; color: #ef4444;"><i class="fas fa-trash"></i></button></td>
         `;
         tbody.appendChild(tr);

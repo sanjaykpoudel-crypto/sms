@@ -6,10 +6,27 @@ $db = db();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-01-01');
 $date_to   = $_GET['date_to']   ?? $today;
-$account_id = $_GET['account_id'] ?? '';
+$raw_account = $_GET['account_id'] ?? ($_GET['account_type'] ?? '');
+$account_ids = [];
+
+if ($raw_account === 'bank' || $raw_account === 'all_bank') {
+    $bank_rows = $db->fetchAll("SELECT id FROM accounts WHERE account_subtype = 'bank' AND is_active=1 AND is_deleted=0");
+    $account_ids = array_column($bank_rows, 'id');
+} elseif ($raw_account === 'cash' || $raw_account === 'all_cash') {
+    $cash_rows = $db->fetchAll("SELECT id FROM accounts WHERE (account_subtype = 'cash' OR account_code = '1010') AND is_active=1 AND is_deleted=0");
+    $account_ids = array_column($cash_rows, 'id');
+} elseif (is_array($raw_account)) {
+    $account_ids = array_values(array_filter($raw_account));
+} elseif (is_string($raw_account) && $raw_account !== '') {
+    if (strpos($raw_account, ',') !== false) {
+        $account_ids = array_values(array_filter(explode(',', $raw_account)));
+    } else {
+        $account_ids = [$raw_account];
+    }
+}
 
 // Fetch active accounts for the filter dropdown
-$accounts_list = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active=1 AND is_deleted=0 ORDER BY updated_at DESC");
+$accounts_list = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active=1 AND is_deleted=0 ORDER BY account_code ASC");
 $acct_options = ['' => 'All Accounts'];
 foreach ($accounts_list as $a) { 
     $acct_options[$a['id']] = $a['account_code'].' - '.$a['account_name']; 
@@ -18,22 +35,28 @@ foreach ($accounts_list as $a) {
 require_once 'api/reference_helper.php';
 $fy_start_date = get_report_start_date($date_from);
 
-// Calculate Opening Balance and fetch normal balance if account is selected
+// Calculate Opening Balance and fetch normal balance if accounts are selected
 $opening_bal = 0.0;
 $normal_bal = 'debit';
-if ($account_id) {
-    $acct_info = $db->fetchOne("SELECT normal_balance FROM accounts WHERE id = ?", [$account_id]);
-    $normal_bal = $acct_info['normal_balance'] ?? 'debit';
-    
+
+if (!empty($account_ids)) {
+    if (count($account_ids) === 1) {
+        $acct_info = $db->fetchOne("SELECT normal_balance FROM accounts WHERE id = ?", [$account_ids[0]]);
+        $normal_bal = $acct_info['normal_balance'] ?? 'debit';
+    }
+
+    $placeholders = implode(',', array_fill(0, count($account_ids), '?'));
+    $op_params = array_merge($account_ids, [$fy_start_date, $date_from]);
+
     $op_row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
         FROM journal_entries j
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE j.account_id = ? 
+        WHERE j.account_id IN ($placeholders)
           AND j.entry_date >= ? AND j.entry_date < ? 
           AND h.is_deleted = 0 
           AND h.status NOT IN ('void', 'voided', 'draft')
-    ", [$account_id, $fy_start_date, $date_from]);
+    ", $op_params);
     $opening_bal = (float)($op_row['bal'] ?? 0.0);
 }
 
@@ -41,9 +64,10 @@ if ($account_id) {
 $where = "j.entry_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')";
 $params = [$date_from, $date_to];
 
-if ($account_id) {
-    $where .= " AND j.account_id = ?";
-    $params[] = $account_id;
+if (!empty($account_ids)) {
+    $placeholders = implode(',', array_fill(0, count($account_ids), '?'));
+    $where .= " AND j.account_id IN ($placeholders)";
+    $params = array_merge($params, $account_ids);
 }
 
 $sql = "
@@ -86,13 +110,13 @@ $closing_bal = $opening_bal + $net_change;
 ?>
 
 <?php rpt_filter_bar('General Ledger', [
-    ['name'=>'date_from', 'label'=>'From',    'type'=>'date',   'default'=>$date_from],
-    ['name'=>'date_to',   'label'=>'To',      'type'=>'date',   'default'=>$date_to],
-    ['name'=>'account_id','label'=>'Account', 'type'=>'select', 'default'=>$account_id, 'options'=>$acct_options],
+    ['name'=>'date_from', 'label'=>'From',    'type'=>'date',        'default'=>$date_from],
+    ['name'=>'date_to',   'label'=>'To',      'type'=>'date',        'default'=>$date_to],
+    ['name'=>'account_id','label'=>'Accounts', 'type'=>'multiselect', 'default'=>$account_ids, 'options'=>$acct_options],
 ], 'tbl-ledger'); ?>
 
 <div class="rpt-summary">
-  <?php if ($account_id): ?>
+  <?php if (!empty($account_ids)): ?>
     <div class="rpt-summary-card"><div class="val"><?= rpt_currency($opening_bal) ?></div><div class="lbl">Opening Balance</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#003087"><?= rpt_currency($total_debit) ?></div><div class="lbl">Total Debits (Dr)</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#c00"><?= rpt_currency($total_credit) ?></div><div class="lbl">Total Credits (Cr)</div></div>

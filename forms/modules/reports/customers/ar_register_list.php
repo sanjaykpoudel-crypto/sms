@@ -15,8 +15,12 @@ foreach ($customers_list as $c) {
     $customer_options[$c['id']] = $c['full_name'];
 }
 
+$where_cust = ($customer_id !== '') ? " AND ci.customer_id = '$customer_id'" : "";
+$where_cust_j = ($customer_id !== '') ? " AND (j.party_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
+
 $sql = "
     SELECT 
+        'customer_invoice' as doc_type,
         th.id as header_id,
         th.txn_date,
         th.txn_number,
@@ -36,16 +40,42 @@ $sql = "
     JOIN transaction_headers th ON ci.header_id = th.id
     LEFT JOIN customers c ON ci.customer_id = c.id
     WHERE th.is_deleted = 0 
-      AND th.txn_type = 'customer_invoice'
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_date BETWEEN ? AND ?
+      AND th.txn_date BETWEEN ? AND ? {$where_cust}
+    
+    UNION ALL
+
+    SELECT 
+        'journal' as doc_type,
+        th.id as header_id,
+        th.txn_date,
+        th.txn_number,
+        c.full_name as customer_name,
+        th.txn_number as invoice_number,
+        th.txn_date as invoice_date,
+        th.txn_date as due_date,
+        'journal' as sale_type,
+        0.00 as subtotal,
+        0.00 as discount_amount,
+        0.00 as tax_amount,
+        SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
+        COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
+        (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+        CASE WHEN (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
+    FROM journal_entries j
+    JOIN transaction_headers th ON j.header_id = th.id
+    LEFT JOIN customers c ON COALESCE(j.party_id, th.party_id) = c.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
+    WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
+      AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
+      AND th.is_deleted = 0 
+      AND th.status NOT IN ('void', 'voided', 'draft')
+      AND th.txn_type IN ('Journal', 'journal_entry')
+      AND th.txn_date BETWEEN ? AND ? {$where_cust_j}
+    GROUP BY th.id, th.txn_date, th.txn_number, c.full_name
+    ORDER BY txn_date DESC, txn_number DESC
 ";
-$params = [$date_from, $date_to];
-if ($customer_id !== '') {
-    $sql .= " AND ci.customer_id = ?";
-    $params[] = $customer_id;
-}
-$sql .= " ORDER BY th.txn_date DESC, th.txn_number DESC";
+$params = [$date_from, $date_to, $date_from, $date_to];
 $rows = $db->fetchAll($sql, $params);
 
 $total_subtotal = array_sum(array_column($rows, 'subtotal'));

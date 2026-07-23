@@ -727,6 +727,129 @@ function get_report_start_date($as_of) {
         return '1970-01-01';
     }
 }
+
+/**
+ * Recalculates document amounts (amount_paid, balance_due) and statuses
+ * (payment_status, header status) whenever a payment is created, edited, or deleted.
+ * Supports Customer Invoices, Vendor Bills, and Tagged Journal Entries.
+ */
+function recalculate_document_payment_status($doc_header_id, $pdo = null) {
+    if (empty($doc_header_id)) return;
+    $db = db();
+    if (!$pdo) {
+        $pdo = $db->getConnection();
+    }
+
+    // 1. Fetch document header info
+    $stmt = $pdo->prepare("SELECT id, txn_type, status, party_id, party_type FROM transaction_headers WHERE id = ?");
+    $stmt->execute([$doc_header_id]);
+    $header = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$header) return;
+
+    $txn_type = $header['txn_type'] ?? '';
+
+    // 2. Sum active payment links applied to this document (child_id)
+    $stmt_pay = $pdo->prepare("
+        SELECT COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as total_paid
+        FROM transaction_links tl
+        JOIN transaction_headers ph ON tl.parent_id = ph.id
+        WHERE tl.child_id = ? AND tl.link_type LIKE 'payment:%'
+          AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+    ");
+    $stmt_pay->execute([$doc_header_id]);
+    $total_paid = (float)($stmt_pay->fetch(PDO::FETCH_ASSOC)['total_paid'] ?? 0.00);
+
+    // Also check direct payments in `payments` table (applied_to_txn_id)
+    $stmt_pay2 = $pdo->prepare("
+        SELECT COALESCE(SUM(p.amount), 0.00) as total_paid2
+        FROM payments p
+        JOIN transaction_headers ph ON p.header_id = ph.id
+        WHERE p.applied_to_txn_id = ? AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+    ");
+    $stmt_pay2->execute([$doc_header_id]);
+    $total_paid2 = (float)($stmt_pay2->fetch(PDO::FETCH_ASSOC)['total_paid2'] ?? 0.00);
+
+    $actual_paid = max($total_paid, $total_paid2);
+
+    if ($txn_type === 'customer_invoice') {
+        $stmt_inv = $pdo->prepare("SELECT total_amount FROM customer_invoices WHERE header_id = ?");
+        $stmt_inv->execute([$doc_header_id]);
+        $inv = $stmt_inv->fetch(PDO::FETCH_ASSOC);
+        if ($inv) {
+            $total_amount = (float)$inv['total_amount'];
+            $new_amount_paid = min($total_amount, $actual_paid);
+            $new_balance_due = max(0.00, $total_amount - $actual_paid);
+
+            $pay_status = 'unpaid';
+            $hdr_status = 'open';
+            if ($new_balance_due <= 0.01) {
+                $pay_status = 'paid';
+                $hdr_status = 'paid';
+            } elseif ($new_amount_paid > 0.01) {
+                $pay_status = 'partial';
+                $hdr_status = 'partial';
+            }
+
+            $pdo->prepare("UPDATE customer_invoices SET amount_paid = ?, balance_due = ?, payment_status = ? WHERE header_id = ?")
+                ->execute([$new_amount_paid, $new_balance_due, $pay_status, $doc_header_id]);
+            $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
+                ->execute([$hdr_status, $doc_header_id]);
+        }
+    } elseif ($txn_type === 'vendor_bill') {
+        $stmt_bill = $pdo->prepare("SELECT total_amount FROM vendor_bills WHERE header_id = ?");
+        $stmt_bill->execute([$doc_header_id]);
+        $bill = $stmt_bill->fetch(PDO::FETCH_ASSOC);
+        if ($bill) {
+            $total_amount = (float)$bill['total_amount'];
+            $new_amount_paid = min($total_amount, $actual_paid);
+            $new_balance_due = max(0.00, $total_amount - $actual_paid);
+
+            $pay_status = 'unpaid';
+            $hdr_status = 'open';
+            if ($new_balance_due <= 0.01) {
+                $pay_status = 'paid';
+                $hdr_status = 'paid';
+            } elseif ($new_amount_paid > 0.01) {
+                $pay_status = 'partial';
+                $hdr_status = 'partial';
+            }
+
+            $pdo->prepare("UPDATE vendor_bills SET amount_paid = ?, balance_due = ?, payment_status = ? WHERE header_id = ?")
+                ->execute([$new_amount_paid, $new_balance_due, $pay_status, $doc_header_id]);
+            $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
+                ->execute([$hdr_status, $doc_header_id]);
+        }
+    } elseif (in_array($txn_type, ['Journal', 'journal_entry'])) {
+        $stmt_je = $pdo->prepare("
+            SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as net_debit,
+                   SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END) as total_debit,
+                   SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) as total_credit
+            FROM journal_entries j WHERE j.header_id = ?
+        ");
+        $stmt_je->execute([$doc_header_id]);
+        $je = $stmt_je->fetch(PDO::FETCH_ASSOC);
+
+        $party_type = $header['party_type'] ?? '';
+        if ($party_type === 'customer') {
+            $total_amount = (float)($je['total_debit'] ?? 0.00);
+        } elseif ($party_type === 'vendor') {
+            $total_amount = (float)($je['total_credit'] ?? 0.00);
+        } else {
+            $total_amount = abs((float)($je['net_debit'] ?? 0.00));
+        }
+
+        $new_balance_due = max(0.00, $total_amount - $actual_paid);
+        $hdr_status = 'posted';
+        if ($actual_paid >= ($total_amount - 0.01) && $total_amount > 0) {
+            $hdr_status = 'paid';
+        } elseif ($actual_paid > 0.01) {
+            $hdr_status = 'partial';
+        }
+
+        $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
+            ->execute([$hdr_status, $doc_header_id]);
+    }
+}
 ?>
 
 

@@ -768,18 +768,18 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
         <table class="ns-table" style="width: 100%;">
             <thead>
                 <tr>
-                    <th>Account Code</th>
-                    <th>Account Name</th>
-                    <th>Name / Entity</th>
-                    <th>Memo</th>
+                    <th width="50" style="text-align: center;">Line #</th>
+                    <th>Account Code & Name</th>
                     <th style="text-align: right;">Debit (Dr)</th>
                     <th style="text-align: right;">Credit (Cr)</th>
+                    <th>Memo</th>
+                    <th>Name</th>
                 </tr>
             </thead>
             <tbody>
                 <?php 
                 $totDr = 0; $totCr = 0;
-                foreach($gl_entries as $je): 
+                foreach($gl_entries as $idx => $je): 
                     $isDr = $je['entry_type'] == 'debit';
                     $dr = $isDr ? $je['amount'] : 0;
                     $cr = !$isDr ? $je['amount'] : 0;
@@ -787,26 +787,20 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                     $totCr += $cr;
                 ?>
                 <tr>
-                    <td><?php echo htmlspecialchars($je['account_code']); ?></td>
+                    <td style="text-align: center; color: #64748b; font-weight: 600;"><?php echo $idx + 1; ?></td>
                     <td>
                         <div style="padding-left: <?php echo $isDr ? '0' : '20px'; ?>">
-                            <?php echo htmlspecialchars($je['account_name']); ?>
+                            <span style="font-weight: 700; color: #475569; margin-right: 6px;"><?php echo htmlspecialchars($je['account_code']); ?></span>
+                            <span style="font-weight: 600; color: #1e293b;"><?php echo htmlspecialchars($je['account_name']); ?></span>
                         </div>
                     </td>
-                    <td><span style="font-size: 11px; color: #64748b;"><?php echo htmlspecialchars($je['party_name'] ?? '-'); ?></span></td>
-                    <td><?php echo htmlspecialchars($je['memo']); ?></td>
                     <td style="text-align: right;"><?php echo $dr > 0 ? number_format($dr, 2) : ''; ?></td>
                     <td style="text-align: right;"><?php echo $cr > 0 ? number_format($cr, 2) : ''; ?></td>
+                    <td><?php echo htmlspecialchars($je['memo']); ?></td>
+                    <td><span style="font-size: 11px; color: #64748b;"><?php echo htmlspecialchars($je['party_name'] ?? '-'); ?></span></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
-            <tfoot>
-                <tr style="background: #f8f9fa; font-weight: 700;">
-                    <td colspan="4" style="text-align: right;">Totals:</td>
-                    <td style="text-align: right; border-top: 2px solid #ccc; border-bottom: 4px double #ccc;"><?php echo number_format($totDr, 2); ?></td>
-                    <td style="text-align: right; border-top: 2px solid #ccc; border-bottom: 4px double #ccc;"><?php echo number_format($totCr, 2); ?></td>
-                </tr>
-            </tfoot>
         </table>
         
         <?php if(abs($totDr - $totCr) > 0.01): ?>

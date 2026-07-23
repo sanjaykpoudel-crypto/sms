@@ -392,10 +392,18 @@ function fetchOpenTransactions() {
             const appliedAmt = parseFloat(row.applied_amount) || 0;
             const isChecked = appliedAmt > 0 ? 'checked' : '';
             const readOnly = appliedAmt > 0 ? '' : 'readonly';
+            let typeBadge = '';
+            if (row.txn_type === 'Journal') {
+                typeBadge = '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">JOURNAL</span>';
+            } else if (row.txn_type === 'Invoice') {
+                typeBadge = '<span style="font-size:10px; background:#f0fdf4; color:#15803d; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">INVOICE</span>';
+            } else if (row.txn_type === 'Bill') {
+                typeBadge = '<span style="font-size:10px; background:#fff7ed; color:#c2410c; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">BILL</span>';
+            }
             html += `
                 <tr>
                     <td style="text-align: center;">${idx + 1}</td>
-                    <td><a href="?page=transactions/view&id=${row.id}" target="_blank">${row.txn_number}</a></td>
+                    <td><a href="?page=transactions/view&id=${row.id}" target="_blank">${row.txn_number}</a>${typeBadge}</td>
                     <td>${row.txn_date}</td>
                     <td style="text-align: right;">${parseFloat(row.total_amount).toFixed(2)}</td>
                     <td style="text-align: right;" class="balance-due-text">${parseFloat(row.balance_due).toFixed(2)}</td>

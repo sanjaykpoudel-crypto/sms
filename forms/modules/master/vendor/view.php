@@ -20,23 +20,37 @@ if (!$vendor) {
     exit;
 }
 
-// Fetch related records (Bills)
+// Fetch related records (Bills & Tagged Journals)
 $bills = $db->fetchAll("
-    SELECT vb.id, vb.header_id, vb.vendor_invoice_number, vb.bill_date, vb.total_amount, vb.balance_due, vb.payment_status 
+    SELECT 'Bill' as doc_type, vb.id, vb.header_id, vb.vendor_invoice_number as doc_number, vb.bill_date as doc_date, vb.total_amount, vb.balance_due, vb.payment_status 
     FROM vendor_bills vb 
     JOIN transaction_headers th ON vb.header_id = th.id
     WHERE vb.vendor_id = ? AND th.is_deleted = 0
-    ORDER BY vb.bill_date DESC LIMIT 50
-", [$id]);
+    UNION ALL
+    SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
+        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
+        (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0)) as balance_due,
+        h.status as payment_status
+    FROM journal_entries j
+    JOIN transaction_headers h ON j.header_id = h.id
+    LEFT JOIN transaction_links tl ON tl.child_id = h.id AND tl.link_type LIKE 'payment:%'
+    WHERE (j.party_id = ? OR h.party_id = ?) 
+      AND (j.party_type = 'vendor' OR j.party_type IS NULL) 
+      AND h.is_deleted = 0 
+      AND h.txn_type IN ('Journal', 'journal_entry')
+    GROUP BY h.id, h.txn_number, h.txn_date, h.status
+    ORDER BY doc_date DESC LIMIT 50
+", [$id, $id, $id]);
 // Fetch related records (Payments)
 $payments = $db->fetchAll("
     SELECT th.id as header_id, th.txn_number, th.txn_date, th.created_at,
            SUM(DISTINCT p.amount) as total_amount,
            GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') as payment_methods,
-           GROUP_CONCAT(DISTINCT vb.vendor_invoice_number ORDER BY vb.vendor_invoice_number SEPARATOR ', ') as applied_bills
+           GROUP_CONCAT(DISTINCT COALESCE(vb.vendor_invoice_number, th_child.txn_number) ORDER BY COALESCE(vb.vendor_invoice_number, th_child.txn_number) SEPARATOR ', ') as applied_bills
     FROM transaction_headers th
     JOIN payments p ON th.id = p.header_id
     LEFT JOIN transaction_links tl ON tl.parent_id = th.id
+    LEFT JOIN transaction_headers th_child ON tl.child_id = th_child.id
     LEFT JOIN vendor_bills vb ON tl.child_id = vb.header_id
     WHERE p.vendor_id = ? AND th.is_deleted = 0
     GROUP BY th.id
@@ -51,23 +65,25 @@ $audit_logs = $db->fetchAll("
     ORDER BY al.created_at DESC
 ", ['id' => $id]);
 
-function getDiff($oldJson, $newJson) {
-    $old = json_decode($oldJson, true) ?: [];
-    $new = json_decode($newJson, true) ?: [];
-    
-    if (!$old && $new) return array_map(function($v) { return ['old' => '', 'new' => $v]; }, $new);
-    if (!$new) return [];
-    
-    $diff = [];
-    foreach ($new as $key => $val) {
-        $oldVal = $old[$key] ?? '';
-        if (in_array($key, ['updated_at', 'created_at', 'id'])) continue;
+if (!function_exists('getDiff')) {
+    function getDiff($oldJson, $newJson) {
+        $old = json_decode($oldJson, true) ?: [];
+        $new = json_decode($newJson, true) ?: [];
         
-        if ((string)$oldVal !== (string)$val) {
-            $diff[$key] = ['old' => $oldVal, 'new' => $val];
+        if (!$old && $new) return array_map(function($v) { return ['old' => '', 'new' => $v]; }, $new);
+        if (!$new) return [];
+        
+        $diff = [];
+        foreach ($new as $key => $val) {
+            $oldVal = $old[$key] ?? '';
+            if (in_array($key, ['updated_at', 'created_at', 'id'])) continue;
+            
+            if ((string)$oldVal !== (string)$val) {
+                $diff[$key] = ['old' => $oldVal, 'new' => $val];
+            }
         }
+        return $diff;
     }
-    return $diff;
 }
 ?>
 
@@ -170,7 +186,7 @@ function getDiff($oldJson, $newJson) {
 
 <div class="ns-tabs">
     <div class="ns-tab active" onclick="nsOpenTab('tab-primary', this)">Primary Information</div>
-    <div class="ns-tab" onclick="nsOpenTab('tab-related', this)">Related Bills <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($bills); ?></span></div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-related', this)">Related Bills & Journals <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($bills); ?></span></div>
     <div class="ns-tab" onclick="nsOpenTab('tab-payments', this)">Payments <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($payments); ?></span></div>
     <div class="ns-tab" onclick="nsOpenTab('tab-system', this)">System Information</div>
 </div>
@@ -241,7 +257,8 @@ function getDiff($oldJson, $newJson) {
     <table class="ns-table">
         <thead>
             <tr>
-                <th>Bill Date</th>
+                <th>Type</th>
+                <th>Date</th>
                 <th>Reference #</th>
                 <th style="text-align: right;">Total Amount</th>
                 <th style="text-align: right;">Balance Due</th>
@@ -249,13 +266,17 @@ function getDiff($oldJson, $newJson) {
             </tr>
         </thead>
         <tbody>
-            <?php foreach($bills as $bill): ?>
+            <?php foreach($bills as $bill): 
+                $isJournal = ($bill['doc_type'] === 'Journal');
+                $typeBadge = $isJournal ? '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-weight:700;">JOURNAL</span>' : '<span style="font-size:10px; background:#fff7ed; color:#c2410c; padding:2px 6px; border-radius:4px; font-weight:700;">BILL</span>';
+            ?>
             <tr>
-                <td><?php echo date('M d, Y', strtotime($bill['bill_date'])); ?></td>
-                <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($bill['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($bill['vendor_invoice_number']); ?></a></td>
+                <td><?php echo $typeBadge; ?></td>
+                <td><?php echo date('M d, Y', strtotime($bill['doc_date'])); ?></td>
+                <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($bill['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($bill['doc_number']); ?></a></td>
                 <td style="text-align: right;">Rs <?php echo number_format($bill['total_amount'], 2); ?></td>
-                <td style="text-align: right; color: #c00;">Rs <?php echo number_format($bill['balance_due'], 2); ?></td>
-                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo $bill['payment_status'] == 'paid' ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($bill['payment_status']); ?></span></td>
+                <td style="text-align: right; color: <?php echo $bill['balance_due'] > 0.01 ? '#c00' : '#28a745'; ?>;">Rs <?php echo number_format($bill['balance_due'], 2); ?></td>
+                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo in_array(strtolower($bill['payment_status']), ['paid', 'posted']) ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($bill['payment_status']); ?></span></td>
             </tr>
             <?php endforeach; ?>
         </tbody>
