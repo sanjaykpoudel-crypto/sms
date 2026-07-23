@@ -30,7 +30,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
         <?php if ($id): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/adjustment')"><i class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
-        <button type="button" onclick="history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</button>
+        <a href="?page=transactions/adjustment" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 
@@ -76,13 +76,14 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                 <thead>
                     <tr>
                         <th width="36" style="text-align: center;">#</th>
-                        <th width="250">Item Name <span class="ns-required">*</span></th>
+                        <th width="220">Item Name <span class="ns-required">*</span></th>
                         <th width="100" style="text-align: right;">Current Stock</th>
                         <th width="120" style="text-align: right;">Adjustment Qty (+/-) <span class="ns-required">*</span></th>
+                        <th width="100" style="text-align: right; color: #312e81;">New Stock</th>
                         <th width="80" style="text-align: center;">Unit</th>
-                        <th width="130" style="text-align: right;">Current Cost</th>
-                        <th width="130" style="text-align: right;">New/Adjusted Cost <span class="ns-required">*</span></th>
-                        <th width="140" style="text-align: right; color: var(--ns-primary);">Adjusted Value</th>
+                        <th width="110" style="text-align: right;">Current Cost</th>
+                        <th width="120" style="text-align: right;">New/Adjusted Cost <span class="ns-required">*</span></th>
+                        <th width="130" style="text-align: right; color: var(--ns-primary);">Adjusted Value</th>
                         <th width="55" style="text-align: center;">Actions</th>
                     </tr>
                 </thead>
@@ -108,8 +109,9 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                                     <?php endforeach; ?>
                                 </select>
                             </td>
-                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="" readonly></td>
+                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="" readonly style="background: #f8fafc; color: #475569; font-weight: 600;"></td>
                             <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num" value="<?php echo $qty; ?>" step="any" onfocus="this.select()" oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" placeholder="e.g. -5 or 10" required></td>
+                            <td><input type="text" class="ns-input new-stock-input ns-input-num ns-input-readonly" value="" readonly style="background: #eef2ff; color: #312e81; font-weight: 700;" tabindex="-1"></td>
                             <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
                             <td><input type="number" class="ns-input current-cost-input ns-input-num ns-input-readonly" value="<?php echo $currentCost; ?>" readonly></td>
                             <td><input type="number" name="rate[]" class="ns-input new-cost-input ns-input-num" value="<?php echo $newCost; ?>" min="0" step="any" onfocus="this.select()" oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" required></td>
@@ -197,8 +199,20 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
 
     function adjCalcRow(el) {
         const row = el.closest('tr');
+        const stockInput = row.querySelector('.stock-input');
+        const stockVal = stockInput ? stockInput.value : '';
+        const stock = parseFloat(stockVal);
         const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
         const newCost = parseFloat(row.querySelector('.new-cost-input').value) || 0;
+
+        const newStockEl = row.querySelector('.new-stock-input');
+        if (newStockEl) {
+            if (stockVal === '' || isNaN(stock)) {
+                newStockEl.value = '';
+            } else {
+                newStockEl.value = (stock + qty).toFixed(2);
+            }
+        }
 
         const amount = qty * newCost;
         row.querySelector('.amount-input').value = amount.toFixed(2);
@@ -219,6 +233,8 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
         const row = select.closest('tr');
         if (!itemId) {
             row.querySelector('.stock-input').value = '';
+            const newStockEl = row.querySelector('.new-stock-input');
+            if (newStockEl) newStockEl.value = '';
             row.querySelector('.unit-input').value = '';
             row.querySelector('.current-cost-input').value = '0.00';
             row.querySelector('.new-cost-input').value = '0.00';
@@ -230,10 +246,11 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
             .then(r => r.json())
             .then(data => {
                 if (data.error) return;
-                row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
+                const currentStock = (data.current_stock !== undefined && data.current_stock !== null) ? parseFloat(data.current_stock) : 0;
+                row.querySelector('.stock-input').value = currentStock.toFixed(2);
                 row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
-                row.querySelector('.current-cost-input').value = data.cost_price;
-                row.querySelector('.new-cost-input').value = data.cost_price;
+                row.querySelector('.current-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
+                row.querySelector('.new-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
                 
                 adjCalcRow(row.querySelector('.qty-input'));
             });

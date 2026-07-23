@@ -8,7 +8,7 @@ $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 $item_id   = $_GET['item_id']   ?? '';
 
-$items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 ORDER BY updated_at DESC");
+$items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 AND is_active=1 ORDER BY updated_at DESC");
 $item_options = ['' => 'All Items'];
 foreach ($items as $it) { $item_options[$it['id']] = $it['sku'].' - '.$it['item_name']; }
 
@@ -29,9 +29,8 @@ $rows = $db->fetchAll("
         COALESCE(SUM(CASE 
             WHEN h.txn_date < :date_from THEN
                 CASE 
-                    WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice','POS') THEN -l.quantity 
-                    WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
                     ELSE 0 
                 END
             ELSE 0 
@@ -40,7 +39,7 @@ $rows = $db->fetchAll("
         COALESCE(SUM(CASE 
             WHEN h.txn_date BETWEEN :date_from AND :date_to THEN
                 CASE 
-                    WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock') THEN l.quantity 
                     WHEN h.txn_type = 'inventory_adjustment' AND l.quantity > 0 THEN l.quantity
                     ELSE 0 
                 END
@@ -50,7 +49,7 @@ $rows = $db->fetchAll("
         COALESCE(SUM(CASE 
             WHEN h.txn_date BETWEEN :date_from AND :date_to THEN
                 CASE 
-                    WHEN h.txn_type IN ('customer_invoice','POS') THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN l.quantity 
                     WHEN h.txn_type = 'inventory_adjustment' AND l.quantity < 0 THEN ABS(l.quantity)
                     ELSE 0 
                 END
@@ -59,17 +58,13 @@ $rows = $db->fetchAll("
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
     LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-    WHERE i.is_deleted = 0 $item_clause
+    WHERE i.is_deleted = 0 AND i.is_active = 1 $item_clause
     GROUP BY i.id, i.sku, i.item_name, i.cost_price
     ORDER BY i.sku, i.item_name
 ", $params);
 
 $filtered_rows = [];
 foreach ($rows as $r) {
-    $closing = $r['opening_qty'] + $r['qty_in'] - $r['qty_out'];
-    if (empty($item_id) && abs($closing) < 0.005) {
-        continue;
-    }
     $filtered_rows[] = $r;
 }
 

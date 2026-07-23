@@ -277,14 +277,26 @@
                     </div>
                 </div>
                 <div class="dv4-card-body" style="height: 100px; display: flex; align-items: center;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-end; width: 100%;">
+                    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; width: 100%;">
                         <div>
-                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">FY Sales</div>
-                           <div id="fy-sales" style="font-size: 18px; font-weight: 800; color: var(--dv4-text); margin-top: 4px;">—</div>
+                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Stock Amount</div>
+                           <div id="fy-stock" style="font-size: 12px; font-weight: 800; color: #06b6d4; margin-top: 4px;">—</div>
+                        </div>
+                        <div style="text-align: center;">
+                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Purchase</div>
+                           <div id="fy-purchase" style="font-size: 12px; font-weight: 800; color: #6366f1; margin-top: 4px;">—</div>
+                        </div>
+                        <div style="text-align: center;">
+                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Sales</div>
+                           <div id="fy-sales" style="font-size: 12px; font-weight: 800; color: var(--dv4-text); margin-top: 4px;">—</div>
+                        </div>
+                        <div style="text-align: center;">
+                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Expenses</div>
+                           <div id="fy-expenses" style="font-size: 12px; font-weight: 800; color: #ef4444; margin-top: 4px;">—</div>
                         </div>
                         <div style="text-align: right;">
-                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">FY Profit</div>
-                           <div id="fy-profit" style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 4px;">—</div>
+                           <div style="font-size: 9px; font-weight: 700; color: var(--dv4-text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Profit</div>
+                           <div id="fy-profit" style="font-size: 12px; font-weight: 800; color: #10b981; margin-top: 4px;">—</div>
                         </div>
                     </div>
                 </div>

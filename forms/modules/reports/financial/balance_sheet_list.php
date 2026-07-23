@@ -83,13 +83,13 @@ $other_liabilities = array_sum(array_column($other_liabilities_list, 'bal'));
 $total_liabilities = $ap + $tax_payable + $other_liabilities;
 
 // ─── EQUITY ───────────────────────────────────────────────────────────────────
-// Use Type-based balances for Income and Expenses (excluding inventory adjustments and system closing journals)
+// Use Type-based balances for Income and Expenses (including system closing journals)
 $revenue = -(float)($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'income' AND h.txn_type != 'inventory_adjustment' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL
 ", [$start_date, $as_of])['v'] ?? 0);
 
@@ -98,34 +98,26 @@ $expenses = (float)($db->fetchOne("
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND h.txn_type != 'inventory_adjustment' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL
 ", [$start_date, $as_of])['v'] ?? 0);
 
 $retained_earnings = $revenue - $expenses;
 
-// General Ledger Equity Accounts (excluding inventory adjustments)
+// General Ledger Equity Accounts
 $equity_accounts_list = $db->fetchAll("
     SELECT a.account_name, -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'equity' AND h.txn_type != 'inventory_adjustment'
+    WHERE a.account_type = 'equity'
       AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     GROUP BY a.id, a.account_name
     HAVING bal != 0
 ", [$start_date, $as_of]);
 
-// Calculate Inventory Adjustment Reserve (net offset of all inventory adjustments in equity side)
-$inventory_adjustment_reserve = -(float)($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE h.txn_type = 'inventory_adjustment'
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND a.account_type IN ('expense', 'income', 'liability', 'equity')
-", [$start_date, $as_of])['bal'] ?? 0);
+// Inventory adjustments are now included in their original accounts directly.
+$inventory_adjustment_reserve = 0.0;
 
 $total_other_equity = array_sum(array_column($equity_accounts_list, 'bal'));
 $total_equity = $total_other_equity + $retained_earnings + $inventory_adjustment_reserve;

@@ -19,6 +19,7 @@ $sales = $db->fetchAll("
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND ci.tax_amount > 0
       AND ci.invoice_number NOT LIKE 'POS-%'
+      AND ci.invoice_number NOT LIKE 'INV-POS-%'
 
     UNION ALL
 

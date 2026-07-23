@@ -11,11 +11,11 @@ $list = $db->fetchAll("
     ORDER BY h.created_at DESC
 ");
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
-        Expenses
-        <a href="?page=transactions/expense/manage" class="ns-btn ns-btn-primary">New Transaction</a>
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
+        <i class="fas fa-wallet" style="color: #ef4444; margin-right: 8px;"></i> Expenses
     </h1>
+    <a href="?page=transactions/expense/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Transaction</a>
 </div>
 
 <div class="ns-portlet">
@@ -28,7 +28,7 @@ $list = $db->fetchAll("
                     <th>Payee</th>
                     <th>Expense Account</th>
                     <th>Paid From</th>
-                    <th>Amount</th>
+                    <th style="text-align: right;">Amount</th>
                     <th>Category</th>
                     <th width="80">Actions</th>
                 </tr>
@@ -55,18 +55,6 @@ $list = $db->fetchAll("
                 </tr>
                 <?php endforeach; ?>
             </tbody>
-            <tfoot>
-                <tr>
-                    <th>Date</th>
-                    <th>Expense #</th>
-                    <th>Payee</th>
-                    <th>Expense Account</th>
-                    <th>Paid From</th>
-                    <th>Amount</th>
-                    <th>Category</th>
-                    <th>Actions</th>
-                </tr>
-            </tfoot>
         </table>
     </div>
 </div>

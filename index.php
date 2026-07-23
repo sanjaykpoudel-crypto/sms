@@ -322,9 +322,12 @@ if ($is_logged_in) {
                 <i class="fas fa-tasks" style="margin-right: 8px;"></i> Activities <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="#" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i> Calendar</a>
-                    <a href="#" class="ns-dropdown-item"><i class="fas fa-check-square"></i> Tasks</a>
-                    <a href="#" class="ns-dropdown-item"><i class="fas fa-bullhorn"></i> Events</a>
+                    <a href="?page=activity/calendar" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i> Calendar</a>
+                    <a href="?page=activity&type=task" class="ns-dropdown-item"><i class="fas fa-check-square"></i> Tasks</a>
+                    <a href="?page=activity&type=event" class="ns-dropdown-item"><i class="fas fa-bullhorn"></i> Events</a>
+                    <a href="?page=activity&type=meeting" class="ns-dropdown-item"><i class="fas fa-users"></i> Meetings</a>
+                    <a href="?page=activity&type=phone_call" class="ns-dropdown-item"><i class="fas fa-phone-alt"></i> Phone Calls</a>
+                    <a href="?page=activity" class="ns-dropdown-item"><i class="fas fa-list"></i> All Activities</a>
                 </div>
             </div>
 
@@ -332,7 +335,7 @@ if ($is_logged_in) {
                     class="fas fa-home"></i></a>
 
             <div class="ns-nav-item">
-                <i class="fas fa-exchange-alt" style="margin-right: 8px;"></i> Transactions <i class="fas fa-caret-down"
+                <i class="fas fa-exchange-alt" style="margin-right: 8px;"></i> <a href="?page=transactions/transactions_list" style="color:inherit; text-decoration:none;">Transactions</a> <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <div class="ns-dropdown-item">
@@ -410,7 +413,7 @@ if ($is_logged_in) {
             </div>
 
             <div class="ns-nav-item">
-                Lists <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
+                <a href="?page=master/master_list" style="color:inherit; text-decoration:none;">Lists</a> <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <a href="?page=master/account" class="ns-dropdown-item"><i class="fas fa-list-ul"></i> Accounts</a>
                     <a href="?page=master/customer" class="ns-dropdown-item"><i class="fas fa-users"></i> Customers</a>
@@ -420,8 +423,8 @@ if ($is_logged_in) {
                 </div>
             </div>
 
-            <div class="ns-nav-item">
-                Reports <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
+            <div class="ns-nav-item" onclick="if(event.target.tagName !== 'A' && !event.target.closest('.ns-dropdown')) window.location='?page=reports/reports_list';">
+                <a href="?page=reports/reports_list" style="color:inherit; text-decoration:none;">Reports</a> <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <div class="ns-dropdown-item">
                         <i class="fas fa-file-invoice-dollar"></i> Financial <i class="fas fa-caret-right"
@@ -498,6 +501,15 @@ if ($is_logged_in) {
                             <a href="?page=reports/customers/ar_register" class="ns-sub-dropdown-item">AR Register</a>
                             <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment by Invoice</a>
                             <a href="?page=reports/customers/receivable_aging" class="ns-sub-dropdown-item">AR Aging</a>
+                        </div>
+                    </div>
+                    <div class="ns-dropdown-item" style="background: #f0f9ff;">
+                        <i class="fas fa-lightbulb" style="color: #0284c7;"></i> <strong style="color: #0369a1;">General Insights</strong> <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px; color: #0284c7;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=reports/financial/break_even_payback" class="ns-sub-dropdown-item" style="font-weight: 700; color: #0284c7;">Break-Even & Investment Payback</a>
+                            <a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a>
+                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability Insights</a>
                         </div>
                     </div>
                 </div>

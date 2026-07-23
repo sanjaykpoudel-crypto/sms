@@ -43,26 +43,40 @@ $six_m_ago   = date('Y-m-d', strtotime('-5 months first day of this month'));
 $year_start  = date('Y-01-01');
 $now         = date('Y-m-d H:i:s');
 
-// Fiscal Year (Custom settings in system_info with fallback to Nepali July 16 to July 15)
-$custom_fy_start = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'fiscal_year_start'")['meta_value'] ?? null;
-$custom_fy_end   = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'fiscal_year_end'")['meta_value'] ?? null;
+// Fiscal Year (Retrieve from active/current fiscal year in the database, with fallback)
+$active_fy = $db->fetchOne("SELECT * FROM fiscal_years WHERE status IN ('open', 'reopened') ORDER BY start_date DESC LIMIT 1");
+if (!$active_fy) {
+    $active_fy = $db->fetchOne("SELECT * FROM fiscal_years WHERE ? BETWEEN start_date AND end_date LIMIT 1", [$today]);
+}
+if (!$active_fy) {
+    $active_fy = $db->fetchOne("SELECT * FROM fiscal_years ORDER BY start_date DESC LIMIT 1");
+}
 
-if (!empty($custom_fy_start) && !empty($custom_fy_end)) {
-    $fy_start = $custom_fy_start;
-    $fy_end   = $custom_fy_end;
-    $start_y  = date('Y', strtotime($fy_start));
-    $end_y    = date('Y', strtotime($fy_end));
-    $fy_label = "FY " . substr($start_y, 2) . "/" . substr($end_y, 2);
+if ($active_fy) {
+    $fy_start = $active_fy['start_date'];
+    $fy_end   = $active_fy['end_date'];
+    $fy_label = $active_fy['name'];
 } else {
-    $m  = (int)date('n'); $d  = (int)date('j'); $y  = (int)date('Y');
-    if ($m > 7 || ($m == 7 && $d >= 16)) {
-        $fy_start = "{$y}-07-16";
-        $fy_end   = ($y+1) . "-07-15";
-        $fy_label = "FY " . substr($y,2) . "/" . substr($y+1,2);
+    $custom_fy_start = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'fiscal_year_start'")['meta_value'] ?? null;
+    $custom_fy_end   = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'fiscal_year_end'")['meta_value'] ?? null;
+
+    if (!empty($custom_fy_start) && !empty($custom_fy_end)) {
+        $fy_start = $custom_fy_start;
+        $fy_end   = $custom_fy_end;
+        $start_y  = date('Y', strtotime($fy_start));
+        $end_y    = date('Y', strtotime($fy_end));
+        $fy_label = "FY " . substr($start_y, 2) . "/" . substr($end_y, 2);
     } else {
-        $fy_start = ($y-1) . "-07-16";
-        $fy_end   = "{$y}-07-15";
-        $fy_label = "FY " . substr($y-1,2) . "/" . substr($y,2);
+        $m  = (int)date('n'); $d  = (int)date('j'); $y  = (int)date('Y');
+        if ($m > 7 || ($m == 7 && $d >= 16)) {
+            $fy_start = "{$y}-07-16";
+            $fy_end   = ($y+1) . "-07-15";
+            $fy_label = "FY " . substr($y,2) . "/" . substr($y+1,2);
+        } else {
+            $fy_start = ($y-1) . "-07-16";
+            $fy_end   = "{$y}-07-15";
+            $fy_label = "FY " . substr($y-1,2) . "/" . substr($y,2);
+        }
     }
 }
 
@@ -144,34 +158,22 @@ $sales_yest = (float)($db->fetchOne("
     WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft')
 ", [$yesterday])['total'] ?? 0);
 
-// ── 1b. Today's Gross Profit (POS items + non-POS invoice lines, no double-count) ──
-// Note: pi.net_amount includes tax, so we subtract pi.tax before deducting cost to get true gross profit.
+// ── 1b. Today's Gross Profit (Transactions only) ──
 $profit_today = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(profit),0) as profit FROM (
-        SELECT SUM((pi.net_amount - pi.tax) - (pi.quantity * i.cost_price)) as profit
-        FROM pos_items pi JOIN items i ON pi.item_id = i.id
-        JOIN pos_entry p ON pi.pos_id = p.id
-        WHERE DATE(p.date_time) = ? AND p.is_deleted = 0
-        UNION ALL
-        SELECT SUM(l.gross_profit) FROM transaction_lines l
-        JOIN transaction_headers h ON l.header_id = h.id
-        WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft')
-          AND h.txn_type = 'customer_invoice'
-          AND h.txn_number NOT LIKE 'POS-%'
-    ) t", [$today, $today])['profit'] ?? 0);
+    SELECT COALESCE(SUM(l.gross_profit), 0) as profit
+    FROM transaction_lines l
+    JOIN transaction_headers h ON l.header_id = h.id
+    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft')
+      AND h.txn_type = 'customer_invoice'
+", [$today])['profit'] ?? 0);
+
 $profit_yest = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(profit),0) as profit FROM (
-        SELECT SUM((pi.net_amount - pi.tax) - (pi.quantity * i.cost_price)) as profit
-        FROM pos_items pi JOIN items i ON pi.item_id = i.id
-        JOIN pos_entry p ON pi.pos_id = p.id
-        WHERE DATE(p.date_time) = ? AND p.is_deleted = 0
-        UNION ALL
-        SELECT SUM(l.gross_profit) FROM transaction_lines l
-        JOIN transaction_headers h ON l.header_id = h.id
-        WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft')
-          AND h.txn_type = 'customer_invoice'
-          AND h.txn_number NOT LIKE 'POS-%'
-    ) t", [$yesterday, $yesterday])['profit'] ?? 0);
+    SELECT COALESCE(SUM(l.gross_profit), 0) as profit
+    FROM transaction_lines l
+    JOIN transaction_headers h ON l.header_id = h.id
+    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft')
+      AND h.txn_type = 'customer_invoice'
+", [$yesterday])['profit'] ?? 0);
 
 // ── 1c. Cash / Bank / AR / AP — Single batch query ──
 function get_balances($db, $as_of) {
@@ -418,80 +420,75 @@ function get_daily_sales($db, $from, $to) {
     return $map;
 }
 
-// ── 2b. Sales by Payment Method ──
-$pay_methods = ['Cash' => 0, 'Card' => 0, 'eSewa' => 0, 'Khalti' => 0, 'Bank Transfer' => 0, 'Credit' => 0];
+// ── 2b. Sales by Payment Method / Bank Account (Transactions only) ──
+$bank_accounts = $db->fetchAll("
+    SELECT id, account_code, account_name, account_subtype
+    FROM accounts
+    WHERE (account_subtype IN ('bank', 'cash') OR account_code LIKE '10%')
+      AND is_active = 1 AND is_deleted = 0
+    ORDER BY account_code ASC
+");
 
-// POS payments today (exclude deleted POS entries)
-$pp_total = $db->fetchAll("
-    SELECT pp.payment_mode, a.account_name, SUM(pp.amount) as total
-    FROM pos_payments pp JOIN accounts a ON pp.account_id = a.id
-    JOIN pos_entry pe ON pp.pos_id = pe.id
-    WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 AND pp.amount > 0
-    GROUP BY pp.payment_mode, a.account_name
-", [$today]);
-foreach ($pp_total as $p) {
-    $amt = (float)$p['total'];
-    $mode = strtolower($p['payment_mode']);
-    $name = strtolower($p['account_name'] ?? '');
-    if ($mode === 'cash') $pay_methods['Cash'] += $amt;
-    elseif ($mode === 'card') $pay_methods['Card'] += $amt;
-    elseif ($mode === 'qr' && strpos($name, 'esewa') !== false) $pay_methods['eSewa'] += $amt;
-    elseif ($mode === 'qr' && strpos($name, 'khalti') !== false) $pay_methods['Khalti'] += $amt;
-    elseif ($mode === 'bank') $pay_methods['Bank Transfer'] += $amt;
-    elseif ($mode === 'qr') $pay_methods['eSewa'] += $amt; // default QR
-    else $pay_methods['Card'] += $amt;
+$pay_methods = [];
+foreach ($bank_accounts as $ba) {
+    $pay_methods[$ba['account_name']] = 0.0;
 }
-// Invoice payments today (exclude deleted/voided)
+
+// Invoice and POS summary payments today (exclude deleted/voided)
 $ip = $db->fetchAll("
-    SELECT p.payment_method, SUM(p.amount) as total
-    FROM payments p JOIN transaction_headers h ON p.header_id = h.id
+    SELECT 
+        COALESCE(a.account_name, 
+            CASE 
+                WHEN p.payment_method = 'cash' THEN 'Cash on Hand'
+                WHEN p.payment_method = 'esewa' THEN 'Esewa'
+                WHEN p.payment_method = 'khalti' THEN 'Khalti'
+                WHEN p.payment_method = 'card' THEN 'Card'
+                WHEN p.payment_method = 'bank_transfer' THEN 'Bank Transfer'
+                ELSE 'Other'
+            END
+        ) as acc_name,
+        SUM(p.amount) as total
+    FROM payments p
+    JOIN transaction_headers h ON p.header_id = h.id
+    LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE p.payment_date = ? AND p.payment_type = 'customer_payment'
       AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
-    GROUP BY p.payment_method
+    GROUP BY acc_name
 ", [$today]);
+
 foreach ($ip as $p) {
+    $name = $p['acc_name'];
     $amt = (float)$p['total'];
-    switch ($p['payment_method']) {
-        case 'cash': $pay_methods['Cash'] += $amt; break;
-        case 'card': $pay_methods['Card'] += $amt; break;
-        case 'esewa': $pay_methods['eSewa'] += $amt; break;
-        case 'khalti': $pay_methods['Khalti'] += $amt; break;
-        case 'bank_transfer': case 'cheque': $pay_methods['Bank Transfer'] += $amt; break;
-    }
+    $pay_methods[$name] = ($pay_methods[$name] ?? 0.0) + $amt;
 }
+
 // Credit sales today (exclude deleted/voided)
 $credit_today = (float)($db->fetchOne("
     SELECT COALESCE(SUM(ci.balance_due), 0) as balance_due FROM customer_invoices ci
     JOIN transaction_headers h ON ci.header_id = h.id
     WHERE h.txn_date = ? AND ci.sale_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
 ", [$today])['balance_due'] ?? 0);
+
 $pay_methods['Credit'] = $credit_today;
 
-// ── 2c. Sales by Beverage Category (This Month) ──
+// ── 2c. Sales by Beverage Category (This Month - Transactions only) ──
 $cat_sales_data = $db->fetchAll("
     SELECT 
         rc.name as category_name,
         COALESCE(SUM(t.amount), 0) as total_amount
     FROM reference_codes rc
     LEFT JOIN (
-        SELECT pi.net_amount as amount, i.item_category
-        FROM pos_items pi
-        JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
-        JOIN pos_entry p ON pi.pos_id = p.id
-        WHERE DATE(p.date_time) BETWEEN ? AND ? AND p.is_deleted = 0
-        UNION ALL
         SELECT l.line_total as amount, i.item_category
         FROM transaction_lines l
         JOIN transaction_headers h ON l.header_id = h.id
         JOIN items i ON l.item_id = i.id AND i.is_deleted = 0
         WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
           AND h.txn_type = 'customer_invoice'
-          AND h.txn_number NOT LIKE 'POS-%'
     ) t ON rc.id = t.item_category
     WHERE rc.type = 'category' AND rc.is_active = 1
     GROUP BY rc.id, rc.name
     ORDER BY total_amount DESC
-", [$month_start, $today, $month_start, $today]);
+", [$month_start, $today]);
 
 $sales_by_category = [];
 foreach ($cat_sales_data as $row) {
@@ -510,24 +507,17 @@ if (empty($sales_by_category)) {
 // 3. INVENTORY DASHBOARD
 // ══════════════════════════════════════════════════════════════════
 
-// ── 3a. Top Selling Items (this month) ──
+// ── 3a. Top Selling Items (this month - Transactions only) ──
 $top_selling = $db->fetchAll("
     SELECT i.sku, i.item_name, i.current_stock,
-           SUM(s.qty) as total_qty, SUM(s.total_sales) as total_amount
-    FROM (
-        SELECT pi.item_id, SUM(pi.quantity) as qty, SUM(pi.net_amount) as total_sales
-        FROM pos_items pi JOIN pos_entry pe ON pi.pos_id = pe.id
-        WHERE DATE(pe.date_time) BETWEEN ? AND ? AND pe.is_deleted = 0
-        GROUP BY pi.item_id
-        UNION ALL
-        SELECT tl.item_id, SUM(tl.quantity) as qty, SUM(tl.line_total) as total_sales
-        FROM transaction_lines tl JOIN transaction_headers h ON tl.header_id = h.id
-        WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
-          AND h.txn_type = 'customer_invoice'
-        GROUP BY tl.item_id
-    ) s JOIN items i ON s.item_id = i.id WHERE i.is_deleted = 0
-    GROUP BY s.item_id ORDER BY total_amount DESC LIMIT 10
-", [$month_start, $month_end, $month_start, $month_end]);
+           SUM(tl.quantity) as total_qty, SUM(tl.line_total) as total_amount
+    FROM transaction_lines tl
+    JOIN transaction_headers h ON tl.header_id = h.id
+    JOIN items i ON tl.item_id = i.id
+    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
+      AND h.txn_type = 'customer_invoice' AND i.is_deleted = 0
+    GROUP BY tl.item_id ORDER BY total_amount DESC LIMIT 10
+", [$month_start, $month_end]);
 
 // ── 3b. Slow Moving Items ──
 $slow_30 = $db->fetchAll("
@@ -651,6 +641,16 @@ $fy_sales = (float)($db->fetchOne("
     SELECT COALESCE(SUM(ci.total_amount), 0) as total FROM customer_invoices ci
     JOIN transaction_headers h ON ci.header_id = h.id
     WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided'
+", [$fy_start, $today])['total'] ?? 0);
+$fy_purchases = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(vb.total_amount), 0) as total FROM vendor_bills vb
+    JOIN transaction_headers h ON vb.header_id = h.id
+    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided'
+", [$fy_start, $today])['total'] ?? 0);
+$fy_expenses = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(e.amount), 0) as total FROM expenses e
+    JOIN transaction_headers h ON e.header_id = h.id
+    WHERE e.expense_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided'
 ", [$fy_start, $today])['total'] ?? 0);
 $fy_profit = (float)($db->fetchOne("
     SELECT COALESCE(SUM(l.gross_profit), 0) as profit FROM transaction_lines l
@@ -1085,6 +1085,14 @@ $response = [
         'counted_by' => count($mis) > 0 ? 'Verified' : ($closing_cash > 0 ? 'Counted' : 'Not Counted')
     ],
 
+    // New: Break-Even Tracker Data
+    'break_even' => [
+        'target'      => 1070000.00,
+        'recovered'   => (float)($fy_profit > 0 ? $fy_profit : 0),
+        'unrecovered' => max(0, 1070000.00 - (float)($fy_profit > 0 ? $fy_profit : 0)),
+        'progress_pct'=> round(min(100, max(0, (((float)($fy_profit > 0 ? $fy_profit : 0)) / 1070000.00) * 100)), 2)
+    ],
+
     // Row 2: Sales Analytics
     'sales_trend'   => $trend_data,
     'sales_payment' => [
@@ -1131,7 +1139,10 @@ $response = [
         'profit'         => $m_profit,
         'profit_last'    => $m_profit_last,
         'fy_sales'       => $fy_sales,
+        'fy_purchases'   => $fy_purchases,
+        'fy_expenses'    => $fy_expenses,
         'fy_profit'      => $fy_profit,
+        'fy_stock'       => (float)$inv_stats['inventory_value'],
         'fy_label'       => $fy_label,
     ],
 

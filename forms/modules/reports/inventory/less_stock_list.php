@@ -7,15 +7,14 @@ $items = $db->fetchAll("
     SELECT 
         i.id, i.sku, i.item_name, rc.name as category_name, i.reorder_level, i.reorder_qty, i.cost_price,
         COALESCE(SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Opening Stock') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'POS') THEN -l.quantity 
-            WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
             ELSE 0 END), 0) as current_stock
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
     LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
-    WHERE i.is_deleted = 0
+    WHERE i.is_deleted = 0 AND i.is_active = 1
     GROUP BY i.id
     ORDER BY current_stock ASC
 ");

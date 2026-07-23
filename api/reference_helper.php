@@ -525,14 +525,13 @@ function sync_daily_pos_summary($date) {
         }
         
         $max_line++;
-        // line_total = revenue excl. tax (gross - discount), gross_profit = revenue_excl_tax - cogs
-        $line_revenue_excl_tax = $gross - $disc;  // total selling price before tax for this item group
+        // Do not change rate of items when discount is given; keep unit_price as gross rate and record discount on invoice header
+        $unit_price_full = $qty > 0 ? $gross / $qty : 0;
         $gross_profit_excl_tax = ($net - $tax) - $cogs; // true margin, tax excluded
-        $unit_price_net = $qty > 0 ? $line_revenue_excl_tax / $qty : 0;
         $pdo->prepare("
             INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ")->execute([generate_uuid(), $invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit_price_net, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $line_revenue_excl_tax, $qty > 0 ? $cogs / $qty : 0, $gross_profit_excl_tax, $user_id]);
+        ")->execute([generate_uuid(), $invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit_price_full, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $gross, $qty > 0 ? $cogs / $qty : 0, $gross_profit_excl_tax, $user_id]);
     }
     
     // Write customer_invoices record

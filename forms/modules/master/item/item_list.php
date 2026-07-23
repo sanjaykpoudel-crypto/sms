@@ -6,13 +6,13 @@ $show_all = isset($_GET['show_all']) && $_GET['show_all'] == '1';
 $status_filter = $show_all ? "" : " AND i.is_active = 1 ";
 
 $items = $db->fetchAll("SELECT i.*, r.name as category_name, r2.name as unit_name,
-    (SELECT SUM(CASE 
-        WHEN h.txn_type IN ('vendor_bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-        WHEN h.txn_type IN ('customer_invoice', 'POS') THEN -l.quantity 
-        ELSE 0 END)
+    (SELECT COALESCE(SUM(CASE 
+        WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+        WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+        ELSE 0 END), 0)
      FROM transaction_lines l
      JOIN transaction_headers h ON l.header_id = h.id
-     WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided')
+     WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     ) as current_stock
 FROM items i 
 LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category' 
@@ -20,11 +20,11 @@ LEFT JOIN reference_codes r2 ON i.unit_type = r2.id AND r2.type IN ('unit', 'uni
 WHERE i.is_deleted = 0 $status_filter
 ORDER BY i.updated_at DESC");
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         Items & Inventory
-        <a href="?page=master/item/manage" class="ns-btn ns-btn-primary" style="margin-left: 10px;">New Item</a>
     </h1>
+    <a href="?page=master/item/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Item</a>
 </div>
 
 <div style="display: none;">

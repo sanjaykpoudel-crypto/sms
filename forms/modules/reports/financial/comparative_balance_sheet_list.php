@@ -47,14 +47,15 @@ $start_date_prev   = $prev_fy ? get_report_start_date($as_of_prev) : '1970-01-01
 /**
  * Helpers to fetch GL balances
  */
-function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id = true) {
+function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id = true, $exclude_inv_adj = false) {
     $field = $is_id ? 'j.account_id' : 'a.account_subtype';
+    $extra_cond = $exclude_inv_adj ? " AND h.txn_type != 'inventory_adjustment' " : "";
     $row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') $extra_cond
     ", [$id_or_subtype, $start_date, $as_of]);
     return (float)($row['bal'] ?? 0);
 }
@@ -76,7 +77,7 @@ function get_re_for_dates($db, $start_date, $as_of) {
         FROM journal_entries j 
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'income' AND h.txn_type != 'inventory_adjustment' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND h.source IS NULL
     ", [$start_date, $as_of])['v'] ?? 0);
 
@@ -85,7 +86,7 @@ function get_re_for_dates($db, $start_date, $as_of) {
         FROM journal_entries j 
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'expense' AND h.txn_type != 'inventory_adjustment' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND h.source IS NULL
     ", [$start_date, $as_of])['v'] ?? 0);
 
@@ -93,15 +94,8 @@ function get_re_for_dates($db, $start_date, $as_of) {
 }
 
 function get_inv_reserve_for_dates($db, $start_date, $as_of) {
-    return -(float)($db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE h.txn_type = 'inventory_adjustment'
-          AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND a.account_type IN ('expense', 'income', 'liability', 'equity')
-    ", [$start_date, $as_of])['bal'] ?? 0);
+    // Inventory adjustments are now included in their original accounts directly.
+    return 0.0;
 }
 
 // ─── 1. ASSETS ───────────────────────────────────────────────────────────────
@@ -203,8 +197,8 @@ $equity_total_this = 0.0;
 $equity_total_prev = 0.0;
 
 foreach ($equity_accounts_list as $acc) {
-    $val_this = -get_gl_bal_for_dates($db, $acc['id'], $start_date_this, $as_of_this);
-    $val_prev = $prev_fy ? -get_gl_bal_for_dates($db, $acc['id'], $start_date_prev, $as_of_prev) : 0.0;
+    $val_this = -get_gl_bal_for_dates($db, $acc['id'], $start_date_this, $as_of_this, true, false);
+    $val_prev = $prev_fy ? -get_gl_bal_for_dates($db, $acc['id'], $start_date_prev, $as_of_prev, true, false) : 0.0;
     if (abs($val_this) < 0.005 && abs($val_prev) < 0.005) continue;
 
     $equity_rows[] = [

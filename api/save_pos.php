@@ -208,7 +208,7 @@ try {
 
     // Look up the daily summary invoice header ID to return in response
     $today_str = date('Ymd', strtotime($txn_date));
-    $summary_invoice_no = "POS-SUM-" . $today_str;
+    $summary_invoice_no = "INV-POS-" . $today_str;
     $summary_header = $db->fetchOne("SELECT id FROM transaction_headers WHERE txn_number = ? AND txn_type = 'customer_invoice'", [$summary_invoice_no]);
     $summary_header_id = $summary_header ? $summary_header['id'] : null;
 

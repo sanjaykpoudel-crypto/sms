@@ -96,7 +96,7 @@
                 </div>
                 <div>
                     <h3>Financial Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">9 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">8 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
@@ -459,6 +459,45 @@
                     <span>
                         Accounts Receivable (AR) Aging
                         <span class="rpt-desc">Aging of outstanding customer invoices</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+            </div>
+        </div>
+
+        <!-- General Insights -->
+        <div class="report-category-card" style="border: 2px solid #38bdf8; box-shadow: 0 6px 20px rgba(56, 189, 248, 0.12);">
+            <div class="report-category-header" style="background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff;">
+                <div class="cat-icon" style="background: linear-gradient(135deg, #0284c7, #38bdf8);">
+                    <i class="fas fa-lightbulb"></i>
+                </div>
+                <div>
+                    <h3 style="color: #ffffff;">General Insights</h3>
+                    <div style="font-size: 10px; color: #94a3b8; font-weight: 500;">3 Strategic Analytics Reports</div>
+                </div>
+            </div>
+            <div class="report-links-list">
+                <a href="?page=reports/financial/break_even_payback" class="report-link-item" style="background: #f0f9ff;">
+                    <span class="rpt-dot" style="background:#0284c7;"></span>
+                    <span>
+                        <strong style="color: #0369a1;">Investment Payback & Break-Even Tracker</strong>
+                        <span class="rpt-desc">Track initial capital recovery countdown to Rs 0 Break-Even & strategic suggestions</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow" style="color: #0284c7;"></i>
+                </a>
+                <a href="?page=reports/sales/top_profit_items" class="report-link-item">
+                    <span class="rpt-dot" style="background:#f59e0b;"></span>
+                    <span>
+                        Top Profit Items
+                        <span class="rpt-desc">Identify highest gross profit margin products</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
+                <a href="?page=reports/inventory/inventory_profitability" class="report-link-item">
+                    <span class="rpt-dot" style="background:#10b981;"></span>
+                    <span>
+                        Inventory Profitability Insights
+                        <span class="rpt-desc">Gross margin performance and profit contribution per item</span>
                     </span>
                     <i class="fas fa-arrow-right rpt-arrow"></i>
                 </a>

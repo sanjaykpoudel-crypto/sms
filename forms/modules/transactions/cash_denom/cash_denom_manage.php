@@ -136,7 +136,9 @@ if ($id) {
                                data-value="<?php echo $d['val']; ?>"
                                style="width: 100px; text-align: center;" 
                                value="<?php echo $count; ?>"
-                               oninput="calculateDenom(this)">
+                               oninput="calculateDenom(this)"
+                               onkeyup="calculateDenom(this)"
+                               onchange="calculateDenom(this)">
                     </td>
                     <td>
                         <input type="number" class="ns-input denom-amount" 
@@ -157,6 +159,14 @@ if ($id) {
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Recalculate row amounts and grand total on page load
+    document.querySelectorAll('.denom-count').forEach(input => {
+        calculateDenom(input);
+    });
+    updateGrandTotal();
+});
+
 function calculateDenom(input) {
     const row = input.closest('tr');
     const val = parseFloat(input.dataset.value);
@@ -204,6 +214,12 @@ function copyToNew() {
 }
 
 function submitCashDenom() {
+    // Force recalculation of grand total right before building payload
+    document.querySelectorAll('.denom-count').forEach(input => {
+        calculateDenom(input);
+    });
+    updateGrandTotal();
+
     const form = document.getElementById('cash-denom-form');
     const formData = new FormData(form);
     

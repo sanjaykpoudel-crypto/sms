@@ -24,11 +24,11 @@ $vendors = $db->fetchAll("
     ORDER BY v.updated_at DESC
 ");
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         Vendors
-        <a href="?page=master/vendor/manage" class="ns-btn ns-btn-primary" style="margin-left: 10px;">New Vendor</a>
     </h1>
+    <a href="?page=master/vendor/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Vendor</a>
 </div>
 
 <div style="display: none;">

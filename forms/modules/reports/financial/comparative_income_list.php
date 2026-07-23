@@ -50,7 +50,6 @@ $this_bal_rows = $db->fetchAll("
     FROM journal_entries j
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE h.txn_date BETWEEN ? AND ?
-      AND h.txn_type != 'inventory_adjustment'
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL
     GROUP BY j.account_id
@@ -70,7 +69,6 @@ if ($prev_fy) {
         FROM journal_entries j
         JOIN transaction_headers h ON j.header_id = h.id
         WHERE h.txn_date BETWEEN ? AND ?
-          AND h.txn_type != 'inventory_adjustment'
           AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND h.source IS NULL
         GROUP BY j.account_id

@@ -16,13 +16,13 @@ $item = $db->fetchOne("
         r.name as category_name,
         r2.name as unit_name,
         (
-            SELECT SUM(CASE 
-                WHEN h.txn_type IN ('vendor_bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-                WHEN h.txn_type IN ('customer_invoice', 'POS') THEN -l.quantity 
-                ELSE 0 END)
+            SELECT COALESCE(SUM(CASE 
+                WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+                WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+                ELSE 0 END), 0)
             FROM transaction_lines l
             JOIN transaction_headers h ON l.header_id = h.id
-            WHERE l.item_id = i.id AND h.status NOT IN ('void', 'voided', 'draft')
+            WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
         ) as current_stock
     FROM items i
     LEFT JOIN accounts a1 ON i.inventory_account_id = a1.id
@@ -43,7 +43,7 @@ $movements = $db->fetchAll("
     SELECT h.id, h.txn_date, h.txn_number, h.txn_type, l.quantity, l.unit_price, l.line_total 
     FROM transaction_lines l 
     JOIN transaction_headers h ON l.header_id = h.id 
-    WHERE l.item_id = ? 
+    WHERE l.item_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     ORDER BY h.txn_date DESC, h.created_at DESC LIMIT 50
 ", [$id]);
 // Fetch Audit Logs

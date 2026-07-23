@@ -156,6 +156,30 @@ try {
 
     $grand_total = $subtotal + $tax_total - $discount_amount;
 
+    // Customer Credit Limit Validation
+    if ($party_id && !isset($_POST['force_save'])) {
+        $cust_data = $db->fetchOne("SELECT full_name, COALESCE(credit_limit, 0) as credit_limit FROM customers WHERE id = ?", [$party_id]);
+        $credit_limit = (float)($cust_data['credit_limit'] ?? 0);
+        if ($credit_limit > 0) {
+            $cust_bal = (float)($db->fetchOne("
+                SELECT COALESCE(SUM(ci.balance_due), 0) as current_balance
+                FROM customer_invoices ci
+                JOIN transaction_headers h ON ci.header_id = h.id
+                WHERE ci.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') AND h.id != ?
+            ", [$party_id, $id ?? ''])['current_balance'] ?? 0);
+
+            $new_total_balance = $cust_bal + $grand_total;
+            if ($new_total_balance > $credit_limit) {
+                $exceeded_amt = $new_total_balance - $credit_limit;
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                ob_end_clean();
+                $msg = "Credit limit exceeded for customer " . $cust_data['full_name'] . "!\nCredit Limit: Rs " . number_format($credit_limit, 2) . "\nCurrent Outstanding: Rs " . number_format($cust_bal, 2) . "\nThis Invoice: Rs " . number_format($grand_total, 2) . "\nNew Total Balance: Rs " . number_format($new_total_balance, 2) . " (Exceeds limit by Rs " . number_format($exceeded_amt, 2) . ").\n\nDo you want to proceed and save anyway?";
+                echo json_encode(['status' => 'stock_warning', 'message' => $msg]);
+                exit;
+            }
+        }
+    }
+
     // Calculate total payments applied to this invoice from transaction_links
     $applied_payments = $db->fetchAll("SELECT * FROM transaction_links WHERE child_id = ? AND link_type LIKE 'payment:%'", [$id]);
     $existing_payment_total = 0.0;

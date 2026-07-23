@@ -10,14 +10,14 @@ $sql = "SELECT p.*, c.full_name as customer_name, u.full_name as user_name
         ORDER BY p.created_at DESC";
 $list = $db->fetchAll($sql);
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
-        <i class="fas fa-cash-register"></i> POS Transactions
-        <div style="display: flex; gap: 10px;">
-            <a href="?page=reports/pos_summary" class="ns-btn"><i class="fas fa-chart-line"></i> Daily Summary</a>
-            <a href="?page=transactions/pos/manage" class="ns-btn ns-btn-primary"><i class="fas fa-plus"></i> New POS Transaction</a>
-        </div>
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
+        <i class="fas fa-cash-register" style="color: #0284c7; margin-right: 8px;"></i> POS Transactions
     </h1>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <a href="?page=transactions/pos/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New POS Transaction</a>
+        <a href="?page=reports/pos_summary" class="ns-btn" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-chart-line"></i> Daily Summary</a>
+    </div>
 </div>
 
 <div class="ns-portlet">

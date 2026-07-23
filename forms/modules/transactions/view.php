@@ -43,14 +43,20 @@ $details = [];
 // Fetch Specific Details
 if ($txn_type == 'vendor_bill') {
     $details = $db->fetchOne("
-        SELECT vb.*, v.company_name as entity_name, v.phone as entity_phone 
+        SELECT vb.*, v.company_name as entity_name, v.phone as entity_phone,
+               v.email as entity_email, v.address as entity_address, 
+               v.pan_number as entity_pan, v.vat_number as entity_vat, 
+               v.contact_name, v.credit_limit as entity_credit_limit, v.payment_terms_days as entity_payment_terms 
         FROM vendor_bills vb
         LEFT JOIN vendors v ON vb.vendor_id = v.id
         WHERE vb.header_id = :id
     ", ['id' => $id]);
 } elseif ($txn_type == 'customer_invoice') {
     $details = $db->fetchOne("
-        SELECT ci.*, c.full_name as entity_name, c.phone as entity_phone 
+        SELECT ci.*, c.full_name as entity_name, c.phone as entity_phone,
+               c.email as entity_email, c.pan_number as entity_pan, 
+               c.credit_limit as entity_credit_limit, c.payment_terms_days as entity_payment_terms,
+               c.customer_type
         FROM customer_invoices ci
         LEFT JOIN customers c ON ci.customer_id = c.id
         WHERE ci.header_id = :id
@@ -60,6 +66,13 @@ if ($txn_type == 'vendor_bill') {
         SELECT p.*, 
             COALESCE(c.full_name, v.company_name) as entity_name, 
             COALESCE(c.phone, v.phone) as entity_phone,
+            COALESCE(c.email, v.email) as entity_email,
+            v.address as entity_address,
+            COALESCE(c.pan_number, v.pan_number) as entity_pan,
+            v.vat_number as entity_vat,
+            COALESCE(c.credit_limit, v.credit_limit) as entity_credit_limit,
+            COALESCE(c.payment_terms_days, v.payment_terms_days) as entity_payment_terms,
+            v.contact_name,
             a.account_name as bank_account_name,
             th.txn_number as applied_to_number
         FROM payments p
@@ -531,6 +544,15 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
     </div>
 </div>
 
+<?php 
+$partyTabTitle = '';
+if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
+    $partyTabTitle = 'Vendor Details';
+} elseif (in_array(strtolower($txn_type), ['customer_invoice', 'customer_payment'])) {
+    $partyTabTitle = 'Customer Details';
+}
+?>
+
 <div class="ns-tabs">
     <?php if(strtolower($txn_type) == 'cash_denomination'): ?>
     <div class="ns-tab active" data-target="tab-denom">Denomination Breakdown</div>
@@ -542,6 +564,10 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
     <?php else: ?>
     <div class="ns-tab <?php echo strtolower($txn_type) != 'cash_denomination' ? 'active' : ''; ?>" data-target="tab-gl">GL Impact</div>
     <?php endif; ?>
+
+    <?php if(!empty($partyTabTitle) && !empty($details['entity_name'])): ?>
+    <div class="ns-tab" data-target="tab-party-info"><i class="fas fa-address-card" style="margin-right: 6px;"></i><?php echo $partyTabTitle; ?></div>
+    <?php endif; ?>
     
     <?php if(in_array($txn_type, ['customer_payment', 'vendor_payment'])): ?>
     <div class="ns-tab" data-target="tab-applied">Applied Documents</div>
@@ -552,6 +578,89 @@ $displayType = ucwords(str_replace('_', ' ', $txn_type));
     <?php endif; ?>
     <div class="ns-tab" data-target="tab-system">System Information</div>
 </div>
+
+<!-- PARTY DETAILS TAB -->
+<?php if (!empty($partyTabTitle) && !empty($details['entity_name'])): 
+    $phone = $details['entity_phone'] ?? '';
+    $email = $details['entity_email'] ?? '';
+    $vat = !empty($details['entity_vat']) ? $details['entity_vat'] : ($details['entity_pan'] ?? '');
+    $address = $details['entity_address'] ?? '';
+    $contact = $details['contact_name'] ?? '';
+    $terms = $details['entity_payment_terms'] ?? '';
+    $creditLimit = (float)($details['entity_credit_limit'] ?? 0);
+?>
+<div class="ns-tab-content" id="tab-party-info">
+    <div style="max-width: 800px;">
+        <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 20px; color: var(--ns-primary); display: flex; align-items: center; gap: 8px;">
+            <i class="fas fa-building" style="color: var(--ns-accent);"></i>
+            <?php echo htmlspecialchars($details['entity_name']); ?>
+        </h3>
+        
+        <div class="detail-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px;">
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-phone-alt" style="color: #0284c7; margin-right: 4px;"></i> Phone Number</div>
+                <div class="detail-value">
+                    <?php if (!empty($phone)): ?>
+                        <a href="tel:<?php echo htmlspecialchars($phone); ?>" style="color: #0369a1; font-weight: 600; text-decoration: none;"><?php echo htmlspecialchars($phone); ?></a>
+                    <?php else: ?>
+                        <span style="color: #94a3b8; font-style: italic;">Not Provided</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-envelope" style="color: #16a34a; margin-right: 4px;"></i> Email Address</div>
+                <div class="detail-value">
+                    <?php if (!empty($email)): ?>
+                        <a href="mailto:<?php echo htmlspecialchars($email); ?>" style="color: #15803d; font-weight: 600; text-decoration: none;"><?php echo htmlspecialchars($email); ?></a>
+                    <?php else: ?>
+                        <span style="color: #94a3b8; font-style: italic;">Not Provided</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-file-invoice" style="color: #d97706; margin-right: 4px;"></i> VAT / PAN Number</div>
+                <div class="detail-value">
+                    <?php if (!empty($vat)): ?>
+                        <span style="font-weight: 700; background: #fef3c7; padding: 2px 8px; border-radius: 4px; border: 1px solid #fde68a; color: #92400e; letter-spacing: 0.5px;"><?php echo htmlspecialchars($vat); ?></span>
+                    <?php else: ?>
+                        <span style="color: #94a3b8; font-style: italic;">Not Registered</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <?php if (!empty($contact)): ?>
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-user-tie" style="color: #6366f1; margin-right: 4px;"></i> Contact Person</div>
+                <div class="detail-value"><?php echo htmlspecialchars($contact); ?></div>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!empty($address)): ?>
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-map-marker-alt" style="color: #ef4444; margin-right: 4px;"></i> Address</div>
+                <div class="detail-value"><?php echo nl2br(htmlspecialchars($address)); ?></div>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!empty($terms)): ?>
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-calendar-alt" style="color: #8b5cf6; margin-right: 4px;"></i> Payment Terms</div>
+                <div class="detail-value"><?php echo htmlspecialchars($terms); ?> Days</div>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($creditLimit > 0): ?>
+            <div class="detail-group">
+                <div class="detail-label"><i class="fas fa-credit-card" style="color: #059669; margin-right: 4px;"></i> Credit Limit</div>
+                <div class="detail-value" style="font-weight: 600;">Rs. <?php echo number_format($creditLimit, 2); ?></div>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- DENOMINATION TAB -->
 <?php if(strtolower($txn_type) == 'cash_denomination' && $details): ?>

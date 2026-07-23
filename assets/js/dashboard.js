@@ -30,21 +30,10 @@
     const $$ = (sel) => document.querySelector(sel);
     const $$$ = (sel) => document.querySelectorAll(sel);
 
-    const fmt = (n) => {
-        n = parseFloat(n || 0);
-        if (n >= 1e7) return 'Rs ' + (n / 1e7).toFixed(2) + 'Cr';
-        if (n >= 1e5) return 'Rs ' + (n / 1e5).toFixed(2) + 'L';
-        if (n >= 1e3) return 'Rs ' + (n / 1e3).toFixed(1) + 'K';
-        return 'Rs ' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    };
-    const fmtFull = (n) => 'Rs ' + parseFloat(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const fmtInt = (n) => parseInt(n || 0).toLocaleString();
-    const fmtK = (n) => {
-        n = parseFloat(n || 0);
-        if (n >= 1e6) return 'Rs ' + (n / 1e6).toFixed(2) + 'M';
-        if (n >= 1e3) return 'Rs ' + (n / 1e3).toFixed(1) + 'K';
-        return fmtFull(n);
-    };
+    const fmtFull = (n) => 'Rs ' + parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt = (n) => fmtFull(n);
+    const fmtInt = (n) => parseInt(n || 0).toLocaleString('en-IN');
+    const fmtK = (n) => fmtFull(n);
     const el = (id) => document.getElementById(id);
     const safe = (fn) => { try { fn(); } catch(e) { console.warn('[DV3]', e); } };
 
@@ -352,10 +341,16 @@
         safe(() => {
             const fyLabel = $('fy-label');
             if (fyLabel) fyLabel.textContent = monthly.fy_label || 'FY';
-            const fySales = $('fy-sales-val');
-            if (fySales) fySales.textContent = fmtK(monthly.fy_sales);
-            const fyProfit = $('fy-profit-val');
-            if (fyProfit) { fyProfit.textContent = fmtK(monthly.fy_profit); fyProfit.style.color = monthly.fy_profit > 0 ? '#10b981' : '#ef4444'; }
+            const fyStock = $('fy-stock-val') || $('fy-stock');
+            if (fyStock) fyStock.textContent = fmtFull(monthly.fy_stock !== undefined ? monthly.fy_stock : (data.inventory ? data.inventory.value : 0));
+            const fyPurchase = $('fy-purchase-val') || $('fy-purchase');
+            if (fyPurchase) fyPurchase.textContent = fmtFull(monthly.fy_purchases);
+            const fySales = $('fy-sales-val') || $('fy-sales');
+            if (fySales) fySales.textContent = fmtFull(monthly.fy_sales);
+            const fyExpenses = $('fy-expenses-val') || $('fy-expenses');
+            if (fyExpenses) fyExpenses.textContent = fmtFull(monthly.fy_expenses);
+            const fyProfit = $('fy-profit-val') || $('fy-profit');
+            if (fyProfit) { fyProfit.textContent = fmtFull(monthly.fy_profit); fyProfit.style.color = monthly.fy_profit > 0 ? '#10b981' : '#ef4444'; }
         });
     }
 
@@ -589,15 +584,10 @@
     const $$$ = (sel) => document.querySelectorAll(sel);
     const el = (id) => document.getElementById(id);
 
-    const fmt = (n) => {
-        n = parseFloat(n || 0);
-        if (n >= 1e7) return 'Rs ' + (n / 1e7).toFixed(2) + ' Cr';
-        if (n >= 1e5) return 'Rs ' + (n / 1e5).toFixed(2) + ' Lakh';
-        return 'Rs ' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    };
     const fmtFull = (n) => 'Rs ' + parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt = (n) => fmtFull(n);
     const fmtInt = (n) => parseInt(n || 0).toLocaleString('en-IN');
-    const fmtNum = (n) => { return 'Rs ' + parseFloat(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    const fmtNum = (n) => fmtFull(n);
     const safe = (fn) => { try { fn(); } catch(e) { console.warn('[DV4]', e); } };
 
     function isDark() { return document.body.classList.contains('dark-theme'); }
@@ -846,8 +836,11 @@
         });
         safe(() => {
             el('fy-label') && (el('fy-label').textContent = mon.fy_label || 'FY');
-            const fyS = el('fy-sales'); if (fyS) fyS.textContent = fmt(mon.fy_sales);
-            const fyP = el('fy-profit'); if (fyP) { fyP.textContent = fmt(mon.fy_profit); fyP.style.color = mon.fy_profit > 0 ? '#10b981' : '#ef4444'; }
+            const fyStock = el('fy-stock'); if (fyStock) fyStock.textContent = fmtFull(mon.fy_stock !== undefined ? mon.fy_stock : (data.inventory ? data.inventory.value : 0));
+            const fyPurch = el('fy-purchase'); if (fyPurch) fyPurch.textContent = fmtFull(mon.fy_purchases);
+            const fyS = el('fy-sales'); if (fyS) fyS.textContent = fmtFull(mon.fy_sales);
+            const fyExp = el('fy-expenses'); if (fyExp) fyExp.textContent = fmtFull(mon.fy_expenses);
+            const fyP = el('fy-profit'); if (fyP) { fyP.textContent = fmtFull(mon.fy_profit); fyP.style.color = mon.fy_profit > 0 ? '#10b981' : '#ef4444'; }
         });
     }
 

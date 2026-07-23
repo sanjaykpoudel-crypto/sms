@@ -8,12 +8,11 @@ $list = $db->fetchAll("SELECT t.*, u.full_name as creator_name,
                       WHERE t.txn_type = 'inventory_adjustment' AND t.is_deleted = 0
                       ORDER BY t.created_at DESC");
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
-        <i class="fas fa-warehouse" style="margin-right: 10px; color: var(--ns-accent);"></i>
-        Inventory Adjustments
-        <a href="?page=transactions/adjustment/manage" class="ns-btn ns-btn-primary"><i class="fas fa-plus"></i> New Adjustment</a>
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
+        <i class="fas fa-warehouse" style="margin-right: 8px; color: var(--ns-accent);"></i> Inventory Adjustments
     </h1>
+    <a href="?page=transactions/adjustment/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Adjustment</a>
 </div>
 
 <div class="ns-portlet">
@@ -62,18 +61,6 @@ $list = $db->fetchAll("SELECT t.*, u.full_name as creator_name,
                 </tr>
                 <?php endforeach; endif; ?>
             </tbody>
-            <tfoot>
-                <tr>
-                    <th>Date</th>
-                    <th>Adjustment #</th>
-                    <th>Memo</th>
-                    <th style="text-align: center;">Items</th>
-                    <th style="text-align: right;">Total Value</th>
-                    <th>Adjusted By</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </tfoot>
         </table>
     </div>
 </div>

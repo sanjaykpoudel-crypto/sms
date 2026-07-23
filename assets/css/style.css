@@ -78,6 +78,9 @@ body {
     border-bottom: 1px solid #4a5d7a;
     white-space: nowrap;
     overflow: visible;
+    position: sticky;
+    top: 48px;
+    z-index: 999;
 }
 
 .ns-nav-item {
@@ -106,7 +109,7 @@ body {
     background: #ffffff;
     min-width: 200px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    z-index: 1000;
+    z-index: 1005;
     border: 1px solid #cccccc;
     padding: 0;
 }
@@ -133,13 +136,13 @@ body {
 
 /* Page Layout */
 .ns-content {
-    padding: 20px;
+    padding: 10px 20px 20px 20px;
 }
 
 .ns-page-header {
-    margin-bottom: 20px;
-    border-bottom: 2px solid var(--ns-header-bg);
-    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--ns-border-color);
+    padding-bottom: 6px;
     display: flex;
     align-items: center;
 }
@@ -386,7 +389,7 @@ body {
 }
 
 .ns-portlet-content {
-    padding: 15px;
+    padding: 10px 15px;
 }
 
 /* Sub-dropdown Menu */

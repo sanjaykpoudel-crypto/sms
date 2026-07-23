@@ -45,27 +45,17 @@ if ($customer_id) {
 
     // 4. Aging Data
     $today = date('Y-m-d');
-    $aging = ['current' => 0, '1_30' => 0, '31_60' => 0, '61_90' => 0, 'over_90' => 0];
-    $aging15 = ['current' => 0, '1_15' => 0, '16_30' => 0, '31_45' => 0, '46_60' => 0, '61_75' => 0, 'over_75' => 0];
+    $aging7 = ['current' => 0, '1_7' => 0, '8_14' => 0, '15_21' => 0, 'over_21' => 0];
     $open_invoices = $db->fetchAll("SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id]);
     foreach($open_invoices as $inv) {
         $days = floor((strtotime($today) - strtotime($inv['txn_date'])) / 86400);
         
-        // 30-Day aging
-        if ($days <= 0) $aging['current'] += $inv['balance_due'];
-        elseif ($days <= 30) $aging['1_30'] += $inv['balance_due'];
-        elseif ($days <= 60) $aging['31_60'] += $inv['balance_due'];
-        elseif ($days <= 90) $aging['61_90'] += $inv['balance_due'];
-        else $aging['over_90'] += $inv['balance_due'];
-
-        // 15-Day aging
-        if ($days <= 0) $aging15['current'] += $inv['balance_due'];
-        elseif ($days <= 15) $aging15['1_15'] += $inv['balance_due'];
-        elseif ($days <= 30) $aging15['16_30'] += $inv['balance_due'];
-        elseif ($days <= 45) $aging15['31_45'] += $inv['balance_due'];
-        elseif ($days <= 60) $aging15['46_60'] += $inv['balance_due'];
-        elseif ($days <= 75) $aging15['61_75'] += $inv['balance_due'];
-        else $aging15['over_75'] += $inv['balance_due'];
+        // 7-Day aging
+        if ($days <= 0) $aging7['current'] += $inv['balance_due'];
+        elseif ($days <= 7) $aging7['1_7'] += $inv['balance_due'];
+        elseif ($days <= 14) $aging7['8_14'] += $inv['balance_due'];
+        elseif ($days <= 21) $aging7['15_21'] += $inv['balance_due'];
+        else $aging7['over_21'] += $inv['balance_due'];
     }
 }
 ?>
@@ -77,44 +67,108 @@ if ($customer_id) {
 ], 'tbl-statement'); ?>
 
 <?php if ($customer_id): ?>
+    <style>
+        .stmt-header { display: flex; justify-content: space-between; margin-bottom: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        .stmt-summary { display: flex; gap: 20px; margin-bottom: 30px; }
+        .stmt-box { flex: 1; background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; }
+        .stmt-box.charges { border-left-color: #e74c3c; }
+        .stmt-box.payments { border-left-color: #27ae60; }
+        .stmt-box.ending { background: var(--ns-primary); color: white; border-left: none; }
+        .stmt-box-title { font-size: 12px; color: #7f8c8d; text-transform: uppercase; }
+        .stmt-box.ending .stmt-box-title { opacity: 0.8; color: white; }
+        .stmt-box-value { font-size: 20px; font-weight: 700; }
+
+        @media print {
+            @page { margin: 8mm; size: portrait; }
+            body { background: #fff !important; color: #1e293b !important; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important; }
+            .ns-topbar, .ns-sidebar, .rpt-filter-bar, .ns-btn, button { display: none !important; }
+            #ns-wrapper, .ns-main-content { margin: 0 !important; padding: 0 !important; width: 100% !important; min-height: auto !important; }
+            
+            /* Print friendly compact company header & customer header */
+            .rpt-header-print { margin-bottom: 6px !important; padding-bottom: 4px !important; border-bottom: 1px solid #64748b !important; }
+            .rpt-header-print img { max-height: 30px !important; margin-bottom: 2px !important; }
+            .rpt-header-print h2 { font-size: 14px !important; margin: 0 !important; }
+            .rpt-header-print p { font-size: 10px !important; margin: 1px 0 !important; line-height: 1.2 !important; }
+            .rpt-header-print h3 { margin: 4px 0 2px 0 !important; padding-top: 3px !important; font-size: 12px !important; }
+
+            .stmt-header { border: none !important; padding: 0 0 6px 0 !important; border-bottom: 2px solid #1e293b !important; border-radius: 0 !important; margin-bottom: 10px !important; }
+            .stmt-header h3 { font-size: 16px !important; color: #0f172a !important; margin-bottom: 2px !important; }
+            .stmt-header p { font-size: 11px !important; color: #334155 !important; margin: 2px 0 !important; line-height: 1.3 !important; }
+            .stmt-header div:last-child div:nth-child(1) { font-size: 15px !important; margin-bottom: 2px !important; }
+            .stmt-header div:last-child div:nth-child(2) { font-size: 10px !important; }
+            .stmt-header div:last-child div:nth-child(3) { font-size: 11px !important; }
+            
+            .stmt-summary { gap: 10px !important; margin-bottom: 15px !important; }
+            .stmt-box { padding: 8px 10px !important; border: 1px solid #cbd5e1 !important; border-left-width: 4px !important; background: #f8fafc !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .stmt-box.ending { background: var(--ns-primary) !important; color: white !important; }
+            .stmt-box-title { font-size: 10px !important; }
+            .stmt-box-value { font-size: 15px !important; }
+            
+            .ns-report-table-static { border: 1px solid #cbd5e1 !important; width: 100% !important; }
+            .ns-report-table-static th { background: #f1f5f9 !important; color: #0f172a !important; border: 1px solid #cbd5e1 !important; padding: 6px 8px !important; font-size: 11px !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .ns-report-table-static td { border: 1px solid #cbd5e1 !important; padding: 5px 8px !important; font-size: 11px !important; }
+            
+            .aging-container { display: block !important; margin-top: 15px !important; }
+            .ns-portlet { border: none !important; box-shadow: none !important; margin: 0 !important; }
+            .ns-portlet-content { padding: 0 !important; }
+            
+            h3 { break-after: avoid; }
+            table { break-inside: auto; }
+            tr { break-inside: avoid; break-after: auto; }
+            td { break-inside: avoid; break-after: auto; }
+            thead { display: table-header-group; }
+            tfoot { display: table-footer-group; }
+        }
+    </style>
+
     <!-- Statement Header -->
-    <div style="display: flex; justify-content: space-between; margin-bottom: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+    <div class="stmt-header">
         <div>
             <h3 style="margin: 0; color: var(--ns-primary); font-size: 20px;"><?php echo htmlspecialchars($customer_info['full_name']); ?></h3>
             <p style="margin: 5px 0; color: #64748b; font-size: 13px;">
-                <?php echo nl2br(htmlspecialchars($customer_info['address'] ?? '')); ?><br>
-                <?php echo htmlspecialchars($customer_info['email'] ?? ''); ?> | <?php echo htmlspecialchars($customer_info['phone'] ?? ''); ?>
+                <?php if (!empty($customer_info['address'])): ?>
+                    <?php echo nl2br(htmlspecialchars($customer_info['address'])); ?><br>
+                <?php endif; ?>
+                <?php 
+                    $info_parts = [];
+                    $pan = $customer_info['pan_number'] ?? $customer_info['pan_no'] ?? '';
+                    if (!empty($pan)) $info_parts[] = 'PAN: ' . htmlspecialchars($pan);
+                    if (!empty($customer_info['phone'])) $info_parts[] = 'Phone: ' . htmlspecialchars($customer_info['phone']);
+                    if (!empty($customer_info['email'])) $info_parts[] = 'Email: ' . htmlspecialchars($customer_info['email']);
+                    echo implode(' | ', $info_parts);
+                ?>
             </p>
         </div>
         <div style="text-align: right;">
+            <div style="font-size: 22px; font-weight: 700; color: #0f172a; margin-bottom: 5px; text-transform: uppercase;">Statement</div>
             <div style="font-size: 14px; color: #64748b; font-weight: 600; text-transform: uppercase;">Period</div>
             <div style="font-size: 16px; font-weight: 700; color: #1e293b;"><?php echo date('M d, Y', strtotime($from_date)); ?> - <?php echo date('M d, Y', strtotime($to_date)); ?></div>
         </div>
     </div>
 
             <!-- Summary Bar -->
-            <div style="display: flex; gap: 20px; margin-bottom: 30px;">
-                <div style="flex: 1; background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db;">
-                    <div style="font-size: 12px; color: #7f8c8d; text-transform: uppercase;">Opening Balance</div>
-                    <div style="font-size: 20px; font-weight: 700;"><?php echo number_format($opening_balance, 2); ?></div>
+            <div class="stmt-summary">
+                <div class="stmt-box">
+                    <div class="stmt-box-title">Opening Balance</div>
+                    <div class="stmt-box-value"><?php echo number_format($opening_balance, 2); ?></div>
                 </div>
-                <div style="flex: 1; background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #e74c3c;">
-                    <div style="font-size: 12px; color: #7f8c8d; text-transform: uppercase;">New Charges</div>
+                <div class="stmt-box charges">
+                    <div class="stmt-box-title">New Charges</div>
                     <?php 
                         $new_charges = array_sum(array_column($statement_data, 'debit'));
                     ?>
-                    <div style="font-size: 20px; font-weight: 700;"><?php echo number_format($new_charges, 2); ?></div>
+                    <div class="stmt-box-value"><?php echo number_format($new_charges, 2); ?></div>
                 </div>
-                <div style="flex: 1; background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #27ae60;">
-                    <div style="font-size: 12px; color: #7f8c8d; text-transform: uppercase;">Payments</div>
+                <div class="stmt-box payments">
+                    <div class="stmt-box-title">Payments</div>
                     <?php 
                         $new_credits = array_sum(array_column($statement_data, 'credit'));
                     ?>
-                    <div style="font-size: 20px; font-weight: 700;"><?php echo number_format($new_credits, 2); ?></div>
+                    <div class="stmt-box-value"><?php echo number_format($new_credits, 2); ?></div>
                 </div>
-                <div style="flex: 1; background: var(--ns-primary); color: white; padding: 15px; border-radius: 8px;">
-                    <div style="font-size: 12px; opacity: 0.8; text-transform: uppercase;">Ending Balance</div>
-                    <div style="font-size: 20px; font-weight: 700;"><?php echo number_format($opening_balance + $new_charges - $new_credits, 2); ?></div>
+                <div class="stmt-box ending">
+                    <div class="stmt-box-title">Ending Balance</div>
+                    <div class="stmt-box-value"><?php echo number_format($opening_balance + $new_charges - $new_credits, 2); ?></div>
                 </div>
             </div>
 
@@ -190,66 +244,31 @@ if ($customer_id) {
         }
     </style>
     
-    <div class="aging-container">
-        <!-- 30-Day Aging Table -->
+    <div class="aging-container" style="grid-template-columns: 1fr;">
+        <!-- 7-Day Aging Table -->
         <div class="ns-portlet" style="margin: 0;">
             <div class="ns-portlet-content">
-                <h3 style="margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 8px; font-size: 14px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px;">Aging Summary (30 Days)</h3>
+                <h3 style="margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 8px; font-size: 14px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px;">Aging Summary (7 Days - 5 Bands)</h3>
                 <div style="overflow-x: auto;">
                     <table class="ns-report-table-static" style="width:100%; border-collapse: collapse; min-width: 400px;">
                         <thead>
                             <tr>
                                 <th style="text-align: center; padding: 8px 4px; font-size: 10px;">Current</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">1-30 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">31-60 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">61-90 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">Over 90 Days</th>
+                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">1-7 Days</th>
+                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">8-14 Days</th>
+                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">15-21 Days</th>
+                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">Over 21 Days</th>
                                 <th style="text-align: center; padding: 8px 4px; font-size: 10px; background: var(--ns-primary); color: white;">Total Balance</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging['current'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging['1_30'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging['31_60'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging['61_90'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; color: #e74c3c; font-weight: 600;"><?php echo number_format($aging['over_90'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; font-weight: 700; background: #f8f9fa; border: 1px solid #ddd;"><?php echo number_format(array_sum($aging), 2); ?></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- 15-Day Aging Table -->
-        <div class="ns-portlet" style="margin: 0;">
-            <div class="ns-portlet-content">
-                <h3 style="margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 8px; font-size: 14px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px;">Aging Summary (15 Days - 6 Bands)</h3>
-                <div style="overflow-x: auto;">
-                    <table class="ns-report-table-static" style="width:100%; border-collapse: collapse; min-width: 500px;">
-                        <thead>
-                            <tr>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">Current</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">1-15 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">16-30 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">31-45 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">46-60 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">61-75 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px;">Over 75 Days</th>
-                                <th style="text-align: center; padding: 8px 4px; font-size: 10px; background: var(--ns-primary); color: white;">Total Balance</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['current'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['1_15'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['16_30'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['31_45'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['46_60'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging15['61_75'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; color: #e74c3c; font-weight: 600;"><?php echo number_format($aging15['over_75'], 2); ?></td>
-                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; font-weight: 700; background: #f8f9fa; border: 1px solid #ddd;"><?php echo number_format(array_sum($aging15), 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging7['current'], 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging7['1_7'], 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging7['8_14'], 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px;"><?php echo number_format($aging7['15_21'], 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; color: #e74c3c; font-weight: 600;"><?php echo number_format($aging7['over_21'], 2); ?></td>
+                                <td style="text-align: center; padding: 10px 4px; font-size: 12px; font-weight: 700; background: #f8f9fa; border: 1px solid #ddd;"><?php echo number_format(array_sum($aging7), 2); ?></td>
                             </tr>
                         </tbody>
                     </table>

@@ -37,8 +37,10 @@ $sql = "
     LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE hp.txn_type = 'customer_payment'
       AND hp.is_deleted = 0
+      AND hp.status NOT IN ('voided', 'draft')
       AND hb.txn_type = 'customer_invoice'
       AND hb.is_deleted = 0
+      AND hb.status NOT IN ('voided', 'draft')
       AND hp.txn_date BETWEEN ? AND ?
 ";
 $params = [$date_from, $date_to];
@@ -49,9 +51,18 @@ if ($customer_id !== '') {
 $sql .= " GROUP BY tl.id ORDER BY hp.txn_date DESC, hp.txn_number DESC";
 $rows = $db->fetchAll($sql, $params);
 
-// Calculate distinct payment count
+// Calculate distinct payment count and amounts
 $distinct_payments = count(array_unique(array_column($rows, 'payment_number')));
 $total_applied = array_sum(array_column($rows, 'paid_amount'));
+
+// Sum unique invoices to prevent double-counting multi-payment invoices
+$unique_invoices = [];
+foreach ($rows as $r) {
+    if (!empty($r['invoice_id'])) {
+        $unique_invoices[$r['invoice_id']] = (float)$r['invoice_amount'];
+    }
+}
+$total_invoice_amount = array_sum($unique_invoices);
 ?>
 <style>
 .rpt-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -69,7 +80,7 @@ $total_applied = array_sum(array_column($rows, 'paid_amount'));
 
 <div class="rpt-summary">
     <div class="rpt-summary-card"><div class="val"><?= $distinct_payments ?></div><div class="lbl">Total Payments Received</div></div>
-    <div class="rpt-summary-card"><div class="val"><?= count($rows) ?></div><div class="lbl">Invoices Paid / Applied</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= count($unique_invoices) ?></div><div class="lbl">Invoices Paid / Applied</div></div>
     <div class="rpt-summary-card"><div class="val" style="color:#1a7f37"><?= rpt_currency($total_applied) ?></div><div class="lbl">Total Amount Applied</div></div>
 </div>
 
@@ -107,7 +118,7 @@ $total_applied = array_sum(array_column($rows, 'paid_amount'));
       <tfoot>
         <tr style="font-weight:700;background:#f8f9fa">
           <td colspan="5">TOTALS</td>
-          <td style="text-align:right"><?= rpt_currency(array_sum(array_column($rows, 'invoice_amount'))) ?></td>
+          <td style="text-align:right"><?= rpt_currency($total_invoice_amount) ?></td>
           <td style="text-align:right;color:#1a7f37"><?= rpt_currency($total_applied) ?></td>
           <td colspan="2"></td>
         </tr>

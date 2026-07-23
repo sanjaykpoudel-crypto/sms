@@ -38,14 +38,14 @@ function rpt_header(string $title) {
         .ns-report-table-static tr:hover { background: #f1f5f9; }
         .ns-report-table-static tfoot { font-weight: 700; background: #f8f9fa; }
     </style>';
-    echo '<div class="rpt-header-print" style="display:none; text-align:center; margin-bottom: 25px; border-bottom: 2px solid #333; padding-bottom: 15px;">';
+    echo '<div class="rpt-header-print" style="display:none; text-align:center; margin-bottom: 10px; border-bottom: 2px solid #333; padding-bottom: 6px;">';
     if (!empty($sys['logo'])) {
-        echo '<img src="'.$sys['logo'].'" style="max-height: 70px; margin-bottom: 12px;"><br>';
+        echo '<img src="'.$sys['logo'].'" style="max-height: 40px; margin-bottom: 4px;"><br>';
     }
-    echo '<h2 style="margin:0; text-transform:uppercase; font-size: 24px;">'.htmlspecialchars($sys['name'] ?? 'MNS LIQUORS').'</h2>';
-    echo '<p style="margin:5px 0; font-size:14px; line-height: 1.4;">'.nl2br(htmlspecialchars($sys['address'] ?? '')).'</p>';
-    echo '<p style="margin:5px 0; font-size:14px;">PAN: '.htmlspecialchars($sys['pan_no'] ?? '').' | Phone: '.htmlspecialchars($sys['contact'] ?? '').'</p>';
-    echo '<h3 style="margin:20px 0 5px 0; border-top: 1px solid #ddd; padding-top: 15px; font-size: 20px;">'.$title.'</h3>';
+    echo '<h2 style="margin:0; text-transform:uppercase; font-size: 16px;">'.htmlspecialchars($sys['name'] ?? 'MNS LIQUORS').'</h2>';
+    echo '<p style="margin:2px 0; font-size:11px; line-height: 1.3;">'.nl2br(htmlspecialchars($sys['address'] ?? '')).'</p>';
+    echo '<p style="margin:2px 0; font-size:11px;">PAN: '.htmlspecialchars($sys['pan_no'] ?? '').' | Phone: '.htmlspecialchars($sys['contact'] ?? '').'</p>';
+    echo '<h3 style="margin:6px 0 2px 0; border-top: 1px solid #ddd; padding-top: 4px; font-size: 14px;">'.$title.'</h3>';
     echo '</div>';
 }
 

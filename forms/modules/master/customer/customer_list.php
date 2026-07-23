@@ -32,11 +32,11 @@ $customers = $db->fetchAll(
 "
 );
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         Customers
-        <a href="?page=master/customer/manage" class="ns-btn ns-btn-primary" style="margin-left: 10px;">New Customer</a>
     </h1>
+    <a href="?page=master/customer/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Customer</a>
 </div>
 
 <div style="display: none;">

@@ -36,20 +36,22 @@ $sql = "
 
 $list = $db->fetchAll($sql);
 ?>
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
-        Payments
-        <a href="?page=transactions/payment/manage" class="ns-btn ns-btn-primary">New Transaction</a>
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
+        <i class="fas fa-money-bill-wave" style="color: #3b82f6; margin-right: 8px;"></i> Payments
     </h1>
+    <a href="?page=transactions/payment/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Transaction</a>
 </div>
 
-<div class="ns-portlet" style="margin-bottom: 15px;">
-    <div class="ns-portlet-content" style="padding: 12px 20px; display: flex; align-items: center; gap: 15px; background: #f8fafc; border-radius: 8px;">
-        <span style="font-weight: 600; color: #475569; font-size: 13px;"><i class="fas fa-filter"></i> Filter Type:</span>
-        <div style="display: flex; gap: 8px;">
-            <a href="?page=transactions/payment&type=all" class="ns-btn <?php echo $type_filter === 'all' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;">All Payments</a>
-            <a href="?page=transactions/payment&type=customer_payment" class="ns-btn <?php echo $type_filter === 'customer_payment' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;"><i class="fas fa-arrow-down" style="color: <?php echo $type_filter === 'customer_payment' ? '#fff' : '#080'; ?>; margin-right: 4px;"></i> Customer Payments (Money In)</a>
-            <a href="?page=transactions/payment&type=vendor_payment" class="ns-btn <?php echo $type_filter === 'vendor_payment' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;"><i class="fas fa-arrow-up" style="color: <?php echo $type_filter === 'vendor_payment' ? '#fff' : '#c00'; ?>; margin-right: 4px;"></i> Vendor Payments (Money Out)</a>
+<div class="ns-portlet" style="margin-bottom: 8px;">
+    <div class="ns-portlet-content" style="padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border-radius: 8px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span style="font-weight: 600; color: #475569; font-size: 13px;"><i class="fas fa-filter" style="color: #3b82f6;"></i> Filter Type:</span>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <a href="?page=transactions/payment&type=all" class="ns-btn <?php echo $type_filter === 'all' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;">All Payments</a>
+                <a href="?page=transactions/payment&type=customer_payment" class="ns-btn <?php echo $type_filter === 'customer_payment' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;"><i class="fas fa-arrow-down" style="color: <?php echo $type_filter === 'customer_payment' ? '#fff' : '#080'; ?>; margin-right: 4px;"></i> Customer Payments (Money In)</a>
+                <a href="?page=transactions/payment&type=vendor_payment" class="ns-btn <?php echo $type_filter === 'vendor_payment' ? 'ns-btn-primary' : ''; ?>" style="font-size: 12px; padding: 6px 12px;"><i class="fas fa-arrow-up" style="color: <?php echo $type_filter === 'vendor_payment' ? '#fff' : '#c00'; ?>; margin-right: 4px;"></i> Vendor Payments (Money Out)</a>
+            </div>
         </div>
     </div>
 </div>
@@ -76,7 +78,7 @@ $list = $db->fetchAll($sql);
                     <td><?php echo date('Y-m-d', strtotime($row['txn_date'])); ?></td>
                     <td style="font-weight: 600; color: #0055aa;"><?php echo htmlspecialchars($row['txn_number']); ?></td>
                     <td>
-                        <span style="color: <?php echo $row['txn_type'] == 'customer_payment' ? '#080' : '#c00'; ?>">
+                        <span style="color: <?php echo $row['txn_type'] == 'customer_payment' ? '#080' : '#c00'; ?>; font-weight: 600;">
                             <?php echo $row['txn_type'] == 'customer_payment' ? 'Money In' : 'Money Out'; ?>
                         </span>
                     </td>
@@ -95,19 +97,6 @@ $list = $db->fetchAll($sql);
                 </tr>
                 <?php endforeach; ?>
             </tbody>
-            <tfoot>
-                <tr>
-                    <th>Date</th>
-                    <th>Payment #</th>
-                    <th>Type</th>
-                    <th>Party</th>
-                    <th>Methods</th>
-                    <th>Applied Invoices / Bills</th>
-                    <th>Amount</th>
-                    <th>Created By</th>
-                    <th>Actions</th>
-                </tr>
-            </tfoot>
         </table>
     </div>
 </div>

@@ -18,9 +18,8 @@ $rows = $db->fetchAll("
         i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
         i.cost_price, i.selling_price, i.item_category as category_id,
         COALESCE(SUM(CASE 
-            WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice','POS') THEN -l.quantity 
-            WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
+            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
             ELSE 0 
         END), 0) AS stock_qty
     FROM items i
@@ -28,7 +27,7 @@ $rows = $db->fetchAll("
     LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
     LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-    WHERE i.is_deleted = 0
+    WHERE i.is_deleted = 0 AND i.is_active = 1
     GROUP BY i.id
     ORDER BY rc1.name, i.item_name
 ");
@@ -36,11 +35,6 @@ $rows = $db->fetchAll("
 $filtered_rows = [];
 foreach ($rows as $r) {
     if ($cat_filter && $r['category_id'] !== $cat_filter) {
-        continue;
-    }
-    // Only exclude item if stock value is zero and we have no category filter (clean default view)
-    $stock_cost_val = $r['stock_qty'] * $r['cost_price'];
-    if (empty($cat_filter) && abs($stock_cost_val) < 0.005) {
         continue;
     }
     $filtered_rows[] = $r;

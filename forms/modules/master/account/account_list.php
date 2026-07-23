@@ -49,12 +49,14 @@ $accounts = $db->fetchAll("
 }
 </style>
 
-<div class="ns-page-header">
-    <h1 class="ns-page-title">
+<div class="ns-page-header" style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+    <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
         Chart of Accounts
-        <a href="?page=master/account/manage" class="ns-btn ns-btn-primary">New Account</a>
-        <a href="?page=master/account/opening_balance" class="ns-btn ns-btn-secondary"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a>
     </h1>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <a href="?page=master/account/manage" class="ns-btn ns-btn-primary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-plus"></i> New Account</a>
+        <a href="?page=master/account/opening_balance" class="ns-btn ns-btn-secondary" style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a>
+    </div>
 </div>
 
 <div style="display: none;">

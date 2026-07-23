@@ -6,8 +6,8 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 header('Content-Type: application/json');
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
 
 $id = $_GET['id'] ?? null;
 if (!$id) {
@@ -23,9 +23,7 @@ if (!$item) {
     exit;
 }
 
-// Calculate stock
-// Sum(Quantity where type is incoming) - Sum(Quantity where type is outgoing)
-// We'll use a broad check for types
+// Calculate accurate current stock from transaction lines and keep items table in sync
 $stock_query = "
     SELECT 
         SUM(CASE 
@@ -35,10 +33,15 @@ $stock_query = "
         END) as current_stock
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
-    WHERE l.item_id = ?
+    WHERE l.item_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
 ";
 $stock_data = $db->fetchOne($stock_query, [$id]);
-$item['current_stock'] = $stock_data['current_stock'] ?? 0;
+$calc_stock = (float)($stock_data['current_stock'] ?? 0);
+
+if ((float)($item['current_stock'] ?? 0) !== $calc_stock) {
+    $db->execute("UPDATE items SET current_stock = ? WHERE id = ?", [$calc_stock, $id]);
+}
+$item['current_stock'] = $calc_stock;
 
 // Resolve unit name from reference_codes
 $unit_rec = $db->fetchOne("SELECT name FROM reference_codes WHERE id = ? AND type = 'units'", [$item['unit_type'] ?? '']);

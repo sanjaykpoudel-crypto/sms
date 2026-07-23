@@ -15,7 +15,6 @@ $revenue_rows = $db->fetchAll("
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'income'
       AND h.txn_date BETWEEN ? AND ?
-      AND h.txn_type != 'inventory_adjustment'
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL
     GROUP BY a.id, a.account_name
@@ -31,7 +30,6 @@ $cogs = (float)($db->fetchOne("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'expense' AND a.account_subtype = 'cogs'
-      AND h.txn_type != 'inventory_adjustment'
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL
@@ -46,7 +44,6 @@ $expenses_rows = $db->fetchAll("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'expense' AND a.account_subtype != 'cogs'
-      AND h.txn_type != 'inventory_adjustment'
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.source IS NULL

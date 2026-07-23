@@ -26,7 +26,7 @@ if ($id) {
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
-$all_vendors = $db->fetchAll("SELECT id, company_name FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
+$all_vendors = $db->fetchAll("SELECT id, company_name, phone, email, pan_number, vat_number FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
 $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_code ASC");
 ?>
 <div class="ns-form-header">
@@ -37,7 +37,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         <?php if ($id): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/bill')"><i class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
-        <button type="button" onclick="history.back()" class="ns-btn"><i class="fas fa-times"></i> Cancel</button>
+        <a href="?page=transactions/bill" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 
@@ -47,14 +47,44 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         <input type="hidden" name="txn_type" value="vendor_bill">
 
         <div class="ns-section-title">Primary Information</div>
+        <div id="vendor-info-box" style="display: none; margin-bottom: 16px; padding: 10px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid var(--ns-accent); border-radius: 6px; font-size: 13px; color: #334155;">
+            <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+                <span style="font-weight: 700; color: var(--ns-primary); font-size: 13px;">
+                    <i class="fas fa-building" style="margin-right: 6px; color: var(--ns-accent);"></i><span id="vendor-name-display">-</span>
+                </span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-phone-alt" style="color: #0284c7;"></i>
+                    <span style="color: #64748b;">Phone:</span>
+                    <a id="vendor-phone-link" href="#" style="color: #0369a1; text-decoration: none; font-weight: 600;">-</a>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-envelope" style="color: #16a34a;"></i>
+                    <span style="color: #64748b;">Email:</span>
+                    <a id="vendor-email-link" href="#" style="color: #15803d; text-decoration: none; font-weight: 600;">-</a>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-file-invoice" style="color: #d97706;"></i>
+                    <span style="color: #64748b;">VAT/PAN #:</span>
+                    <span id="vendor-vat" style="font-weight: 700; background: #ffffff; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1; color: #1e293b;">-</span>
+                </div>
+            </div>
+        </div>
         <div class="ns-form-row">
             <div style="flex: 1; min-width: 300px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Vendor <span class="ns-required">*</span></label>
-                    <select name="party_id" class="ns-select" required>
+                    <select name="party_id" class="ns-select" onchange="updateVendorInfo(this)" required>
                         <option value="">Select Vendor</option>
-                        <?php foreach($all_vendors as $v): ?>
-                            <option value="<?php echo $v['id']; ?>" <?php echo ($data['party_id'] ?? '') == $v['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($v['company_name']); ?></option>
+                        <?php foreach($all_vendors as $v): 
+                            $vVat = !empty($v['vat_number']) ? $v['vat_number'] : ($v['pan_number'] ?? '');
+                        ?>
+                            <option value="<?php echo $v['id']; ?>" 
+                                    data-phone="<?php echo htmlspecialchars($v['phone'] ?? ''); ?>" 
+                                    data-email="<?php echo htmlspecialchars($v['email'] ?? ''); ?>" 
+                                    data-vat="<?php echo htmlspecialchars($vVat); ?>" 
+                                    <?php echo ($data['party_id'] ?? '') == $v['id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($v['company_name']); ?>
+                            </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -372,7 +402,65 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         }
     }
 
+    function updateVendorInfo(select) {
+        const opt = select.options[select.selectedIndex];
+        const infoBox = document.getElementById('vendor-info-box');
+        if (!opt || !opt.value) {
+            if (infoBox) infoBox.style.display = 'none';
+            return;
+        }
+        const vendorName = opt.text || '';
+        const phone = opt.getAttribute('data-phone');
+        const email = opt.getAttribute('data-email');
+        const vat = opt.getAttribute('data-vat');
+
+        const nameDisplay = document.getElementById('vendor-name-display');
+        if (nameDisplay) nameDisplay.textContent = vendorName;
+
+        const phoneLink = document.getElementById('vendor-phone-link');
+        if (phone && phone.trim() !== '') {
+            phoneLink.textContent = phone;
+            phoneLink.href = 'tel:' + phone;
+            phoneLink.style.fontStyle = 'normal';
+            phoneLink.style.color = '#0369a1';
+        } else {
+            phoneLink.textContent = 'Not Provided';
+            phoneLink.removeAttribute('href');
+            phoneLink.style.fontStyle = 'italic';
+            phoneLink.style.color = '#94a3b8';
+        }
+
+        const emailLink = document.getElementById('vendor-email-link');
+        if (email && email.trim() !== '') {
+            emailLink.textContent = email;
+            emailLink.href = 'mailto:' + email;
+            emailLink.style.fontStyle = 'normal';
+            emailLink.style.color = '#15803d';
+        } else {
+            emailLink.textContent = 'Not Provided';
+            emailLink.removeAttribute('href');
+            emailLink.style.fontStyle = 'italic';
+            emailLink.style.color = '#94a3b8';
+        }
+
+        const vatSpan = document.getElementById('vendor-vat');
+        if (vat && vat.trim() !== '') {
+            vatSpan.textContent = vat;
+            vatSpan.style.fontStyle = 'normal';
+            vatSpan.style.color = '#1e293b';
+        } else {
+            vatSpan.textContent = 'Not Registered';
+            vatSpan.style.fontStyle = 'italic';
+            vatSpan.style.color = '#94a3b8';
+        }
+
+        if (infoBox) infoBox.style.display = 'block';
+    }
+
     window.addEventListener('load', function () {
+        const vendorSel = document.querySelector('select[name="party_id"]');
+        if (vendorSel) updateVendorInfo(vendorSel);
+
         billCalcTotals();
         document.querySelectorAll('#bill-items-table tbody tr').forEach(row => {
             const sel = row.querySelector('select[name="item_id[]"]');

@@ -37,6 +37,7 @@ $non_pos_sales_rows = $db->fetchAll("
       AND h.txn_date BETWEEN ? AND ?
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_number NOT LIKE 'POS-%'
+      AND h.txn_number NOT LIKE 'INV-POS-%'
     GROUP BY h.txn_date
 ", [$date_from, $date_to]);
 
