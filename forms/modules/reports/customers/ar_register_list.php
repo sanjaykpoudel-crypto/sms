@@ -15,6 +15,7 @@ foreach ($customers_list as $c) {
     $customer_options[$c['id']] = $c['full_name'];
 }
 
+$loc_sql_th = rpt_location_sql('th');
 $where_cust = ($customer_id !== '') ? " AND ci.customer_id = '$customer_id'" : "";
 $where_cust_j = ($customer_id !== '') ? " AND (j.party_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
 
@@ -41,7 +42,7 @@ $sql = "
     LEFT JOIN customers c ON ci.customer_id = c.id
     WHERE th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_date BETWEEN ? AND ? {$where_cust}
+      AND th.txn_date BETWEEN ? AND ? {$where_cust} {$loc_sql_th}
     
     UNION ALL
 
@@ -71,7 +72,7 @@ $sql = "
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND th.txn_type IN ('Journal', 'journal_entry')
-      AND th.txn_date BETWEEN ? AND ? {$where_cust_j}
+      AND th.txn_date BETWEEN ? AND ? {$where_cust_j} {$loc_sql_th}
     GROUP BY th.id, th.txn_date, th.txn_number, c.full_name
     ORDER BY txn_date DESC, txn_number DESC
 ";

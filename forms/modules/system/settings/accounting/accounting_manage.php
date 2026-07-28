@@ -1,13 +1,19 @@
 <?php
 $type = $_GET['type'] ?? 'tax';
 $id = $_GET['id'] ?? '';
+if ($type === 'location') {
+    header("Location: ?page=system/settings/location/manage" . (!empty($id) ? "&id=" . urlencode($id) : ""));
+    exit;
+}
+
 $type_labels = [
     'tax' => 'Tax / VAT',
     'currency' => 'Currency',
     'payment_method' => 'Payment Method',
+    'payment_status' => 'Payment Status',
     'category' => 'Category',
     'units' => 'Unit',
-    'status' => 'Status'
+    'location' => 'Location'
 ];
 
 $db = db();
@@ -62,11 +68,8 @@ $is_active = $item['is_active'] ?? 1;
                     <input type="text" name="code_entry" class="ns-input" value="<?php echo htmlspecialchars($code); ?>" required placeholder="e.g. VAT, USD, BTL">
                 </div>
                 <div class="ns-form-group">
-                    <label class="ns-label">Status</label>
-                    <select name="is_active" class="ns-select">
-                        <option value="1" <?php echo $is_active == 1 ? 'selected' : ''; ?>>Active</option>
-                        <option value="0" <?php echo $is_active == 0 ? 'selected' : ''; ?>>Inactive</option>
-                    </select>
+                    <label class="ns-label" style="display: block; width: 150px; text-align: right; padding-right: 15px;">Inactive</label>
+                    <input type="checkbox" name="is_inactive" <?php echo ($is_active == 0) ? 'checked' : ''; ?> style="width: 18px; height: 18px; cursor: pointer;">
                 </div>
             </div>
         </div>
@@ -163,7 +166,13 @@ $is_active = $item['is_active'] ?? 1;
         
         const typeSelect = document.getElementById('type-select');
         if (typeSelect) {
-            typeSelect.addEventListener('change', updateFormFields);
+            typeSelect.addEventListener('change', function() {
+                if (this.value === 'location') {
+                    window.location.href = '?page=system/settings/location/manage';
+                    return;
+                }
+                updateFormFields();
+            });
         }
 
         // Form submission
@@ -183,8 +192,10 @@ $is_active = $item['is_active'] ?? 1;
                 }
                 
                 const formData = $(this).serializeArray();
+                const isInactive = $('[name="is_inactive"]').is(':checked');
                 formData.push({name: 'value', value: value});
                 formData.push({name: 'override_code', value: code});
+                formData.push({name: 'is_active', value: isInactive ? 0 : 1});
                 
                 const submitBtn = $('button[form="accounting-form"]');
                 const originalText = submitBtn.html();

@@ -41,6 +41,7 @@ try {
     $expense_account_id = $_POST['expense_account_id'] ?? null;
     $paid_from_account_id = $_POST['paid_from_account_id'] ?? null;
     $expense_category = $_POST['expense_category'] ?? 'other';
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
 
     if (!$expense_account_id || !$paid_from_account_id || $net_amount <= 0) {
         throw new Exception("Account selection and positive amount are required.");
@@ -52,18 +53,18 @@ try {
         $id = generate_uuid();
         $txn_number = getNextTransactionNumber('expense');
         
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, party_id, party_type, net_amount, created_by) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, party_id, party_type, net_amount, created_by, location_id) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             $id, $txn_number, $txn_type, $txn_date, 
             $fiscal['year'], $fiscal['month'], $fiscal['period'], 
-            'posted', $ref_number, $memo, $party_id, 'user', $net_amount, $_SESSION['user_id']
+            'posted', $ref_number, $memo, $party_id, 'user', $net_amount, $_SESSION['user_id'], $location_id
         ]);
         incrementTransactionNumber('expense');
     } else {
         // Update
         $txn_number = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id])['txn_number'] ?? 'EXP-Unknown';
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, party_id = ?, net_amount = ? WHERE id = ?", [
-            $txn_date, $ref_number, $memo, $party_id, $net_amount, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, party_id = ?, net_amount = ?, location_id = ? WHERE id = ?", [
+            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $party_id, $net_amount, $location_id, $id
         ]);
         
         // Clean up old entries
@@ -89,6 +90,7 @@ try {
     ]);
 
     $pdo->commit();
+    clear_dashboard_cache();
     ob_end_clean();
     header('Content-Type: application/json');
     echo json_encode(['status' => 'success', 'message' => 'Expense has been recorded successfully.', 'id' => $id]);

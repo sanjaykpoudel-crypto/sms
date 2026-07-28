@@ -17,6 +17,7 @@ foreach ($vendors_list as $v) {
 
 $where_vend = ($vendor_id !== '') ? " AND (vb.vendor_id = '$vendor_id' OR p.vendor_id = '$vendor_id')" : "";
 
+$loc_sql = rpt_location_sql('hp');
 $sql = "
     SELECT 
         hp.txn_date as payment_date,
@@ -44,7 +45,7 @@ $sql = "
       AND hb.txn_type IN ('vendor_bill', 'Journal', 'journal_entry')
       AND hb.is_deleted = 0
       AND hb.status NOT IN ('voided', 'draft')
-      AND hp.txn_date BETWEEN ? AND ? {$where_vend}
+      AND hp.txn_date BETWEEN ? AND ? {$where_vend} {$loc_sql}
     GROUP BY tl.id 
     ORDER BY hp.txn_date DESC, hp.txn_number DESC
 ";

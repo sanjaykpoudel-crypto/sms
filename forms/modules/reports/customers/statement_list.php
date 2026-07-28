@@ -4,7 +4,7 @@ $customer_id = $_GET['customer_id'] ?? '';
 $from_date = $_GET['from_date'] ?? date('Y-m-01');
 $to_date = $_GET['to_date'] ?? date('Y-m-d');
 
-$customers_list = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY updated_at DESC");
+$customers_list = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $customer_options = ['' => '-- Select Customer --'];
 foreach ($customers_list as $c) { $customer_options[$c['id']] = $c['full_name']; }
 
@@ -61,39 +61,44 @@ if ($customer_id) {
     });
 
     // 4. Aging Data
-    $today = date('Y-m-d');
-    $aging7 = ['current' => 0, '1_7' => 0, '8_14' => 0, '15_21' => 0, 'over_21' => 0];
-    
-    $open_docs = $db->fetchAll("
-        SELECT ci.balance_due, th.txn_date FROM customer_invoices ci JOIN transaction_headers th ON ci.header_id = th.id WHERE ci.customer_id = ? AND ci.balance_due > 0.01 AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
-        UNION ALL
-        SELECT (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due, th.txn_date
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
-        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
-        GROUP BY th.id, th.txn_date
-        HAVING balance_due > 0.01
-    ", [$customer_id, $customer_id, $customer_id]);
-    
-    foreach($open_docs as $inv) {
-        $days = floor((strtotime($today) - strtotime($inv['txn_date'])) / 86400);
-        
-        // 7-Day aging
-        if ($days <= 0) $aging7['current'] += $inv['balance_due'];
-        elseif ($days <= 7) $aging7['1_7'] += $inv['balance_due'];
-        elseif ($days <= 14) $aging7['8_14'] += $inv['balance_due'];
-        elseif ($days <= 21) $aging7['15_21'] += $inv['balance_due'];
-        else $aging7['over_21'] += $inv['balance_due'];
-    }
-}
-?>
+    $aging_res = get_customer_aging_summary($db, $customer_id, $to_date);
+    $aging7    = $aging_res['aging7'];
 
-<?php rpt_filter_bar('Customer Statement', [
+    $new_charges = array_sum(array_column($statement_data, 'debit'));
+    $new_credits = array_sum(array_column($statement_data, 'credit'));
+    $ending_balance = $opening_balance + $new_charges - $new_credits;
+
+    $sys_info = $db->fetchAll("SELECT meta_field, meta_value FROM system_info");
+    $sys = []; foreach($sys_info as $row) { $sys[$row['meta_field']] = $row['meta_value']; }
+    $wa_tpl = $sys['whatsapp_statement_template'] ?? "Dear {customer_name},\n\nPlease find your account statement summary for the period {from_date} to {to_date}:\n\n• Opening Balance: {currency} {opening_balance}\n• New Charges: {currency} {new_charges}\n• Payments Received: {currency} {payments}\n• Ending Balance Due: {currency} {ending_balance}\n\nThank you for doing business with us!\n{company_name}";
+    
+    $wa_message_default = str_replace(
+        ['{customer_name}', '{from_date}', '{to_date}', '{opening_balance}', '{new_charges}', '{payments}', '{ending_balance}', '{currency}', '{company_name}'],
+        [
+            $customer_info['full_name'] ?? 'Valued Customer',
+            date('M d, Y', strtotime($from_date)),
+            date('M d, Y', strtotime($to_date)),
+            number_format($opening_balance, 2),
+            number_format($new_charges, 2),
+            number_format($new_credits, 2),
+            number_format($ending_balance, 2),
+            'NPR',
+            $sys['name'] ?? 'MNS LIQUORS'
+        ],
+        $wa_tpl
+    );
+}
+
+$wa_btn = '';
+if ($customer_id) {
+    $wa_btn = '<button type="button" class="ns-btn" style="background: #25D366; color: white; border: none; font-weight: 600; padding: 5px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;" onclick="openWaModal()"><i class="fab fa-whatsapp" style="font-size: 14px;"></i> Send via WhatsApp</button>';
+}
+
+rpt_filter_bar('Customer Statement', [
     ['name'=>'customer_id', 'label'=>'Customer', 'type'=>'select', 'options'=>$customer_options],
     ['name'=>'from_date', 'label'=>'From', 'type'=>'date', 'default'=>date('Y-m-01')],
     ['name'=>'to_date', 'label'=>'To', 'type'=>'date', 'default'=>date('Y-m-d')],
-], 'tbl-statement'); ?>
+], 'tbl-statement', $wa_btn); ?>
 
 <?php if ($customer_id): ?>
     <style>
@@ -110,15 +115,11 @@ if ($customer_id) {
         @media print {
             @page { margin: 8mm; size: portrait; }
             body { background: #fff !important; color: #1e293b !important; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important; }
-            .ns-topbar, .ns-sidebar, .rpt-filter-bar, .ns-btn, button { display: none !important; }
+            .ns-topbar, .ns-sidebar, .rpt-filter-bar, .ns-btn, button, .no-print, #whatsappModal, .modal, .modal-backdrop { display: none !important; }
             #ns-wrapper, .ns-main-content { margin: 0 !important; padding: 0 !important; width: 100% !important; min-height: auto !important; }
             
-            /* Print friendly compact company header & customer header */
-            .rpt-header-print { margin-bottom: 6px !important; padding-bottom: 4px !important; border-bottom: 1px solid #64748b !important; }
-            .rpt-header-print img { max-height: 30px !important; margin-bottom: 2px !important; }
-            .rpt-header-print h2 { font-size: 14px !important; margin: 0 !important; }
-            .rpt-header-print p { font-size: 10px !important; margin: 1px 0 !important; line-height: 1.2 !important; }
-            .rpt-header-print h3 { margin: 4px 0 2px 0 !important; padding-top: 3px !important; font-size: 12px !important; }
+            /* Print friendly letterhead & customer header */
+            .rpt-header-print { display: flex !important; align-items: center !important; justify-content: space-between !important; border-bottom: 2px solid #0f172a !important; padding-bottom: 12px !important; margin-bottom: 15px !important; }
 
             .stmt-header { border: none !important; padding: 0 0 6px 0 !important; border-bottom: 2px solid #1e293b !important; border-radius: 0 !important; margin-bottom: 10px !important; }
             .stmt-header h3 { font-size: 16px !important; color: #0f172a !important; margin-bottom: 2px !important; }
@@ -134,7 +135,7 @@ if ($customer_id) {
             .stmt-box-value { font-size: 15px !important; }
             
             .ns-report-table-static { border: 1px solid #cbd5e1 !important; width: 100% !important; }
-            .ns-report-table-static th { background: #f1f5f9 !important; color: #0f172a !important; border: 1px solid #cbd5e1 !important; padding: 6px 8px !important; font-size: 11px !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .ns-report-table-static th { background: #f1f5f9 !important; color: #0f172a !important; border: 1px solid #cbd5e1 !important; border-bottom: 2px solid #003087 !important; padding: 6px 8px !important; font-size: 11px !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
             .ns-report-table-static td { border: 1px solid #cbd5e1 !important; padding: 5px 8px !important; font-size: 11px !important; }
             
             .aging-container { display: block !important; margin-top: 15px !important; }
@@ -314,6 +315,59 @@ if ($customer_id) {
     </div>
 <?php endif; ?>
 
+<?php if ($customer_id): ?>
+<!-- WhatsApp Send Modal -->
+<div id="whatsappModal" style="display:none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.6); z-index: 99999; align-items: center; justify-content: center;">
+    <div style="background: #fff; border-radius: 12px; max-width: 580px; width: 90%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
+            <div style="font-size: 18px; font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                <i class="fab fa-whatsapp" style="color: #25D366; font-size: 22px;"></i> Send Statement via WhatsApp
+            </div>
+            <button type="button" onclick="closeWaModal()" style="background: none; border: none; font-size: 20px; color: #64748b; cursor: pointer;">&times;</button>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+            <label style="font-weight: 600; font-size: 13px; color: #334155; margin-bottom: 6px; display: block;">Recipient Phone Number</label>
+            <input type="text" id="wa-recipient-phone" class="ns-input" style="width: 100%; height: 38px; border-radius: 6px; border: 1px solid #cbd5e1; padding: 0 12px; font-weight: 600;" value="<?php echo htmlspecialchars($customer_info['phone'] ?? ''); ?>" placeholder="e.g. 9800000000">
+            <span style="font-size: 11px; color: #64748b; margin-top: 4px; display: block;">Include country code if international (e.g. 9779800000000).</span>
+        </div>
+
+        <!-- PDF Document Attachment Option -->
+        <div style="margin-bottom: 16px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <label style="font-weight: 700; font-size: 13px; color: #003087; display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer;">
+                    <input type="checkbox" id="wa-attach-pdf" checked onchange="toggleWaPdfAttachment()">
+                    <i class="fas fa-file-pdf" style="color: #dc2626; font-size: 16px;"></i> Attach PDF Statement Document
+                </label>
+                <button type="button" class="ns-btn" style="padding: 4px 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;" onclick="printStatementPdf()">
+                    <i class="fas fa-print"></i> Print / Save PDF
+                </button>
+            </div>
+            <div id="wa-pdf-info" style="font-size: 11px; color: #475569; line-height: 1.4; margin-top: 4px;">
+                <i class="fas fa-check-circle" style="color: #16a085;"></i> Attachment Ready: <strong>Statement_<?php echo htmlspecialchars(str_replace(' ', '_', $customer_info['full_name'] ?? 'Customer')); ?>_<?php echo date('Ymd'); ?>.pdf</strong>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <label style="font-weight: 600; font-size: 13px; color: #334155; margin-bottom: 6px; display: block;">Message Preview</label>
+            <textarea id="wa-message-body" class="ns-input" style="width: 100%; height: 140px; border-radius: 6px; border: 1px solid #cbd5e1; padding: 10px; font-family: monospace; font-size: 12px; line-height: 1.5;"><?php echo htmlspecialchars($wa_message_default ?? ''); ?></textarea>
+        </div>
+
+        <div id="wa-modal-status" style="display: none; margin-bottom: 16px; padding: 10px; border-radius: 6px; font-size: 13px;"></div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+            <button type="button" class="ns-btn" onclick="closeWaModal()">Cancel</button>
+            <button type="button" class="ns-btn" onclick="sendWaWeb()" style="background: #0284c7; color: white; border: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                <i class="fas fa-external-link-alt"></i> WhatsApp Web
+            </button>
+            <button type="button" class="ns-btn" id="btn-send-wa-api" onclick="sendWaApi()" style="background: #25D366; color: white; border: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                <i class="fab fa-whatsapp"></i> Send via API
+            </button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <script>
 window.onbeforeprint = function() {
     window.originalTitle = document.title;
@@ -323,4 +377,75 @@ window.onafterprint = function() {
     document.title = window.originalTitle;
 };
 function exportTableToCSV(id){const t=document.getElementById(id);let csv=[];t.querySelectorAll('tr').forEach(r=>{let row=[];r.querySelectorAll('th,td').forEach(c=>row.push('"'+c.innerText.replace(/"/g,'""')+'"'));csv.push(row.join(','))});const b=new Blob([csv.join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='customer_statement.csv';a.click()}
+
+function openWaModal() {
+    document.getElementById('whatsappModal').style.display = 'flex';
+    document.getElementById('wa-modal-status').style.display = 'none';
+}
+function closeWaModal() {
+    document.getElementById('whatsappModal').style.display = 'none';
+}
+function printStatementPdf() {
+    const modal = document.getElementById('whatsappModal');
+    if (modal) modal.style.display = 'none';
+    window.print();
+    setTimeout(() => {
+        if (modal) modal.style.display = 'flex';
+    }, 1200);
+}
+function sendWaApi() {
+    const phone = document.getElementById('wa-recipient-phone').value.trim();
+    const msg = document.getElementById('wa-message-body').value.trim();
+    if (!phone) { alert('Recipient phone number is required.'); return; }
+    
+    const btn = document.getElementById('btn-send-wa-api');
+    const statusDiv = document.getElementById('wa-modal-status');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+    statusDiv.style.display = 'block';
+    statusDiv.style.background = '#f1f5f9';
+    statusDiv.style.color = '#334155';
+    statusDiv.innerHTML = 'Sending WhatsApp message...';
+
+    fetch('api/send_whatsapp.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: phone, message: msg })
+    })
+    .then(r => r.json())
+    .then(res => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fab fa-whatsapp"></i> Send via API';
+        if (res.status === 'success') {
+            statusDiv.style.background = '#dcfce7';
+            statusDiv.style.color = '#166534';
+            statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + res.message;
+            setTimeout(() => { closeWaModal(); }, 2000);
+        } else {
+            statusDiv.style.background = '#fee2e2';
+            statusDiv.style.color = '#991b1b';
+            statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + res.message;
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fab fa-whatsapp"></i> Send via API';
+        statusDiv.style.background = '#fee2e2';
+        statusDiv.style.color = '#991b1b';
+        statusDiv.innerHTML = 'Error: ' + err.message;
+    });
+}
+function sendWaWeb() {
+    const phone = document.getElementById('wa-recipient-phone').value.trim().replace(/[^0-9]/g, '');
+    const msg = encodeURIComponent(document.getElementById('wa-message-body').value.trim());
+    if (!phone) { alert('Recipient phone number is required.'); return; }
+    
+    let cleanPhone = phone;
+    if (cleanPhone.length === 10 && (cleanPhone.startsWith('98') || cleanPhone.startsWith('97'))) {
+        cleanPhone = '977' + cleanPhone;
+    }
+    
+    const waUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${msg}`;
+    window.open(waUrl, '_blank');
+}
 </script>

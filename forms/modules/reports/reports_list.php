@@ -348,10 +348,18 @@
                 </div>
                 <div>
                     <h3>VAT / Tax Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">2 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">3 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
+                <a href="?page=reports/vat/abbreviated_tax_invoice" class="report-link-item">
+                    <span class="rpt-dot" style="background:#003087;"></span>
+                    <span>
+                        Abbreviated Tax Invoice Register (लघु कर बिजक)
+                        <span class="rpt-desc">POS Retail Sales Register for IRD Nepal Compliance</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
                 <a href="?page=reports/vat/sales_register" class="report-link-item">
                     <span class="rpt-dot" style="background:#1abc9c;"></span>
                     <span>
@@ -379,10 +387,18 @@
                 </div>
                 <div>
                     <h3>Vendor Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">4 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">5 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
+                <a href="?page=reports/vendors/balance_confirmation" class="report-link-item">
+                    <span class="rpt-dot" style="background:#003087;"></span>
+                    <span>
+                        Vendor Balance Confirmation Letter (पुष्टि पत्र)
+                        <span class="rpt-desc">Official supplier balance audit verification letter</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
                 <a href="?page=reports/vendors/ap_register" class="report-link-item">
                     <span class="rpt-dot" style="background:#8e44ad;"></span>
                     <span>
@@ -426,10 +442,18 @@
                 </div>
                 <div>
                     <h3>Customer Reports</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">4 Reports</div>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">5 Reports</div>
                 </div>
             </div>
             <div class="report-links-list">
+                <a href="?page=reports/customers/balance_confirmation" class="report-link-item">
+                    <span class="rpt-dot" style="background:#003087;"></span>
+                    <span>
+                        Customer Balance Confirmation Letter (पुष्टि पत्र)
+                        <span class="rpt-desc">Official customer balance audit verification letter</span>
+                    </span>
+                    <i class="fas fa-arrow-right rpt-arrow"></i>
+                </a>
                 <a href="?page=reports/customers/statement" class="report-link-item">
                     <span class="rpt-dot" style="background:#e74c3c;"></span>
                     <span>

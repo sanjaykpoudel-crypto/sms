@@ -7,6 +7,7 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('th');
 $rows = $db->fetchAll("
     SELECT 
         c.customer_code, c.full_name, c.customer_type,
@@ -19,7 +20,7 @@ $rows = $db->fetchAll("
         SELECT ci.customer_id, ci.header_id, ci.total_amount, ci.amount_paid, ci.balance_due
         FROM customer_invoices ci
         JOIN transaction_headers th ON ci.header_id = th.id
-        WHERE th.txn_type = 'customer_invoice' AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+        WHERE th.txn_type = 'customer_invoice' AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 
         UNION ALL
 
@@ -35,7 +36,7 @@ $rows = $db->fetchAll("
         WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
           AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
           AND th.txn_type IN ('Journal', 'journal_entry') 
-          AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
         GROUP BY th.id, j.party_id, th.party_id
     ) open_docs ON c.id = open_docs.customer_id
     WHERE c.is_deleted = 0
@@ -64,6 +65,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
 <?php rpt_filter_bar('Sales by Customer', [
     ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
     ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
+    rpt_location_filter(),
 ], 'tbl-sales-cust'); ?>
 
 <div class="rpt-summary">

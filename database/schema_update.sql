@@ -91,3 +91,65 @@ CREATE TABLE IF NOT EXISTS `system_logs` (
     `device_info` TEXT DEFAULT NULL,
     `date_created` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ============================================================
+-- 9. AccountTypeMaster Table Creation and Default Seeding
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `AccountTypeMaster` (
+  `AccountTypeId` INT AUTO_INCREMENT PRIMARY KEY,
+  `AccountTypeName` VARCHAR(100) NOT NULL UNIQUE,
+  `Category` ENUM('Asset', 'Liability', 'Equity', 'Income', 'Expense') NOT NULL,
+  `NormalBalance` ENUM('Debit', 'Credit') NOT NULL,
+  `Description` VARCHAR(255) NULL,
+  `IsSystem` TINYINT(1) NOT NULL DEFAULT 1,
+  `IsActive` TINYINT(1) NOT NULL DEFAULT 1,
+  `SortOrder` INT NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+INSERT IGNORE INTO `AccountTypeMaster` (`AccountTypeName`, `Category`, `NormalBalance`, `Description`, `IsSystem`, `IsActive`, `SortOrder`) VALUES
+('Bank', 'Asset', 'Debit', 'Bank and cash accounts', 1, 1, 10),
+('Accounts Receivable', 'Asset', 'Debit', 'Customer receivables', 1, 1, 30),
+('Inventory Asset', 'Asset', 'Debit', 'Liquor inventory value', 1, 1, 40),
+('Other Current Asset', 'Asset', 'Debit', 'Deposits, advances, prepaid expenses', 1, 1, 50),
+('Fixed Asset', 'Asset', 'Debit', 'Furniture, vehicles, equipment', 1, 1, 60),
+('Other Asset', 'Asset', 'Debit', 'Long-term assets', 1, 1, 70),
+('Accounts Payable', 'Liability', 'Credit', 'Vendor balances', 1, 1, 80),
+('Credit Card', 'Liability', 'Credit', 'Credit card liabilities', 1, 1, 90),
+('Other Current Liability', 'Liability', 'Credit', 'VAT, excise duty, payroll, accruals', 1, 1, 100),
+('Long Term Liability', 'Liability', 'Credit', 'Loans and financing', 1, 1, 110),
+('Owner\'s Equity', 'Equity', 'Credit', 'Capital account', 1, 1, 120),
+('Retained Earnings', 'Equity', 'Credit', 'Prior year profits', 1, 1, 130),
+('Current Year Earnings', 'Equity', 'Credit', 'Current fiscal year profit/loss', 1, 1, 140),
+('Sales Income', 'Income', 'Credit', 'Liquor sales', 1, 1, 150),
+('Other Income', 'Income', 'Credit', 'Interest, discounts received, miscellaneous income', 1, 1, 160),
+('Cost of Goods Sold', 'Expense', 'Debit', 'Cost of inventory sold', 1, 1, 170),
+('Operating Expense', 'Expense', 'Debit', 'Rent, salary, utilities, fuel, repairs', 1, 1, 180),
+('Other Expense', 'Expense', 'Debit', 'Bank charges, exchange loss, miscellaneous expenses', 1, 1, 190);
+
+ALTER TABLE `accounts` ADD COLUMN IF NOT EXISTS `account_type_id` INT NULL AFTER `account_name`;
+ALTER TABLE `accounts` ADD COLUMN IF NOT EXISTS `description` VARCHAR(255) NULL AFTER `normal_balance`;
+
+-- ============================================================
+-- 10. Locations Table Creation and Initial Seeding
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `locations` (
+  `id` VARCHAR(36) PRIMARY KEY,
+  `name` VARCHAR(100) NOT NULL UNIQUE,
+  `type` VARCHAR(50) NOT NULL DEFAULT 'Warehouse',
+  `description` VARCHAR(255) NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `deleted_at` DATETIME NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+INSERT IGNORE INTO `locations` (`id`, `name`, `type`, `description`, `is_active`) VALUES
+('loc-main-wh', 'Main Warehouse', 'Warehouse', 'Central inventory storage and warehouse', 1),
+('loc-main-retail', 'Main Retail Outlet', 'Retail Store', 'Primary retail store and POS location', 1);
+
+

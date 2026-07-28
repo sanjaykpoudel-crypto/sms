@@ -43,28 +43,34 @@ try {
 
     $fiscal = calculate_fiscal_info($txn_date);
 
-    $item_ids = $_POST['item_id'] ?? [];
-    $qtys = $_POST['qty'] ?? [];
-    $rates = $_POST['rate'] ?? [];
+    $item_ids   = $_POST['item_id']           ?? [];
+    $qtys       = $_POST['qty']               ?? [];
+    $rates      = $_POST['rate']              ?? [];
+    $line_locs  = $_POST['line_location_id']  ?? [];
 
     $net_amount = 0;
     $line_data_list = [];
+    $first_location_id = null;
 
     // Calculate total net adjustment value first
     foreach ($item_ids as $idx => $item_id) {
         if (empty($item_id)) continue;
-        $qty = (float)($qtys[$idx] ?? 0);
+        $qty  = (float)($qtys[$idx]  ?? 0);
         $rate = (float)($rates[$idx] ?? 0);
         if ($qty == 0) continue;
+
+        $loc_id = $line_locs[$idx] ?? null;
+        if (!$first_location_id && $loc_id) $first_location_id = $loc_id;
 
         $line_total = $qty * $rate;
         $net_amount += $line_total;
 
         $line_data_list[] = [
-            'item_id' => $item_id,
-            'qty' => $qty,
-            'rate' => $rate,
-            'line_total' => $line_total
+            'item_id'     => $item_id,
+            'qty'         => $qty,
+            'rate'        => $rate,
+            'line_total'  => $line_total,
+            'location_id' => $loc_id
         ];
     }
 
@@ -74,11 +80,11 @@ try {
 
     if (!$id) {
         $id = generate_uuid();
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, created_by) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'account', ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, location_id, created_by) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'account', ?, ?, ?)", [
             $id, $txn_number, 'inventory_adjustment', $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
-            $status, $txn_number, $memo, $net_amount, $adjustment_account_id, $_SESSION['user_id']
+            $status, $txn_number, $memo, $net_amount, $adjustment_account_id, $first_location_id, $_SESSION['user_id']
         ]);
         incrementTransactionNumber('inventory_adjustment');
     } else {
@@ -88,8 +94,8 @@ try {
             $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$ol['quantity'], $ol['item_id']]);
         }
 
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ? WHERE id = ?", [
-            $txn_date, $memo, $net_amount, $adjustment_account_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ? WHERE id = ?", [
+            $txn_date, $memo, $net_amount, $adjustment_account_id, $first_location_id, $id
         ]);
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
@@ -100,17 +106,18 @@ try {
     $total_adjustment_debit = 0;
 
     foreach ($line_data_list as $idx => $line) {
-        $item_id = $line['item_id'];
-        $qty = $line['qty'];
-        $rate = $line['rate'];
+        $item_id   = $line['item_id'];
+        $qty       = $line['qty'];
+        $rate      = $line['rate'];
         $line_total = $line['line_total'];
+        $line_loc  = $line['location_id'];
 
         $inventory_account_id = get_effective_account($item_id, 'inventory') ?: 'acc-1200';
 
-        // Insert transaction line
-        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0)", [
-            generate_uuid(), $id, $item_id, $inventory_account_id, $idx + 1, $qty, $rate, $line_total, $rate
+        // Insert transaction line (with location_id)
+        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, location_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0)", [
+            generate_uuid(), $id, $item_id, $inventory_account_id, $line_loc, $idx + 1, $qty, $rate, $line_total, $rate
         ]);
 
         // Update item stock and cost price
@@ -148,6 +155,7 @@ try {
     }
 
     $pdo->commit();
+    clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Inventory Adjustment has been saved successfully.', 'id' => $id]);
     exit;

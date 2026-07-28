@@ -3,7 +3,7 @@ require_once 'database/DBConnection.php';
 $db = db();
 
 // Fetch all bank and cash accounts
-$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
+$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('Bank') AND is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
 
 // Fetch existing opening balances transaction date if any
 $opening_txn = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");

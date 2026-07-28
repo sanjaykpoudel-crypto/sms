@@ -1,17 +1,26 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/reference_helper.php';
 $db = db();
 $id = $_GET['id'] ?? null;
 $data = [];
 if ($id) {
     $data = $db->fetchOne("SELECT * FROM customers WHERE id = ?", [$id]);
 }
-$accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtype FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$locations = get_active_locations();
+$curr_loc_id = $data['location_id'] ?? get_user_default_location_id();
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'New'; ?> Customer</div>
     <div class="ns-page-actions">
-        <button type="submit" form="customer-form" class="ns-btn ns-btn-primary"><?php echo $id ? 'Edit' : 'Save'; ?></button>
+        <button type="submit" form="customer-form"
+            class="ns-btn ns-btn-primary"><?php echo $id ? 'Edit' : 'Save'; ?></button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
+                onclick="nsDelete('customers', '<?php echo $id; ?>', function() { window.location.href = '?page=master/customer'; })"><i
+                    class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <button type="button" onclick="history.back()" class="ns-btn">Cancel</button>
     </div>
 </div>
@@ -19,13 +28,25 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
 <div class="ns-form-container">
     <form id="customer-form" method="POST" action="api/save_customer.php">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
-        
+
         <div class="ns-section-title">Primary Information</div>
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Full Name *</label>
-                    <input type="text" name="full_name" class="ns-input" value="<?php echo $data['full_name'] ?? ''; ?>" required>
+                    <input type="text" name="full_name" class="ns-input" value="<?php echo $data['full_name'] ?? ''; ?>"
+                        required>
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Location *</label>
+                    <select name="location_id" class="ns-select" required>
+                        <option value="">Select Location</option>
+                        <?php foreach ($locations as $loc): ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
             <div style="flex: 1;">
@@ -34,12 +55,14 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <select name="customer_type" class="ns-select" required>
                         <option value="retail" <?php echo ($data['customer_type'] ?? '') == 'retail' ? 'selected' : ''; ?>>Retail</option>
                         <option value="wholesale" <?php echo ($data['customer_type'] ?? '') == 'wholesale' ? 'selected' : ''; ?>>Wholesale</option>
-                        <option value="bar" <?php echo ($data['customer_type'] ?? '') == 'bar' ? 'selected' : ''; ?>>Bar / Restaurant</option>
+                        <option value="bar" <?php echo ($data['customer_type'] ?? '') == 'bar' ? 'selected' : ''; ?>>Bar /
+                            Restaurant</option>
                     </select>
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">PAN Number</label>
-                    <input type="text" name="pan_number" class="ns-input" value="<?php echo $data['pan_number'] ?? ''; ?>">
+                    <input type="text" name="pan_number" class="ns-input"
+                        value="<?php echo $data['pan_number'] ?? ''; ?>">
                 </div>
             </div>
         </div>
@@ -59,15 +82,17 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Credit Limit</label>
-                    <input type="number" step="0.01" name="credit_limit" class="ns-input" value="<?php echo $data['credit_limit'] ?? '0.00'; ?>">
+                    <input type="number" step="0.01" name="credit_limit" class="ns-input"
+                        value="<?php echo $data['credit_limit'] ?? '0.00'; ?>">
                 </div>
                 <div class="ns-form-group">
-                    <label class="ns-label" style="display: block; width: 150px; text-align: right; padding-right: 15px;">Active</label>
-                    <input type="checkbox" name="is_active" <?php echo ($data['is_active'] ?? 1) ? 'checked' : ''; ?>>
+                    <label class="ns-label"
+                        style="display: block; width: 150px; text-align: right; padding-right: 15px;">Inactive</label>
+                    <input type="checkbox" name="is_inactive" <?php echo (isset($data['is_active']) && $data['is_active'] == 0) ? 'checked' : ''; ?> style="width: 18px; height: 18px; cursor: pointer;">
                 </div>
             </div>
         </div>
-        
+
         <div class="ns-section-title">Accounting & Terms</div>
         <div class="ns-form-row">
             <div style="flex: 1;">
@@ -75,16 +100,19 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
                     <label class="ns-label">Receivable Account *</label>
                     <select name="receivable_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
-                        <?php foreach($accounts as $acc): if(in_array($acc['account_subtype'], ['receivable', 'other'])): ?>
-                        <option value="<?php echo $acc['id']; ?>" <?php echo ($data['receivable_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?></option>
-                        <?php endif; endforeach; ?>
+                        <?php foreach ($accounts as $acc):
+                            if (in_array($acc['account_subtype'], ['Accounts Receivable', 'Other Current Asset', 'Other Asset'])): ?>
+                                <option value="<?php echo $acc['id']; ?>" <?php echo ($data['receivable_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($acc['account_name']); ?>
+                                </option>
+                            <?php endif; endforeach; ?>
                     </select>
                 </div>
             </div>
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Payment Terms (Days)</label>
-                    <input type="number" name="payment_terms_days" class="ns-input" value="<?php echo $data['payment_terms_days'] ?? ''; ?>">
+                    <input type="number" name="payment_terms_days" class="ns-input"
+                        value="<?php echo $data['payment_terms_days'] ?? ''; ?>">
                 </div>
             </div>
         </div>
@@ -92,25 +120,23 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
 </div>
 
 <script>
-    document.getElementById('customer-form').addEventListener('submit', function(e) {
+    document.getElementById('customer-form').addEventListener('submit', function (e) {
         e.preventDefault();
         const form = this;
         const submitBtn = document.querySelector('button[form="customer-form"]');
         const originalText = submitBtn.innerHTML;
-        
+
         submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
         submitBtn.disabled = true;
 
         const formData = new FormData(form);
         const data = {};
         formData.forEach((value, key) => {
-            if (key === 'is_active') {
-                data[key] = 1;
-            } else {
+            if (key !== 'is_inactive') {
                 data[key] = value;
             }
         });
-        if (!formData.has('is_active')) data['is_active'] = 0;
+        data['is_active'] = form.querySelector('[name="is_inactive"]').checked ? 0 : 1;
 
         const payload = {
             action: data.id ? 'update' : 'save',
@@ -125,23 +151,23 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_code, account_subtyp
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'success') {
-                nsNotify(data.message);
-                setTimeout(() => {
-                    window.location.href = '?page=master/customer/view&id=' + data.id;
-                }, 1500);
-            } else {
-                nsNotify(data.message || 'Error occurred while saving.', 'error');
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    nsNotify(data.message);
+                    setTimeout(() => {
+                        window.location.href = '?page=master/customer/view&id=' + data.id;
+                    }, 1500);
+                } else {
+                    nsNotify(data.message || 'Error occurred while saving.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
+            })
+            .catch(err => {
+                nsNotify('Network error or server failed.', 'error');
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
-            }
-        })
-        .catch(err => {
-            nsNotify('Network error or server failed.', 'error');
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        });
+            });
     });
 </script>

@@ -1,5 +1,6 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/reference_helper.php';
 $db = db();
 $id = $_GET['id'] ?? null;
 
@@ -37,6 +38,9 @@ if (!$item) {
     echo "<div class='alert alert-danger'>Item not found.</div>";
     exit;
 }
+
+// Fetch Inventory Balances per Location
+$inv_balances = sync_and_get_item_inventory_balances($db, $id);
 
 // Fetch related records (Stock Movements)
 $movements = $db->fetchAll("
@@ -173,6 +177,7 @@ function getDiff($oldJson, $newJson) {
 
 <div class="ns-tabs">
     <div class="ns-tab active" onclick="nsOpenTab('tab-primary', this)">Primary Information</div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-inventory', this)">Inventory Details <span style="background:#e0f2fe;padding:2px 6px;border-radius:10px;font-size:10px;color:#0369a1;"><?php echo count($inv_balances); ?></span></div>
     <div class="ns-tab" onclick="nsOpenTab('tab-related', this)">Stock Movements <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($movements); ?></span></div>
     <div class="ns-tab" onclick="nsOpenTab('tab-system', this)">System Information</div>
 </div>
@@ -247,6 +252,38 @@ function getDiff($oldJson, $newJson) {
             </div>
         </div>
     </div>
+</div>
+
+<!-- Inventory Details (Per Location Balance) -->
+<div id="tab-inventory" class="ns-tab-content">
+    <table class="ns-table">
+        <thead>
+            <tr>
+                <th>Location</th>
+                <th style="text-align: right;">QuantityOnHand</th>
+                <th style="text-align: right;">AvailableQty</th>
+                <th style="text-align: right;">CommittedQty</th>
+                <th style="text-align: right;">OnOrderQty</th>
+                <th style="text-align: right;">AverageCost</th>
+                <th>LastUpdated</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (empty($inv_balances)): ?>
+                <tr><td colspan="7" style="text-align:center; padding: 20px; color: #999;">No location inventory balances found.</td></tr>
+            <?php else: foreach ($inv_balances as $bal): ?>
+                <tr>
+                    <td><strong><?php echo htmlspecialchars($bal['location_name']); ?></strong></td>
+                    <td style="text-align: right; font-weight: 700; color: #080;"><?php echo number_format($bal['quantity_on_hand'], 2); ?></td>
+                    <td style="text-align: right; font-weight: 700; color: #0284c7;"><?php echo number_format($bal['available_qty'], 2); ?></td>
+                    <td style="text-align: right; color: #e67e22;"><?php echo number_format($bal['committed_qty'], 2); ?></td>
+                    <td style="text-align: right; color: #8e44ad;"><?php echo number_format($bal['on_order_qty'], 2); ?></td>
+                    <td style="text-align: right; font-weight: 600;">Rs <?php echo number_format($bal['average_cost'], 2); ?></td>
+                    <td style="font-size: 11px; color: #64748b;"><?php echo date('Y-m-d h:i A', strtotime($bal['last_updated'])); ?></td>
+                </tr>
+            <?php endforeach; endif; ?>
+        </tbody>
+    </table>
 </div>
 
 <!-- Related Records -->

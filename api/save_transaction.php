@@ -28,6 +28,7 @@ try {
     $memo = $_POST['memo'] ?? '';
     $reference_number = $_POST['reference_number'] ?? '';
     $net_amount = (float)($_POST['net_amount'] ?? 0);
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
 
     if (!$party_id) {
         throw new Exception("Party ID is required");
@@ -52,11 +53,12 @@ try {
         $id = generate_uuid();
         $txn_number = getNextTransactionNumber($header_txn_type);
         
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, created_by) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, created_by, party_id, party_type, location_id) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             $id, $txn_number, $header_txn_type, $txn_date, 
             $fiscal['year'], $fiscal['month'], $fiscal['period'], 
-            'posted', $reference_number, $memo, $_SESSION['user_id']
+            'posted', $reference_number, $memo, $_SESSION['user_id'],
+            $party_id, $party_type, $location_id
         ]);
         incrementTransactionNumber($header_txn_type);
     } else {
@@ -64,8 +66,8 @@ try {
         if (empty($txn_number)) {
             $txn_number = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id])['txn_number'] ?? 'Unknown';
         }
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ? WHERE id = ?", [
-            $txn_date, $reference_number, $memo, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, party_id = ?, party_type = ?, location_id = ? WHERE id = ?", [
+            $txn_date, $reference_number, $memo, $party_id, $party_type, $location_id, $id
         ]);
         
         $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$id]);
@@ -86,8 +88,6 @@ try {
     foreach ($bank_account_ids as $index => $acc_id) {
         if (empty($acc_id)) continue;
         $line_amount = (float)($line_amounts[$index] ?? 0);
-        if ($line_amount <= 0) continue;
-
         $total_tendered += $line_amount;
         
         // Dynamically resolve payment method based on the account name
@@ -102,11 +102,13 @@ try {
             $mapped_method, $acc_id, $line_amount, $reference_number, $txn_date
         ]);
 
-        // Dr Bank/Cash account
-        $entry_type = ($party_type === 'customer') ? 'debit' : 'credit';
-        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $acc_id, $entry_type, $line_amount, 'Payment ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-        ]);
+        if ($line_amount > 0) {
+            // Dr Bank/Cash account
+            $entry_type = ($party_type === 'customer') ? 'debit' : 'credit';
+            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                generate_uuid(), $id, $acc_id, $entry_type, $line_amount, 'Payment ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $party_id, $party_type
+            ]);
+        }
     }
 
     // Cr/Dr AR/AP Account
@@ -124,15 +126,16 @@ try {
     $apply_txn_ids = $_POST['apply_txn_id'] ?? [];
     $apply_amounts = $_POST['apply_amount'] ?? [];
 
-    foreach ($apply_txn_ids as $index => $applied_to_id) {
+    foreach ($apply_txn_ids as $index => $raw_key) {
         $apply_amt = 0.0;
-        if (isset($apply_amounts[$applied_to_id])) {
-            $apply_amt = (float)$apply_amounts[$applied_to_id];
+        if (isset($apply_amounts[$raw_key])) {
+            $apply_amt = (float)$apply_amounts[$raw_key];
         } elseif (isset($apply_amounts[$index])) {
             $apply_amt = (float)$apply_amounts[$index];
         }
-        if ($apply_amt <= 0) continue;
+        if (abs($apply_amt) <= 0.0001) continue;
 
+        $applied_to_id = explode(':', $raw_key)[0];
         $affected_doc_ids[] = $applied_to_id;
 
         // Record link (parent=payment, child=invoice/bill/journal, link_type encodes the amount)
@@ -147,7 +150,11 @@ try {
         recalculate_document_payment_status($doc_id, $pdo);
     }
 
+    // Update total net_amount in transaction_headers
+    $db->execute("UPDATE transaction_headers SET net_amount = ? WHERE id = ?", [$total_tendered, $id]);
+
     $pdo->commit();
+    clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Payment has been recorded successfully.', 'id' => $id]);
     exit;

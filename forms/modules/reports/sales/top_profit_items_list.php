@@ -7,6 +7,7 @@ $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? date('Y-m-01');
 $date_to    = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('h');
 $items = $db->fetchAll("
     SELECT 
         i.sku, 
@@ -26,7 +27,7 @@ $items = $db->fetchAll("
     WHERE h.txn_type = 'customer_invoice' 
       AND h.is_deleted = 0 
       AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date BETWEEN ? AND ?
+      AND h.txn_date BETWEEN ? AND ? {$loc_sql}
     GROUP BY l.item_id
     ORDER BY total_profit DESC
 ", [$date_from, $date_to]);

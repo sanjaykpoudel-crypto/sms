@@ -40,8 +40,16 @@ try {
     $party_id = $_POST['party_id'] ?? null;
     $ref_number = !empty($_POST['ref_number']) ? $_POST['ref_number'] : $txn_number;
     $memo = $_POST['memo'] ?? '';
-    $status = $_POST['status'] ?? 'draft';
     $discount_amount = (float)($_POST['discount_amount'] ?? 0);
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    
+    // Status preservation for edit mode
+    if ($id) {
+        $existing_hdr = $db->fetchOne("SELECT status FROM transaction_headers WHERE id = ?", [$id]);
+        $status = $_POST['status'] ?? ($existing_hdr['status'] ?? 'posted');
+    } else {
+        $status = $_POST['status'] ?? 'posted';
+    }
     
     if (!$party_id) throw new Exception("Vendor is required");
 
@@ -49,15 +57,17 @@ try {
 
     if (!$id) {
         $id = generate_uuid();
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, created_by) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, created_by, location_id) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             $id, $txn_number, 'vendor_bill', $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
-            $status, $ref_number, $memo, $_SESSION['user_id']
+            $status, $ref_number, $memo, $_SESSION['user_id'], $location_id
         ]);
         incrementTransactionNumber('vendor_bill');
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, status = ? WHERE id = ?", [$txn_date, $ref_number, $memo, $status, $id]);
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, status = ?, location_id = ? WHERE id = ?", [
+            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $status, $location_id, $id
+        ]);
         
         // Reverse old stock
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
@@ -206,6 +216,7 @@ try {
     }
 
     $pdo->commit();
+    clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Vendor Bill has been saved successfully.', 'id' => $id]);
     exit;

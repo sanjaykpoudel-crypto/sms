@@ -40,7 +40,7 @@ try {
         $amount = (float)$amount;
         
         // Verify account exists and is subtype bank or cash
-        $acc = $db->fetchOne("SELECT id FROM accounts WHERE id = ? AND account_subtype IN ('bank', 'cash') AND is_deleted = 0", [$account_id]);
+        $acc = $db->fetchOne("SELECT id FROM accounts WHERE id = ? AND account_subtype IN ('Bank') AND is_deleted = 0", [$account_id]);
         if (!$acc) {
             continue;
         }

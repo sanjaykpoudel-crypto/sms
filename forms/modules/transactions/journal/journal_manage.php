@@ -27,9 +27,12 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'New'; ?> Journal Entry</div>
     <div class="ns-page-actions">
-        <button type="submit" form="journal-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
+        <button type="submit" form="journal-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i>
+            Save</button>
         <?php if ($id): ?>
-            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/journal')"><i class="fas fa-trash-alt"></i> Delete</button>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
+                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/journal')"><i
+                    class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
         <a href="?page=transactions/journal" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
@@ -39,25 +42,43 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
     <form id="journal-form" method="POST" action="api/save_journal.php">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
         <input type="hidden" name="txn_type" value="Journal">
-        
+
         <div class="ns-section-title">Primary Information</div>
-        <div class="ns-form-row" style="display: flex; gap: 40px; align-items: flex-start; justify-content: space-between; width: 100%;">
+        <div class="ns-form-row"
+            style="display: flex; gap: 40px; align-items: flex-start; justify-content: space-between; width: 100%;">
             <div style="flex: 2; max-width: 60%; display: flex; flex-direction: column; gap: 8px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Entry #</label>
-                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number']; ?>" readonly style="background: #f0f0f0;">
+                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number']; ?>"
+                        readonly style="background: #f0f0f0;">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Date *</label>
-                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>" required>
+                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>"
+                        required>
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Reference #</label>
-                    <input type="text" name="ref_number" class="ns-input" value="<?php echo $data['ref_number'] ?? ''; ?>">
+                    <input type="text" name="ref_number" class="ns-input"
+                        value="<?php echo $data['ref_number'] ?? ''; ?>">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Memo</label>
                     <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Location</label>
+                    <select name="location_id" class="ns-select">
+                        <option value="">-- Select Location --</option>
+                        <?php 
+                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+                        foreach (get_active_locations() as $loc): 
+                        ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
             <div style="flex: 1; min-width: 350px;">
@@ -92,61 +113,76 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                 </tr>
             </thead>
             <tbody>
-                <?php 
-                $accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+                <?php
+                $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
                 foreach ($lines as $i => $line):
-                    $debit_val = ($line['entry_type'] === 'debit') ? (float)$line['amount'] : 0.00;
-                    $credit_val = ($line['entry_type'] === 'credit') ? (float)$line['amount'] : 0.00;
+                    $debit_val = ($line['entry_type'] === 'debit') ? (float) $line['amount'] : 0.00;
+                    $credit_val = ($line['entry_type'] === 'credit') ? (float) $line['amount'] : 0.00;
                     $line_party_type = $line['party_type'] ?? '';
                     $line_party_id = $line['party_id'] ?? '';
-                ?>
-                <tr>
-                    <td class="text-center"><?php echo $i+1; ?></td>
-                    <td>
-                        <select name="account_id[]" class="ns-select" style="width: 100%;">
-                            <option value="">Select Account</option>
-                            <?php foreach($accounts as $acc): ?>
-                                <option value="<?php echo $acc['id']; ?>" <?php echo ($acc['id'] == $line['account_id']) ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($acc['account_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </td>
-                    <td><input type="number" name="debit[]" class="ns-input debit-input" value="<?php echo number_format($debit_val, 2, '.', ''); ?>" step="0.01" oninput="handleDebitInput(this)"></td>
-                    <td><input type="number" name="credit[]" class="ns-input credit-input" value="<?php echo number_format($credit_val, 2, '.', ''); ?>" step="0.01" oninput="handleCreditInput(this)"></td>
-                    <td><input type="text" name="line_memo[]" class="ns-input" value="<?php echo htmlspecialchars($line['memo'] ?? ''); ?>"></td>
-                    <td>
-                        <div style="display: flex; gap: 2px;">
-                            <select name="line_party_type[]" class="ns-select" style="width: 70px; font-size: 10px;" onchange="updateLineEntity(this)">
-                                <option value="">Type</option>
-                                <option value="customer" <?php echo ($line_party_type === 'customer') ? 'selected' : ''; ?>>Cust</option>
-                                <option value="vendor" <?php echo ($line_party_type === 'vendor') ? 'selected' : ''; ?>>Vend</option>
-                                <option value="user" <?php echo ($line_party_type === 'user') ? 'selected' : ''; ?>>Emp</option>
+                    ?>
+                    <tr>
+                        <td class="text-center"><?php echo $i + 1; ?></td>
+                        <td>
+                            <select name="account_id[]" class="ns-select" style="width: 100%;">
+                                <option value="">Select Account</option>
+                                <?php foreach ($accounts as $acc): ?>
+                                    <option value="<?php echo $acc['id']; ?>" <?php echo ($acc['id'] == $line['account_id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($acc['account_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
                             </select>
-                            <select name="line_party_id[]" class="ns-select line-party-select" style="flex: 1; font-size: 10px;">
-                                <option value="">Name</option>
-                                <?php 
-                                if ($line_party_type) {
-                                    $party_list = [];
-                                    if ($line_party_type === 'customer') $party_list = $customers;
-                                    elseif ($line_party_type === 'vendor') $party_list = $vendors;
-                                    elseif ($line_party_type === 'user') $party_list = $users;
-                                    
-                                    foreach ($party_list as $p) {
-                                        $sel = ($p['id'] == $line_party_id) ? 'selected' : '';
-                                        echo "<option value=\"{$p['id']}\" {$sel}>" . htmlspecialchars($p['name']) . "</option>";
+                        </td>
+                        <td><input type="number" name="debit[]" class="ns-input debit-input"
+                                value="<?php echo number_format($debit_val, 2, '.', ''); ?>" step="0.01"
+                                oninput="handleDebitInput(this)"></td>
+                        <td><input type="number" name="credit[]" class="ns-input credit-input"
+                                value="<?php echo number_format($credit_val, 2, '.', ''); ?>" step="0.01"
+                                oninput="handleCreditInput(this)"></td>
+                        <td><input type="text" name="line_memo[]" class="ns-input"
+                                value="<?php echo htmlspecialchars($line['memo'] ?? ''); ?>"></td>
+                        <td>
+                            <div style="display: flex; gap: 2px;">
+                                <select name="line_party_type[]" class="ns-select" style="width: 70px; font-size: 10px;"
+                                    onchange="updateLineEntity(this)">
+                                    <option value="">Type</option>
+                                    <option value="customer" <?php echo ($line_party_type === 'customer') ? 'selected' : ''; ?>>Cust</option>
+                                    <option value="vendor" <?php echo ($line_party_type === 'vendor') ? 'selected' : ''; ?>>
+                                        Vend</option>
+                                    <option value="user" <?php echo ($line_party_type === 'user') ? 'selected' : ''; ?>>Emp
+                                    </option>
+                                </select>
+                                <select name="line_party_id[]" class="ns-select line-party-select"
+                                    style="flex: 1; font-size: 10px;">
+                                    <option value="">Name</option>
+                                    <?php
+                                    if ($line_party_type) {
+                                        $party_list = [];
+                                        if ($line_party_type === 'customer')
+                                            $party_list = $customers;
+                                        elseif ($line_party_type === 'vendor')
+                                            $party_list = $vendors;
+                                        elseif ($line_party_type === 'user')
+                                            $party_list = $users;
+
+                                        foreach ($party_list as $p) {
+                                            $sel = ($p['id'] == $line_party_id) ? 'selected' : '';
+                                            echo "<option value=\"{$p['id']}\" {$sel}>" . htmlspecialchars($p['name']) . "</option>";
+                                        }
                                     }
-                                }
-                                ?>
-                            </select>
-                        </div>
-                    </td>
-                    <td><button type="button" class="ns-btn-link text-danger remove-line-btn" onclick="removeLine(this)" style="background: none; border: none; cursor: pointer; color: #ef4444;"><i class="fas fa-trash"></i></button></td>
-                </tr>
+                                    ?>
+                                </select>
+                            </div>
+                        </td>
+                        <td><button type="button" class="ns-btn-link text-danger remove-line-btn" onclick="removeLine(this)"
+                                style="background: none; border: none; cursor: pointer; color: #ef4444;"><i
+                                    class="fas fa-trash"></i></button></td>
+                    </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
-        <button type="button" class="ns-btn" style="margin-top: 10px;" onclick="addLine()"><i class="fas fa-plus"></i> Add Line</button>
+        <button type="button" class="ns-btn" style="margin-top: 10px;" onclick="addLine()"><i class="fas fa-plus"></i>
+            Add Line</button>
 
 
         <div style="clear: both;"></div>
@@ -164,7 +200,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
         const type = selectEl.value;
         const row = selectEl.closest('tr');
         const entitySelect = row.querySelector('.line-party-select');
-        
+
         entitySelect.innerHTML = '<option value="">Name</option>';
         if (type && entities[type]) {
             entities[type].forEach(item => {
@@ -198,7 +234,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
         const tbody = document.querySelector('.ns-item-table tbody');
         const rowCount = tbody.rows.length;
         const tr = document.createElement('tr');
-        
+
         // Calculate unbalanced amount
         let totalDebit = 0;
         let totalCredit = 0;
@@ -208,7 +244,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
         document.querySelectorAll('.credit-input').forEach(input => {
             totalCredit += parseFloat(input.value) || 0;
         });
-        
+
         let newDebit = '0.00';
         let newCredit = '0.00';
         if (totalDebit > totalCredit) {
@@ -259,33 +295,33 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
             return;
         }
         row.remove();
-        
+
         // Re-index rows
         Array.from(tbody.rows).forEach((r, idx) => {
             r.cells[0].textContent = idx + 1;
         });
-        
+
         calculateTotals();
     }
 
     function calculateTotals() {
         let totalDebit = 0;
         let totalCredit = 0;
-        
+
         document.querySelectorAll('.debit-input').forEach(input => {
             totalDebit += parseFloat(input.value) || 0;
         });
         document.querySelectorAll('.credit-input').forEach(input => {
             totalCredit += parseFloat(input.value) || 0;
         });
-        
+
         document.getElementById('total-debit').textContent = totalDebit.toFixed(2);
         document.getElementById('total-credit').textContent = totalCredit.toFixed(2);
-        
+
         const diff = Math.abs(totalDebit - totalCredit);
         const diffEl = document.getElementById('out-of-balance');
         diffEl.textContent = diff.toFixed(2);
-        
+
         if (diff > 0.005) {
             diffEl.style.color = '#ef4444';
         } else {
@@ -296,9 +332,9 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
     window.addEventListener('load', () => {
         calculateTotals();
         const form = document.getElementById('journal-form');
-        form.addEventListener('submit', function(e) {
+        form.addEventListener('submit', function (e) {
             e.preventDefault();
-            
+
             // Check out of balance
             let totalDebit = 0;
             let totalCredit = 0;
@@ -308,12 +344,12 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
             document.querySelectorAll('.credit-input').forEach(input => {
                 totalCredit += parseFloat(input.value) || 0;
             });
-            
+
             if (Math.abs(totalDebit - totalCredit) > 0.005) {
                 nsNotify('The journal entry is out of balance. Debits must equal Credits.', 'error');
                 return;
             }
-            
+
             if (totalDebit <= 0) {
                 nsNotify('The total amount must be greater than zero.', 'error');
                 return;
@@ -321,7 +357,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
 
             const submitBtn = document.querySelector('button[form="journal-form"]');
             const originalText = submitBtn.innerHTML;
-            
+
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
             submitBtn.disabled = true;
 
@@ -330,24 +366,24 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                 method: 'POST',
                 body: formData
             })
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    nsNotify(data.message);
-                    setTimeout(() => {
-                        window.location.href = '?page=transactions/view&id=' + data.id;
-                    }, 1500);
-                } else {
-                    nsNotify(data.message || 'Error occurred while saving.', 'error');
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        nsNotify(data.message);
+                        setTimeout(() => {
+                            window.location.href = '?page=transactions/view&id=' + data.id;
+                        }, 1500);
+                    } else {
+                        nsNotify(data.message || 'Error occurred while saving.', 'error');
+                        submitBtn.innerHTML = originalText;
+                        submitBtn.disabled = false;
+                    }
+                })
+                .catch(err => {
+                    nsNotify('Network error or server failed.', 'error');
                     submitBtn.innerHTML = originalText;
                     submitBtn.disabled = false;
-                }
-            })
-            .catch(err => {
-                nsNotify('Network error or server failed.', 'error');
-                submitBtn.innerHTML = originalText;
-                submitBtn.disabled = false;
-            });
+                });
         });
     });
 </script>

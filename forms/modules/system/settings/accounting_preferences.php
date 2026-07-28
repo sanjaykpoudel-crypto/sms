@@ -6,9 +6,10 @@ foreach($info as $row) {
     $settings[$row['meta_field']] = $row['meta_value'];
 }
 
-$accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 $customers = $db->fetchAll("SELECT id, customer_code, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $vendors = $db->fetchAll("SELECT id, vendor_code, company_name FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
+$locations = get_active_locations();
 
 function account_select($name, $current_val, $accounts) {
     $html = '<select name="'.$name.'" class="ns-select">';
@@ -123,6 +124,26 @@ function entity_select($name, $current_val, $entities, $type = 'Customer') {
                 <div class="ns-form-group">
                     <label class="ns-label">Default Vendor</label>
                     <?php echo entity_select('default_vendor_id', $settings['default_vendor_id'] ?? '', $vendors, 'Vendor'); ?>
+                </div>
+            </div>
+
+            <div class="ns-section-title">Default Location</div>
+            <div class="ns-form-row">
+                <div class="ns-form-group">
+                    <label class="ns-label">Default Transaction Location</label>
+                    <select name="default_location_id" class="ns-select">
+                        <option value="">-- No Default (use location-level default) --</option>
+                        <?php foreach ($locations as $loc): ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>"
+                                <?php echo (($settings['default_location_id'] ?? '') == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?>
+                                <?php echo !empty($loc['is_default']) ? ' (Location Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small style="color:#64748b; font-size:11px; display:block; margin-top:4px;">
+                        <i class="fas fa-info-circle"></i> This location will be pre-selected on all new invoices, bills, expenses and payment forms.
+                    </small>
                 </div>
             </div>
 

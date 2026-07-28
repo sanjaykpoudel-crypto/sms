@@ -22,15 +22,18 @@ if ($id) {
 }
 
 // Fetch Cash and Bank Accounts
-$bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_subtype FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('Bank') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-random" style="margin-right: 10px; color: var(--ns-accent);"></i>
         <?php echo $id ? 'Edit' : 'New'; ?> Bank Fund Transfer</div>
     <div class="ns-page-actions">
-        <button type="submit" form="transfer-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
+        <button type="submit" form="transfer-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i>
+            Save</button>
         <?php if ($id): ?>
-            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/transfer')"><i class="fas fa-trash-alt"></i> Delete</button>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
+                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/transfer')"><i
+                    class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
         <a href="?page=transactions/transfer" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
@@ -46,13 +49,15 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
             <div style="flex: 1; min-width: 300px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Transfer #</label>
-                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number'] ?? ''; ?>" readonly style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
+                    <input type="text" name="txn_number" class="ns-input"
+                        value="<?php echo $data['txn_number'] ?? ''; ?>" readonly
+                        style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">From Account <span class="ns-required">*</span></label>
                     <select name="from_account_id" class="ns-select" required>
                         <option value="">Select Source Account</option>
-                        <?php foreach($bank_accounts as $acc): ?>
+                        <?php foreach ($bank_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['from_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
@@ -63,7 +68,7 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
                     <label class="ns-label">To Account <span class="ns-required">*</span></label>
                     <select name="to_account_id" class="ns-select" required>
                         <option value="">Select Destination Account</option>
-                        <?php foreach($bank_accounts as $acc): ?>
+                        <?php foreach ($bank_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['to_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
@@ -74,15 +79,33 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
             <div style="flex: 1; min-width: 300px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Date <span class="ns-required">*</span></label>
-                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>" required>
+                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>"
+                        required>
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Transfer Amount <span class="ns-required">*</span></label>
-                    <input type="number" name="amount" class="ns-input ns-input-gross" value="<?php echo $data['amount']; ?>" min="0.01" step="any" required style="font-size: 16px; font-weight: bold; color: #003366;">
+                    <input type="number" name="amount" class="ns-input ns-input-gross"
+                        value="<?php echo $data['amount']; ?>" min="0.01" step="any" required
+                        style="font-size: 16px; font-weight: bold; color: #003366;">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Memo / Description</label>
-                    <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>" placeholder="Notes about this transfer...">
+                    <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>"
+                        placeholder="Notes about this transfer...">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Location</label>
+                    <select name="location_id" class="ns-select">
+                        <option value="">-- Select Location --</option>
+                        <?php 
+                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+                        foreach (get_active_locations() as $loc): 
+                        ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
         </div>
@@ -91,7 +114,7 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
 </div>
 
 <script>
-    document.getElementById('transfer-form').addEventListener('submit', function(e) {
+    document.getElementById('transfer-form').addEventListener('submit', function (e) {
         e.preventDefault();
         const form = this;
 
@@ -120,23 +143,23 @@ $bank_accounts = $db->fetchAll("SELECT id, account_code, account_name, account_s
             method: 'POST',
             body: formData
         })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'success') {
-                nsNotify(data.message || 'Fund transfer recorded successfully.');
-                setTimeout(() => {
-                    window.location.href = '?page=transactions/view&id=' + data.id;
-                }, 1500);
-            } else {
-                nsNotify(data.message || 'Error occurred while saving.', 'error');
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    nsNotify(data.message || 'Fund transfer recorded successfully.');
+                    setTimeout(() => {
+                        window.location.href = '?page=transactions/view&id=' + data.id;
+                    }, 1500);
+                } else {
+                    nsNotify(data.message || 'Error occurred while saving.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
+            })
+            .catch(err => {
+                nsNotify('Network error or server failed.', 'error');
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
-            }
-        })
-        .catch(err => {
-            nsNotify('Network error or server failed.', 'error');
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        });
+            });
     });
 </script>

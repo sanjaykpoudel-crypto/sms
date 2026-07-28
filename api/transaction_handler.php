@@ -1,5 +1,7 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) { session_start(); }
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!defined('TESTING')) {
     if (!isset($_SESSION['user_id'])) {
         header('Content-Type: application/json');
@@ -11,14 +13,14 @@ if (!defined('TESTING')) {
     require_once 'reference_helper.php';
 
     $inputJSON = $GLOBALS['mock_input_payload'] ?? file_get_contents('php://input');
-    $input     = json_decode($inputJSON, true);
+    $input = json_decode($inputJSON, true);
 
     if (!$input) {
         echo json_encode(['status' => 'error', 'message' => 'Invalid JSON payload']);
         exit;
     }
 
-    $db  = db();
+    $db = db();
     $pdo = $db->getConnection();
 
     try {
@@ -35,14 +37,15 @@ if (!defined('TESTING')) {
 /**
  * Main Transaction Function
  */
-function handleTransaction($json, $pdo, $db) {
-    $action       = $json['action']        ?? '';
-    $tableName    = $json['table']         ?? '';
-    $primaryKey   = $json['primary_key']   ?? 'id';
+function handleTransaction($json, $pdo, $db)
+{
+    $action = $json['action'] ?? '';
+    $tableName = $json['table'] ?? '';
+    $primaryKey = $json['primary_key'] ?? 'id';
     $primaryValue = $json['primary_value'] ?? null;
-    $data         = $json['data']          ?? [];
-    $childTables  = $json['child_tables']  ?? [];
-    $userId       = $_SESSION['user_id']   ?? 'system';
+    $data = $json['data'] ?? [];
+    $childTables = $json['child_tables'] ?? [];
+    $userId = $_SESSION['user_id'] ?? 'system';
     $trigger_sync = false;
 
     if (empty($action) || empty($tableName)) {
@@ -53,14 +56,15 @@ function handleTransaction($json, $pdo, $db) {
 
     try {
         $insertId = $primaryValue;
-        $oldData  = null;
+        $oldData = null;
 
         // Fetch old data for audit if updating or deleting
         if (($action === 'update' || $action === 'delete') && $primaryValue) {
             $stmt = $pdo->prepare("SELECT * FROM $tableName WHERE $primaryKey = ?");
             $stmt->execute([$primaryValue]);
             $oldData = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$oldData) throw new Exception("Record not found for $action");
+            if (!$oldData)
+                throw new Exception("Record not found for $action");
         }
 
         // Check closed fiscal year locks
@@ -87,19 +91,62 @@ function handleTransaction($json, $pdo, $db) {
         switch ($action) {
 
             case 'save':
+                // Location validations on save
+                if ($tableName === 'locations') {
+                    $loc_name = trim($data['name'] ?? '');
+                    $loc_type = trim($data['type'] ?? '');
+                    if (empty($loc_name))
+                        throw new Exception("Location Name is required.");
+                    if (empty($loc_type))
+                        throw new Exception("Location Type is required.");
+
+                    $stmt_loc = $pdo->prepare("SELECT COUNT(*) as count FROM locations WHERE LOWER(TRIM(name)) = LOWER(?) AND is_deleted = 0");
+                    $stmt_loc->execute([$loc_name]);
+                    if ((int) $stmt_loc->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                        throw new Exception("A location with the name '" . htmlspecialchars($loc_name) . "' already exists.");
+                    }
+                }
+
+                // Account validations on save
+                if ($tableName === 'accounts') {
+                    $acc_name = trim($data['account_name'] ?? '');
+                    $acc_type_id = $data['account_type_id'] ?? null;
+                    if (empty($acc_name))
+                        throw new Exception("Account Name is required.");
+                    if (empty($acc_type_id))
+                        throw new Exception("Account Type is required.");
+
+                    $atm_stmt = $pdo->prepare("SELECT * FROM AccountTypeMaster WHERE AccountTypeId = ?");
+                    $atm_stmt->execute([$acc_type_id]);
+                    $atm_row = $atm_stmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$atm_row) {
+                        throw new Exception("Selected Account Type is invalid.");
+                    }
+                    $data['account_subtype'] = $atm_row['AccountTypeName'];
+                    $data['account_type'] = strtolower($atm_row['Category']);
+                    $data['normal_balance'] = strtolower($atm_row['NormalBalance']);
+
+                    $stmt_name = $pdo->prepare("SELECT COUNT(*) as count FROM accounts WHERE LOWER(TRIM(account_name)) = LOWER(?) AND is_deleted = 0");
+                    $stmt_name->execute([$acc_name]);
+                    if ((int) $stmt_name->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                        throw new Exception("An account with the name '" . htmlspecialchars($acc_name) . "' already exists.");
+                    }
+                    unset($data['account_code']);
+                }
+
                 if (empty($data['id'])) {
                     $data['id'] = generate_uuid();
                 }
 
                 // Auto-generate missing master record codes
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
-                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code', 'accounts' => 'account_code'];
-                
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
+                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code'];
+
                 if (isset($refTypes[$tableName]) && empty($data[$codeFields[$tableName]])) {
                     $data[$codeFields[$tableName]] = getNextTransactionNumber($refTypes[$tableName]);
                 }
-                $keys         = array_keys($data);
-                $columns      = implode(', ', $keys);
+                $keys = array_keys($data);
+                $columns = implode(', ', $keys);
                 $placeholders = implode(', ', array_fill(0, count($keys), '?'));
 
                 $stmt = $pdo->prepare("INSERT INTO $tableName ($columns) VALUES ($placeholders)");
@@ -111,18 +158,62 @@ function handleTransaction($json, $pdo, $db) {
                 }
 
                 // Increment auto-numbering for master records
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
                 if (isset($refTypes[$tableName]) && isset($data[$codeFields[$tableName]])) {
                     incrementTransactionNumber($refTypes[$tableName]);
                 }
                 break;
 
             case 'update':
-                if (!$primaryValue) throw new Exception("Primary Value required for update");
+                if (!$primaryValue)
+                    throw new Exception("Primary Value required for update");
 
-                $sets   = [];
+                // Location validations on update
+                if ($tableName === 'locations') {
+                    $loc_name = trim($data['name'] ?? ($oldData['name'] ?? ''));
+                    $loc_type = trim($data['type'] ?? ($oldData['type'] ?? ''));
+                    if (empty($loc_name))
+                        throw new Exception("Location Name is required.");
+                    if (empty($loc_type))
+                        throw new Exception("Location Type is required.");
+
+                    $stmt_loc = $pdo->prepare("SELECT COUNT(*) as count FROM locations WHERE LOWER(TRIM(name)) = LOWER(?) AND id != ? AND is_deleted = 0");
+                    $stmt_loc->execute([$loc_name, $primaryValue]);
+                    if ((int) $stmt_loc->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                        throw new Exception("A location with the name '" . htmlspecialchars($loc_name) . "' already exists.");
+                    }
+                }
+
+                // Account validations on update
+                if ($tableName === 'accounts') {
+                    $acc_name = trim($data['account_name'] ?? ($oldData['account_name'] ?? ''));
+                    $acc_type_id = $data['account_type_id'] ?? ($oldData['account_type_id'] ?? null);
+                    if (empty($acc_name))
+                        throw new Exception("Account Name is required.");
+                    if (empty($acc_type_id))
+                        throw new Exception("Account Type is required.");
+
+                    $atm_stmt = $pdo->prepare("SELECT * FROM AccountTypeMaster WHERE AccountTypeId = ?");
+                    $atm_stmt->execute([$acc_type_id]);
+                    $atm_row = $atm_stmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$atm_row) {
+                        throw new Exception("Selected Account Type is invalid.");
+                    }
+                    $data['account_subtype'] = $atm_row['AccountTypeName'];
+                    $data['account_type'] = strtolower($atm_row['Category']);
+                    $data['normal_balance'] = strtolower($atm_row['NormalBalance']);
+
+                    $stmt_name = $pdo->prepare("SELECT COUNT(*) as count FROM accounts WHERE LOWER(TRIM(account_name)) = LOWER(?) AND id != ? AND is_deleted = 0");
+                    $stmt_name->execute([$acc_name, $primaryValue]);
+                    if ((int) $stmt_name->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                        throw new Exception("An account with the name '" . htmlspecialchars($acc_name) . "' already exists.");
+                    }
+                    unset($data['account_code']);
+                }
+
+                $sets = [];
                 $values = [];
-                
+
                 // Auto-generate missing master codes on update if empty
                 $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account'];
                 $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code', 'accounts' => 'account_code'];
@@ -135,7 +226,7 @@ function handleTransaction($json, $pdo, $db) {
                 }
 
                 foreach ($data as $key => $val) {
-                    $sets[]   = "$key = ?";
+                    $sets[] = "$key = ?";
                     $values[] = $val;
                 }
                 $values[] = $primaryValue;
@@ -146,13 +237,18 @@ function handleTransaction($json, $pdo, $db) {
                 // Call sp_sync_gl_accounts if account is changed on master records
                 $account_changed = false;
                 if ($tableName === 'items') {
-                    if (isset($data['cogs_account_id']) && $data['cogs_account_id'] != ($oldData['cogs_account_id'] ?? null)) $account_changed = true;
-                    if (isset($data['income_account_id']) && $data['income_account_id'] != ($oldData['income_account_id'] ?? null)) $account_changed = true;
-                    if (isset($data['inventory_account_id']) && $data['inventory_account_id'] != ($oldData['inventory_account_id'] ?? null)) $account_changed = true;
+                    if (isset($data['cogs_account_id']) && $data['cogs_account_id'] != ($oldData['cogs_account_id'] ?? null))
+                        $account_changed = true;
+                    if (isset($data['income_account_id']) && $data['income_account_id'] != ($oldData['income_account_id'] ?? null))
+                        $account_changed = true;
+                    if (isset($data['inventory_account_id']) && $data['inventory_account_id'] != ($oldData['inventory_account_id'] ?? null))
+                        $account_changed = true;
                 } else if ($tableName === 'customers') {
-                    if (isset($data['receivable_account_id']) && $data['receivable_account_id'] != ($oldData['receivable_account_id'] ?? null)) $account_changed = true;
+                    if (isset($data['receivable_account_id']) && $data['receivable_account_id'] != ($oldData['receivable_account_id'] ?? null))
+                        $account_changed = true;
                 } else if ($tableName === 'vendors') {
-                    if (isset($data['payable_account_id']) && $data['payable_account_id'] != ($oldData['payable_account_id'] ?? null)) $account_changed = true;
+                    if (isset($data['payable_account_id']) && $data['payable_account_id'] != ($oldData['payable_account_id'] ?? null))
+                        $account_changed = true;
                 }
 
                 if ($account_changed) {
@@ -160,7 +256,7 @@ function handleTransaction($json, $pdo, $db) {
                 }
 
                 foreach ($childTables as $child) {
-                    $fk     = $child['foreign_key'];
+                    $fk = $child['foreign_key'];
                     $ctable = $child['table'];
                     $pdo->prepare("DELETE FROM $ctable WHERE $fk = ?")->execute([$primaryValue]);
                     saveChildRows($child, $primaryValue, $pdo);
@@ -168,21 +264,22 @@ function handleTransaction($json, $pdo, $db) {
                 break;
 
             case 'delete':
-                if (!$primaryValue) throw new Exception("Primary Value required for delete");
+                if (!$primaryValue)
+                    throw new Exception("Primary Value required for delete");
                 $sync_date_to_run = null;
 
                 // If deleting a transaction payment, reverse the applied balances on invoices/bills
                 if ($tableName === 'transaction_headers') {
                     $txn_type = $oldData['txn_type'] ?? '';
-                    
+
                     // Check if payment is linked to this customer invoice before deleting
                     if ($txn_type === 'customer_invoice') {
                         $inv_data = $db->fetchOne("SELECT amount_paid FROM customer_invoices WHERE header_id = ?", [$primaryValue]);
-                        $amount_paid = (float)($inv_data['amount_paid'] ?? 0);
-                        
+                        $amount_paid = (float) ($inv_data['amount_paid'] ?? 0);
+
                         $pay_count = $db->fetchOne("SELECT COUNT(*) as count FROM payments WHERE applied_to_txn_id = ?", [$primaryValue])['count'] ?? 0;
                         $link_count = $db->fetchOne("SELECT COUNT(*) as count FROM transaction_links WHERE child_id = ? AND link_type LIKE 'payment%'", [$primaryValue])['count'] ?? 0;
-                        
+
                         if ($amount_paid > 0.01 || $pay_count > 0 || $link_count > 0) {
                             throw new Exception("Cannot delete invoice because a payment is linked to it. Please void the payment first.");
                         }
@@ -191,11 +288,11 @@ function handleTransaction($json, $pdo, $db) {
                     // Check if payment is linked to this vendor bill before deleting
                     if ($txn_type === 'vendor_bill') {
                         $bill_data = $db->fetchOne("SELECT amount_paid FROM vendor_bills WHERE header_id = ?", [$primaryValue]);
-                        $amount_paid = (float)($bill_data['amount_paid'] ?? 0);
-                        
+                        $amount_paid = (float) ($bill_data['amount_paid'] ?? 0);
+
                         $pay_count = $db->fetchOne("SELECT COUNT(*) as count FROM payments WHERE applied_to_txn_id = ?", [$primaryValue])['count'] ?? 0;
                         $link_count = $db->fetchOne("SELECT COUNT(*) as count FROM transaction_links WHERE child_id = ? AND link_type LIKE 'payment%'", [$primaryValue])['count'] ?? 0;
-                        
+
                         if ($amount_paid > 0.01 || $pay_count > 0 || $link_count > 0) {
                             throw new Exception("Cannot delete vendor bill because a payment is linked to it. Please void the payment first.");
                         }
@@ -205,10 +302,16 @@ function handleTransaction($json, $pdo, $db) {
                         // Collect all document IDs linked to this payment before deleting
                         $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$primaryValue]);
                         $old_pay_links = $db->fetchAll("SELECT applied_to_txn_id FROM payments WHERE header_id = ? AND applied_to_txn_id IS NOT NULL", [$primaryValue]);
-                        
+
                         $affected_doc_ids = [];
-                        foreach ($old_links as $l) { if (!empty($l['applied_to_id'])) $affected_doc_ids[] = $l['applied_to_id']; }
-                        foreach ($old_pay_links as $pl) { if (!empty($pl['applied_to_txn_id'])) $affected_doc_ids[] = $pl['applied_to_txn_id']; }
+                        foreach ($old_links as $l) {
+                            if (!empty($l['applied_to_id']))
+                                $affected_doc_ids[] = $l['applied_to_id'];
+                        }
+                        foreach ($old_pay_links as $pl) {
+                            if (!empty($pl['applied_to_txn_id']))
+                                $affected_doc_ids[] = $pl['applied_to_txn_id'];
+                        }
                         $affected_doc_ids = array_unique($affected_doc_ids);
 
                         // Delete associated payments, links, and journal entries
@@ -231,7 +334,7 @@ function handleTransaction($json, $pdo, $db) {
                     // Rename the txn_number so the original name is freed up for a new transaction
                     $old_txn_number = $oldData['txn_number'];
                     $new_txn_number = $old_txn_number . '-DEL-' . substr(md5(uniqid(rand(), true)), 0, 8);
-                    
+
                     $pdo->prepare("UPDATE transaction_headers SET txn_number = ? WHERE id = ?")->execute([$new_txn_number, $primaryValue]);
                     $pdo->prepare("UPDATE customer_invoices SET invoice_number = ? WHERE header_id = ?")->execute([$new_txn_number, $primaryValue]);
                     $pdo->prepare("UPDATE vendor_bills SET vendor_invoice_number = ? WHERE header_id = ?")->execute([$new_txn_number, $primaryValue]);
@@ -242,6 +345,94 @@ function handleTransaction($json, $pdo, $db) {
                     }
                 }
 
+                // Check if deleting an item that has linked transactions
+                if ($tableName === 'items') {
+                    $stmt_lines = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM transaction_lines l
+                        JOIN transaction_headers h ON l.header_id = h.id
+                        WHERE l.item_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided')
+                        ORDER BY h.txn_date DESC
+                    ");
+                    $stmt_lines->execute([$primaryValue]);
+                    $linked_txns = $stmt_lines->fetchAll(PDO::FETCH_ASSOC);
+
+                    $stmt_pos = $pdo->prepare("
+                        SELECT pe.invoice_no as txn_number, 'POS Sale' as txn_type, DATE(pe.date_time) as txn_date
+                        FROM pos_items pi
+                        JOIN pos_entry pe ON pi.pos_id = pe.id
+                        WHERE pi.item_id = ? AND pe.is_deleted = 0
+                        ORDER BY pe.date_time DESC
+                    ");
+                    $stmt_pos->execute([$primaryValue]);
+                    $linked_pos = $stmt_pos->fetchAll(PDO::FETCH_ASSOC);
+
+                    $all_linked = array_merge($linked_txns, $linked_pos);
+                    if (!empty($all_linked)) {
+                        $total_count = count($all_linked);
+                        $sample_items = array_slice($all_linked, 0, 5);
+                        $formatted_list = [];
+                        foreach ($sample_items as $st) {
+                            $type_name = ucfirst(str_replace('_', ' ', $st['txn_type']));
+                            $formatted_list[] = "{$type_name} #{$st['txn_number']} ({$st['txn_date']})";
+                        }
+                        $txn_summary = implode(', ', $formatted_list);
+                        if ($total_count > 5) {
+                            $txn_summary .= " and " . ($total_count - 5) . " more";
+                        }
+                        throw new Exception("Cannot delete item. This item has {$total_count} associated transaction(s): {$txn_summary}. Please void or delete these transactions first.");
+                    }
+                }
+
+                // Check if deleting an account that is system core or has linked records
+                if ($tableName === 'accounts') {
+                    $acc_code = $oldData['account_code'] ?? '';
+                    $acc_name = $oldData['account_name'] ?? '';
+                    $is_sys = (int) ($oldData['is_system_account'] ?? 0);
+                    $core_codes = ['1010', '1020', '1200', '2100', '4100', '5100', '3100'];
+
+                    if ($is_sys || in_array($acc_code, $core_codes)) {
+                        throw new Exception("System Core Account '{$acc_code} - {$acc_name}' is protected and cannot be deleted.");
+                    }
+
+                    $stmt_je = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM journal_entries j
+                        JOIN transaction_headers h ON j.header_id = h.id
+                        WHERE j.account_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided')
+                        ORDER BY h.txn_date DESC
+                    ");
+                    $stmt_je->execute([$primaryValue]);
+                    $linked_jes = $stmt_je->fetchAll(PDO::FETCH_ASSOC);
+
+                    $stmt_items = $pdo->prepare("
+                        SELECT sku, item_name FROM items
+                        WHERE (inventory_account_id = ? OR cogs_account_id = ? OR income_account_id = ?) AND is_deleted = 0
+                    ");
+                    $stmt_items->execute([$primaryValue, $primaryValue, $primaryValue]);
+                    $linked_items = $stmt_items->fetchAll(PDO::FETCH_ASSOC);
+
+                    if (!empty($linked_jes) || !empty($linked_items)) {
+                        $total_count = count($linked_jes) + count($linked_items);
+                        $formatted_list = [];
+
+                        foreach (array_slice($linked_jes, 0, 3) as $st) {
+                            $type_name = ucfirst(str_replace('_', ' ', $st['txn_type']));
+                            $formatted_list[] = "{$type_name} #{$st['txn_number']} ({$st['txn_date']})";
+                        }
+                        foreach (array_slice($linked_items, 0, 3) as $it) {
+                            $formatted_list[] = "Item {$it['item_name']} ({$it['sku']})";
+                        }
+
+                        $summary = implode(', ', $formatted_list);
+                        if ($total_count > count($formatted_list)) {
+                            $summary .= " and " . ($total_count - count($formatted_list)) . " more";
+                        }
+
+                        throw new Exception("Cannot delete account '{$acc_name}'. This account has {$total_count} associated transaction/master record(s): {$summary}. Please reassign or void associated records first.");
+                    }
+                }
+
                 // If deleting a standalone pos_entry record, rename its invoice_no to free up unique constraint
                 if ($tableName === 'pos_entry') {
                     $old_invoice_no = $oldData['invoice_no'] ?? '';
@@ -249,7 +440,7 @@ function handleTransaction($json, $pdo, $db) {
                         $new_invoice_no = $old_invoice_no . '-DEL-' . substr(md5(uniqid(rand(), true)), 0, 8);
                         $pdo->prepare("UPDATE pos_entry SET invoice_no = ? WHERE id = ?")->execute([$new_invoice_no, $primaryValue]);
                     }
-                    
+
                     // Revert stock of the deleted POS items
                     $stmt = $pdo->prepare("SELECT item_id, quantity FROM pos_items WHERE pos_id = ?");
                     $stmt->execute([$primaryValue]);
@@ -257,7 +448,7 @@ function handleTransaction($json, $pdo, $db) {
                     foreach ($old_items as $oi) {
                         $pdo->prepare("UPDATE items SET current_stock = current_stock + ? WHERE id = ?")->execute([$oi['quantity'], $oi['item_id']]);
                     }
-                    
+
                     // Set date to run daily summary sync
                     $sync_date_to_run = date('Y-m-d', strtotime($oldData['date_time']));
                 }
@@ -282,6 +473,7 @@ function handleTransaction($json, $pdo, $db) {
         logAudit($tableName, $action, $oldData, $data, $insertId, $userId, $pdo);
 
         $pdo->commit();
+        clear_dashboard_cache();
 
         if (isset($sync_date_to_run) && $sync_date_to_run) {
             sync_daily_pos_summary($sync_date_to_run);
@@ -292,19 +484,21 @@ function handleTransaction($json, $pdo, $db) {
         }
 
         $messages = [
-            'save'   => 'Record has been saved successfully.',
+            'save' => 'Record has been saved successfully.',
             'update' => 'Record has been updated successfully.',
             'delete' => 'Record has been deleted successfully.',
         ];
 
         return [
-            'status'  => 'success',
+            'status' => 'success',
             'message' => $messages[$action] ?? 'Operation completed successfully.',
-            'id'      => $insertId
+            'id' => $insertId
         ];
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         throw $e;
     }
 }
@@ -312,17 +506,19 @@ function handleTransaction($json, $pdo, $db) {
 /**
  * Helper to save child rows
  */
-function saveChildRows($child, $parentId, $pdo) {
+function saveChildRows($child, $parentId, $pdo)
+{
     $cTable = $child['table'];
-    $fk     = $child['foreign_key'];
-    $rows   = $child['rows'] ?? [];
+    $fk = $child['foreign_key'];
+    $rows = $child['rows'] ?? [];
 
     foreach ($rows as $row) {
         $row[$fk] = $parentId;
-        if (!isset($row['id'])) $row['id'] = generate_uuid();
+        if (!isset($row['id']))
+            $row['id'] = generate_uuid();
 
-        $keys         = array_keys($row);
-        $columns      = implode(', ', $keys);
+        $keys = array_keys($row);
+        $columns = implode(', ', $keys);
         $placeholders = implode(', ', array_fill(0, count($keys), '?'));
 
         $pdo->prepare("INSERT INTO $cTable ($columns) VALUES ($placeholders)")
@@ -333,8 +529,10 @@ function saveChildRows($child, $parentId, $pdo) {
 /**
  * Audit Logger
  */
-function logAudit($table, $action, $old, $new, $refId, $userId, $pdo) {
-    if ($action === 'save') $action = 'create';
+function logAudit($table, $action, $old, $new, $refId, $userId, $pdo)
+{
+    if ($action === 'save')
+        $action = 'create';
     $pdo->prepare(
         "INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES (?, ?, ?, ?, ?, ?)"
     )->execute([$table, $action, $refId, json_encode($old), json_encode($new), $userId]);
@@ -343,7 +541,8 @@ function logAudit($table, $action, $old, $new, $refId, $userId, $pdo) {
 /**
  * Triggers sp_sync_gl_accounts runner asynchronously in background
  */
-function trigger_background_sync() {
+function trigger_background_sync()
+{
     $php_path = 'C:\\xampp\\php\\php.exe';
     if (defined('PHP_BINARY') && !empty(PHP_BINARY) && strpos(PHP_BINARY, 'php') !== false) {
         $php_path = PHP_BINARY;

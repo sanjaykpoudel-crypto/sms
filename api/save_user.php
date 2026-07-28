@@ -10,9 +10,10 @@ $fullName = trim($_POST['full_name'] ?? '');
 $username = trim($_POST['username'] ?? '');
 $email    = trim($_POST['email'] ?? '');
 $password = $_POST['password'] ?? '';
-$role     = trim($_POST['role'] ?? 'cashier');
-$isActive = isset($_POST['is_active']) ? 1 : 0;
-$userId   = $_SESSION['user_id'] ?? null;
+$role       = trim($_POST['role'] ?? 'cashier');
+$locationId = !empty($_POST['location_id']) ? trim($_POST['location_id']) : null;
+$isActive   = isset($_POST['is_inactive']) ? 0 : (isset($_POST['is_active']) ? (int)$_POST['is_active'] : 1);
+$userId     = $_SESSION['user_id'] ?? null;
 
 // Basic validation
 if (empty($fullName) || empty($username) || empty($email)) {
@@ -39,12 +40,12 @@ try {
 
         if (!empty($password)) {
             // Update with new password
-            $pdo->prepare("UPDATE users SET full_name=?, username=?, email=?, role=?, is_active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
-                ->execute([$fullName, $username, $email, $role, $isActive, password_hash($password, PASSWORD_DEFAULT), $id]);
+            $pdo->prepare("UPDATE users SET full_name=?, username=?, email=?, role=?, location_id=?, is_active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+                ->execute([$fullName, $username, $email, $role, $locationId, $isActive, password_hash($password, PASSWORD_DEFAULT), $id]);
         } else {
             // Keep existing password
-            $pdo->prepare("UPDATE users SET full_name=?, username=?, email=?, role=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
-                ->execute([$fullName, $username, $email, $role, $isActive, $id]);
+            $pdo->prepare("UPDATE users SET full_name=?, username=?, email=?, role=?, location_id=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+                ->execute([$fullName, $username, $email, $role, $locationId, $isActive, $id]);
         }
 
         // Audit log
@@ -71,8 +72,8 @@ try {
             mt_rand(0,0xffff), mt_rand(0,0xffff), mt_rand(0,0xffff)
         );
 
-        $pdo->prepare("INSERT INTO users (id, full_name, username, email, password_hash, role, is_active) VALUES (?,?,?,?,?,?,?)")
-            ->execute([$newId, $fullName, $username, $email, password_hash($password, PASSWORD_DEFAULT), $role, $isActive]);
+        $pdo->prepare("INSERT INTO users (id, full_name, username, email, password_hash, role, location_id, is_active) VALUES (?,?,?,?,?,?,?,?)")
+            ->execute([$newId, $fullName, $username, $email, password_hash($password, PASSWORD_DEFAULT), $role, $locationId, $isActive]);
 
         $newData = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$newId]);
         $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES (?,?,?,?,?,?)")
@@ -94,7 +95,9 @@ try {
     exit;
 
 } catch (Exception $e) {
-    $pdo->rollBack();
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     $_SESSION['error'] = $e->getMessage();
     header("Location: ../index.php?page=system/users/manage" . ($id ? "&id=$id" : ''));
     exit;

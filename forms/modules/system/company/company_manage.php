@@ -122,6 +122,35 @@ $logo_src  = ($logo_abs && file_exists($logo_abs)) ? ($logo_db . '?v=' . time())
                             </select>
                         </div>
                     </div>
+
+                    <div class="ns-section-title" style="margin-top:16px;">Payment QR Code (Invoice Print)</div>
+                    <div class="ns-form-row">
+                        <div class="ns-form-group">
+                            <label class="ns-label">Show Payment QR Code on Printed Invoice</label>
+                            <select name="payment_qr_show" class="ns-input">
+                                <option value="1" <?php echo ($sys['payment_qr_show'] ?? '1') === '1' ? 'selected' : ''; ?>>Yes — Show QR Code</option>
+                                <option value="0" <?php echo ($sys['payment_qr_show'] ?? '') === '0' ? 'selected' : ''; ?>>No — Hide QR Code</option>
+                            </select>
+                        </div>
+                        <div class="ns-form-group">
+                            <label class="ns-label">QR Box Heading / Label</label>
+                            <input type="text" name="payment_qr_title" class="ns-input" value="<?php echo htmlspecialchars($sys['payment_qr_title'] ?? 'SCAN TO PAY VIA QR'); ?>" placeholder="e.g. SCAN TO PAY VIA QR / FONEPAY">
+                        </div>
+                    </div>
+                    <div class="ns-form-row">
+                        <div class="ns-form-group" style="flex: 2;">
+                            <label class="ns-label">Custom Dynamic QR String / UPI Payload / Account Info</label>
+                            <input type="text" name="payment_qr_text" class="ns-input" value="<?php echo htmlspecialchars($sys['payment_qr_text'] ?? ''); ?>" placeholder="e.g. eSewa/Fonepay: 9801987220 or upi://pay?pa=merchant@bank">
+                            <span style="font-size:11px; color:#64748b; margin-top:2px; display:block;">If static QR image is not uploaded, this string will be converted into a dynamic QR code.</span>
+                        </div>
+                        <div class="ns-form-group" style="flex: 1;">
+                            <label class="ns-label">Static QR Image File</label>
+                            <input type="file" name="payment_qr_image" accept="image/*" class="ns-input">
+                            <?php if (!empty($sys['payment_qr_image']) && file_exists($sms_root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $sys['payment_qr_image']))): ?>
+                                <span style="font-size:11px; color:#10b981; margin-top:2px; display:block;"><i class="fas fa-check"></i> Custom QR Uploaded</span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
                 </div>
             </div>
 

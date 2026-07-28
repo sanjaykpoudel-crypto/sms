@@ -21,13 +21,14 @@ if ($id) {
         'discount_amount' => 0,
         'status' => 'open',
         'ref_number' => '',
-        'memo' => ''
+        'memo' => '',
+        'location_id' => get_accounting_preference('default_location_id') ?: ''
     ];
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
 $all_vendors = $db->fetchAll("SELECT id, company_name, phone, email, pan_number, vat_number FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
-$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-file-invoice" style="margin-right: 10px; color: var(--ns-accent);"></i>
@@ -35,7 +36,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
     <div class="ns-page-actions">
         <button type="submit" form="bill-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
         <?php if ($id): ?>
-            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/bill')"><i class="fas fa-trash-alt"></i> Delete</button>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
+                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/bill')"><i
+                    class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
         <a href="?page=transactions/bill" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
@@ -47,25 +50,30 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         <input type="hidden" name="txn_type" value="vendor_bill">
 
         <div class="ns-section-title">Primary Information</div>
-        <div id="vendor-info-box" style="display: none; margin-bottom: 16px; padding: 10px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid var(--ns-accent); border-radius: 6px; font-size: 13px; color: #334155;">
+        <div id="vendor-info-box"
+            style="display: none; margin-bottom: 16px; padding: 10px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid var(--ns-accent); border-radius: 6px; font-size: 13px; color: #334155;">
             <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
                 <span style="font-weight: 700; color: var(--ns-primary); font-size: 13px;">
-                    <i class="fas fa-building" style="margin-right: 6px; color: var(--ns-accent);"></i><span id="vendor-name-display">-</span>
+                    <i class="fas fa-building" style="margin-right: 6px; color: var(--ns-accent);"></i><span
+                        id="vendor-name-display">-</span>
                 </span>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <i class="fas fa-phone-alt" style="color: #0284c7;"></i>
                     <span style="color: #64748b;">Phone:</span>
-                    <a id="vendor-phone-link" href="#" style="color: #0369a1; text-decoration: none; font-weight: 600;">-</a>
+                    <a id="vendor-phone-link" href="#"
+                        style="color: #0369a1; text-decoration: none; font-weight: 600;">-</a>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <i class="fas fa-envelope" style="color: #16a34a;"></i>
                     <span style="color: #64748b;">Email:</span>
-                    <a id="vendor-email-link" href="#" style="color: #15803d; text-decoration: none; font-weight: 600;">-</a>
+                    <a id="vendor-email-link" href="#"
+                        style="color: #15803d; text-decoration: none; font-weight: 600;">-</a>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <i class="fas fa-file-invoice" style="color: #d97706;"></i>
                     <span style="color: #64748b;">VAT/PAN #:</span>
-                    <span id="vendor-vat" style="font-weight: 700; background: #ffffff; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1; color: #1e293b;">-</span>
+                    <span id="vendor-vat"
+                        style="font-weight: 700; background: #ffffff; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1; color: #1e293b;">-</span>
                 </div>
             </div>
         </div>
@@ -75,14 +83,13 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                     <label class="ns-label">Vendor <span class="ns-required">*</span></label>
                     <select name="party_id" class="ns-select" onchange="updateVendorInfo(this)" required>
                         <option value="">Select Vendor</option>
-                        <?php foreach($all_vendors as $v): 
+                        <?php foreach ($all_vendors as $v):
                             $vVat = !empty($v['vat_number']) ? $v['vat_number'] : ($v['pan_number'] ?? '');
-                        ?>
-                            <option value="<?php echo $v['id']; ?>" 
-                                    data-phone="<?php echo htmlspecialchars($v['phone'] ?? ''); ?>" 
-                                    data-email="<?php echo htmlspecialchars($v['email'] ?? ''); ?>" 
-                                    data-vat="<?php echo htmlspecialchars($vVat); ?>" 
-                                    <?php echo ($data['party_id'] ?? '') == $v['id'] ? 'selected' : ''; ?>>
+                            ?>
+                            <option value="<?php echo $v['id']; ?>"
+                                data-phone="<?php echo htmlspecialchars($v['phone'] ?? ''); ?>"
+                                data-email="<?php echo htmlspecialchars($v['email'] ?? ''); ?>"
+                                data-vat="<?php echo htmlspecialchars($vVat); ?>" <?php echo ($data['party_id'] ?? '') == $v['id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($v['company_name']); ?>
                             </option>
                         <?php endforeach; ?>
@@ -90,7 +97,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Bill #</label>
-                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number'] ?? ''; ?>" readonly style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
+                    <input type="text" name="txn_number" class="ns-input"
+                        value="<?php echo $data['txn_number'] ?? ''; ?>" readonly
+                        style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Reference #</label>
@@ -109,6 +118,20 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                     <input type="date" name="due_date" class="ns-input" value="<?php echo $data['due_date'] ?? ''; ?>">
                 </div>
                 <div class="ns-form-group">
+                    <label class="ns-label">Location</label>
+                    <select name="location_id" class="ns-select">
+                        <option value="">-- Select Location --</option>
+                        <?php 
+                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+                        foreach (get_active_locations() as $loc): 
+                        ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="ns-form-group">
                     <label class="ns-label">Memo</label>
                     <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>"
                         placeholder="Notes about this bill...">
@@ -116,13 +139,35 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                 <div class="ns-form-group">
                     <label class="ns-label">Status</label>
                     <select name="status" class="ns-select" <?php echo $id ? 'disabled' : ''; ?>>
-                        <option value="open" <?php echo ($data['status'] ?? '') == 'open' ? 'selected' : ''; ?>>Open</option>
-                        <option value="paid" <?php echo ($data['status'] ?? '') == 'paid' ? 'selected' : ''; ?>>Paid in Full</option>
-                        <option value="partial" <?php echo ($data['status'] ?? '') == 'partial' ? 'selected' : ''; ?>>Partially Paid</option>
-                        <option value="voided" <?php echo ($data['status'] ?? '') == 'voided' ? 'selected' : ''; ?>>Voided</option>
+                        <?php
+                        $status_options = get_payment_status_list();
+                        $curr_status = strtolower($data['status'] ?? 'open');
+                        $rendered_keys = [];
+                        foreach ($status_options as $st):
+                            $st_name = $st['name'];
+                            $st_val = strtolower($st['code'] ?: $st_name);
+                            $rendered_keys[$st_val] = true;
+                            $sel = ($curr_status === $st_val || $curr_status === strtolower($st_name)) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo htmlspecialchars($st_val); ?>" <?php echo $sel; ?>><?php echo htmlspecialchars($st_name); ?></option>
+                        <?php endforeach; ?>
+                        <?php
+                        $default_txn_statuses = [
+                            'open' => 'Open',
+                            'paid' => 'Paid in Full',
+                            'partial' => 'Partially Paid',
+                            'voided' => 'Voided'
+                        ];
+                        foreach ($default_txn_statuses as $dk => $dv):
+                            if (!isset($rendered_keys[$dk])):
+                                $sel = ($curr_status === $dk) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo $dk; ?>" <?php echo $sel; ?>><?php echo $dv; ?></option>
+                        <?php endif; endforeach; ?>
                     </select>
-                    <?php if($id): ?>
-                    <input type="hidden" name="status" value="<?php echo htmlspecialchars($data['status'] ?? 'open'); ?>">
+                    <?php if ($id): ?>
+                        <input type="hidden" name="status"
+                            value="<?php echo htmlspecialchars($data['status'] ?? 'open'); ?>">
                     <?php endif; ?>
                 </div>
             </div>
@@ -152,9 +197,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                     $rows = empty($txn_items) ? [null] : $txn_items;
                     foreach ($rows as $idx => $ti):
                         $isNew = ($ti === null);
-                        $qty = $isNew ? 1 : (int)$ti['quantity'];
-                        $rate = $isNew ? '0.00' : number_format((float)$ti['unit_price'], 2, '.', '');
-                        $amount = $isNew ? '0.00' : number_format((float)($ti['line_total'] - $ti['tax_amount']), 2, '.', '');
+                        $qty = $isNew ? 1 : (int) $ti['quantity'];
+                        $rate = $isNew ? '0.00' : number_format((float) $ti['unit_price'], 2, '.', '');
+                        $amount = $isNew ? '0.00' : number_format((float) ($ti['line_total'] - $ti['tax_amount']), 2, '.', '');
                         $taxPct = $isNew ? 0 : $ti['tax_rate'];
                         $taxAmt = $isNew ? '0.00' : $ti['tax_amount'];
                         $grossAmt = $isNew ? '0.00' : $ti['line_total'];
@@ -171,20 +216,42 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                                     <?php endforeach; ?>
                                 </select>
                             </td>
-                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="" readonly></td>
-                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num" value="<?php echo $qty; ?>" min="0" step="1" onfocus="this.select()" oninput="billCalcFromRate(this)" onblur="this.value = Math.round(parseFloat(this.value || 0)); billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
-                            <td><input type="text" class="ns-input new-stock-input ns-input-num" style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);" value="" readonly tabindex="-1"></td>
-                            <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
-                            <td><input type="number" name="rate[]" class="ns-input rate-input ns-input-num" value="<?php echo $rate; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)" onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromRate(this)" onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value=""
+                                    readonly></td>
+                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num"
+                                    value="<?php echo $qty; ?>" min="0" step="1" onfocus="this.select()"
+                                    oninput="billCalcFromRate(this)"
+                                    onblur="this.value = Math.round(parseFloat(this.value || 0)); billCalcFromRate(this)"
+                                    onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="text" class="ns-input new-stock-input ns-input-num"
+                                    style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);" value=""
+                                    readonly tabindex="-1"></td>
+                            <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;"
+                                    value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
+                            <td><input type="number" name="rate[]" class="ns-input rate-input ns-input-num"
+                                    value="<?php echo $rate; ?>" min="0" step="any" onfocus="this.select()"
+                                    oninput="billCalcFromRate(this)"
+                                    onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromRate(this)"
+                                    onkeydown="billCheckEnter(event)" required></td>
                             <td><input type="number" name="amount[]"
                                     class="ns-input amount-input ns-input-num ns-input-subtotal"
                                     value="<?php echo $amount; ?>" min="0" step="any" onfocus="this.select()"
-                                    oninput="billCalcFromAmount(this)" onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromAmount(this)" onkeydown="billCheckEnter(event)"></td>
-                            <td><input type="number" name="tax_pct[]" class="ns-input tax-pct-input ns-input-num" value="<?php echo $taxPct; ?>" min="0" step="any" onfocus="this.select()" oninput="billCalcFromRate(this)"></td>
-                            <td><input type="number" name="tax_amt[]" class="ns-input tax-amt-input ns-input-num ns-input-tax" value="<?php echo $taxAmt; ?>" readonly></td>
-                            <td><input type="number" name="gross_amount[]" class="ns-input gross-amount-input ns-input-num ns-input-gross" value="<?php echo $grossAmt; ?>" min="0" step="any" onfocus="this.select()" onblur="billCalcFromGross(this)" onkeydown="billCheckEnter(event)"></td>
+                                    oninput="billCalcFromAmount(this)"
+                                    onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromAmount(this)"
+                                    onkeydown="billCheckEnter(event)"></td>
+                            <td><input type="number" name="tax_pct[]" class="ns-input tax-pct-input ns-input-num"
+                                    value="<?php echo $taxPct; ?>" min="0" step="any" onfocus="this.select()"
+                                    oninput="billCalcFromRate(this)"></td>
+                            <td><input type="number" name="tax_amt[]"
+                                    class="ns-input tax-amt-input ns-input-num ns-input-tax" value="<?php echo $taxAmt; ?>"
+                                    readonly></td>
+                            <td><input type="number" name="gross_amount[]"
+                                    class="ns-input gross-amount-input ns-input-num ns-input-gross"
+                                    value="<?php echo $grossAmt; ?>" min="0" step="any" onfocus="this.select()"
+                                    onblur="billCalcFromGross(this)" onkeydown="billCheckEnter(event)"></td>
                             <td style="text-align: center;">
-                                <span class="ns-line-btn ns-remove-line" onclick="nsRemoveLine(this)" title="Remove Line"><i class="fas fa-trash-alt"></i></span>
+                                <span class="ns-line-btn ns-remove-line" onclick="nsRemoveLine(this)" title="Remove Line"><i
+                                        class="fas fa-trash-alt"></i></span>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -193,8 +260,10 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
         </div>
 
         <div class="ns-grid-actions">
-            <button type="button" class="ns-btn" onclick="nsAddLine('bill-items-table')"><i class="fas fa-plus-circle"></i> Add Line</button>
-            <button type="button" class="ns-btn" onclick="nsClearLines('bill-items-table')" style="color: var(--ns-danger);"><i class="fas fa-eraser"></i> Clear All</button>
+            <button type="button" class="ns-btn" onclick="nsAddLine('bill-items-table')"><i
+                    class="fas fa-plus-circle"></i> Add Line</button>
+            <button type="button" class="ns-btn" onclick="nsClearLines('bill-items-table')"
+                style="color: var(--ns-danger);"><i class="fas fa-eraser"></i> Clear All</button>
         </div>
 
         <div class="ns-total-box">
@@ -208,11 +277,15 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
             </div>
             <div class="ns-total-row">
                 <span>Discount</span>
-                <input type="number" name="discount_amount" class="ns-input" value="<?php echo $data['discount_amount'] ?? 0; ?>" min="0" step="any" style="width: 110px; text-align: right; height: 26px;" oninput="billCalcTotals()">
+                <input type="number" name="discount_amount" class="ns-input"
+                    value="<?php echo $data['discount_amount'] ?? 0; ?>" min="0" step="any"
+                    style="width: 110px; text-align: right; height: 26px;" oninput="billCalcTotals()">
             </div>
-            <div class="ns-total-row" style="border-top: 2px solid var(--ns-primary); margin-top: 8px; padding-top: 8px;">
+            <div class="ns-total-row"
+                style="border-top: 2px solid var(--ns-primary); margin-top: 8px; padding-top: 8px;">
                 <span style="color: var(--ns-primary); font-weight: bold; font-size: 14px;">TOTAL BILL</span>
-                <span id="bill-grand-total" style="font-size: 22px; color: var(--ns-primary); font-weight: bold;">0.00</span>
+                <span id="bill-grand-total"
+                    style="font-size: 22px; color: var(--ns-primary); font-weight: bold;">0.00</span>
             </div>
         </div>
         <div style="clear: both; margin-bottom: 50px;"></div>
@@ -220,10 +293,10 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
 </div>
 
 <script>
-    document.getElementById('bill-form').addEventListener('submit', function(e) {
+    document.getElementById('bill-form').addEventListener('submit', function (e) {
         e.preventDefault();
         const form = this;
-        
+
         // Validation: At least one item, qty > 0
         let hasValidItems = false;
         let validationError = '';
@@ -248,7 +321,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
 
         const submitBtn = document.querySelector('button[form="bill-form"]');
         const originalText = submitBtn.innerHTML;
-        
+
         submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
         submitBtn.disabled = true;
 
@@ -257,24 +330,24 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
             method: 'POST',
             body: formData
         })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'success') {
-                nsNotify(data.message || 'Record has been saved successfully.');
-                setTimeout(() => {
-                    window.location.href = '?page=transactions/view&id=' + data.id;
-                }, 1500);
-            } else {
-                nsNotify(data.message || 'Error occurred while saving.', 'error');
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    nsNotify(data.message || 'Record has been saved successfully.');
+                    setTimeout(() => {
+                        window.location.href = '?page=transactions/view&id=' + data.id;
+                    }, 1500);
+                } else {
+                    nsNotify(data.message || 'Error occurred while saving.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
+            })
+            .catch(err => {
+                nsNotify('Network error or server failed.', 'error');
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
-            }
-        })
-        .catch(err => {
-            nsNotify('Network error or server failed.', 'error');
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        });
+            });
     });
 
     function billCalcFromRate(el) {
@@ -384,7 +457,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                 row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
                 row.querySelector('.rate-input').value = data.cost_price;
                 row.querySelector('.tax-pct-input').value = data.tax_rate || 0;
-                
+
                 billCalcFromRate(row.querySelector('.qty-input'));
             });
     }

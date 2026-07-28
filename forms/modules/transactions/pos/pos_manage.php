@@ -22,7 +22,7 @@ $items = $db->fetchAll("
 ");
 
 // Fetch bank/cash accounts for payment
-$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('bank', 'cash') AND is_active = 1 ORDER BY account_subtype DESC, account_name ASC");
+$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('Bank') AND is_active = 1 ORDER BY account_name ASC");
 
 // Get unique categories (names, not IDs)
 $categories = [];
@@ -155,6 +155,8 @@ $txn_date = date('Y-m-d');
         </div>
 
         <div class="pos-checkout-area">
+            <input type="hidden" id="pos-location-id" name="location_id" value="<?php echo htmlspecialchars(get_user_default_location_id()); ?>">
+
             <div class="pos-summary">
                 <div class="pos-summary-line">
                     <span>Subtotal</span>
@@ -194,6 +196,11 @@ $txn_date = date('Y-m-d');
                 <div id="payment-lines">
                     <!-- Rendered by JS -->
                 </div>
+                <div id="qr-btn-container" style="margin-top: 10px; display: none;">
+                    <button type="button" class="ns-btn" onclick="showPosQrModal()" style="width: 100%; background: #003087; color: #fff; padding: 10px; font-weight: 700; border-radius: 8px; font-size: 13px; cursor: pointer; transition: 0.2s; border: none; box-shadow: 0 2px 4px rgba(0, 48, 135, 0.2);">
+                        <i class="fas fa-qrcode"></i> Generate Payment QR Code
+                    </button>
+                </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
                     <span class="change-label">Change Due</span>
                     <span id="change-due" class="change-value">0.00</span>
@@ -206,6 +213,28 @@ $txn_date = date('Y-m-d');
         </div>
     </div>
 </div>
+
+<!-- POS PAYMENT QR MODAL -->
+<div id="pos-qr-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 99999; align-items: center; justify-content: center;">
+    <div style="background: #fff; border-radius: 16px; width: 380px; max-width: 90%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2); text-align: center; position: relative; animation: modalPop 0.25s ease-out;">
+        <button onclick="closePosQrModal()" style="position: absolute; top: 14px; right: 14px; border: none; background: #f1f5f9; color: #64748b; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;"><i class="fas fa-times"></i></button>
+        <div style="color: #003087; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;" id="pos-qr-company-name">MNS LIQUORS</div>
+        <div style="font-size: 12px; color: #64748b; margin-bottom: 15px;" id="pos-qr-txn-no">Ref: <?php echo $txn_number; ?></div>
+        
+        <div style="background: #f8fafc; border: 2px dashed #003087; border-radius: 12px; padding: 15px; display: inline-block; margin-bottom: 15px; width: 100%; box-sizing: border-box;">
+            <img id="pos-qr-img" src="" alt="Payment QR" style="width: 210px; height: 210px; border-radius: 8px; background: #fff; padding: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: block; margin: 0 auto;">
+            <div style="font-size: 22px; font-weight: 800; color: #16a34a; margin-top: 12px;" id="pos-qr-amount-txt">Rs 0.00</div>
+        </div>
+
+        <div style="font-size: 12px; color: #475569; font-weight: 500; margin-bottom: 18px;">
+            <i class="fas fa-mobile-alt" style="color: #003087; margin-right: 4px;"></i> Scan with eSewa, Fonepay, Mobile Banking or any QR app to pay.
+        </div>
+        <button type="button" class="ns-btn" onclick="closePosQrModal()" style="width: 100%; padding: 12px; background: #003087; color: #fff; font-weight: 700; border-radius: 8px; border: none; cursor: pointer;">Done / Close</button>
+    </div>
+</div>
+<style>
+@keyframes modalPop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+</style>
 
 <script>
 const items = <?php echo json_encode($items); ?>;
@@ -467,6 +496,7 @@ function updatePayAcc(idx, val) {
     // Derive mode from selected account's actual subtype
     const acc = accounts.find(a => a.id === val);
     payments[idx].mode = acc ? (acc.account_subtype || 'cash') : 'cash';
+    calculateChange();
 }
 
 function updatePayAmt(idx, val) {
@@ -477,6 +507,16 @@ function updatePayAmt(idx, val) {
 function removePayLine(idx) {
     payments.splice(idx, 1);
     renderPayments();
+}
+
+function hasNonCashPayment() {
+    return payments.some(p => {
+        const acc = accounts.find(a => a.id === p.account_id);
+        if (!acc) return false;
+        const sub = (acc.account_subtype || '').toLowerCase();
+        const name = (acc.account_name || '').toLowerCase();
+        return sub !== 'cash' || (!name.includes('cash') && (name.includes('bank') || name.includes('qr') || name.includes('esewa') || name.includes('fonepay') || name.includes('online')));
+    });
 }
 
 function calculateChange() {
@@ -490,6 +530,47 @@ function calculateChange() {
     el.classList.toggle('negative', change < -0.01);
     
     document.getElementById('btn-checkout').disabled = (change < -0.01 || cart.length === 0);
+
+    const qrBtnContainer = document.getElementById('qr-btn-container');
+    if (qrBtnContainer) {
+        qrBtnContainer.style.display = hasNonCashPayment() ? 'block' : 'none';
+    }
+}
+
+function showPosQrModal() {
+    const net = parseFloat(document.getElementById('txt-total').innerText.replace('Rs ', '')) || 0;
+    let qrAmount = 0;
+    payments.forEach(p => {
+        const acc = accounts.find(a => a.id === p.account_id);
+        if (acc) {
+            const sub = (acc.account_subtype || '').toLowerCase();
+            const name = (acc.account_name || '').toLowerCase();
+            if (sub !== 'cash' || (!name.includes('cash') && (name.includes('bank') || name.includes('qr') || name.includes('esewa') || name.includes('fonepay')))) {
+                qrAmount += p.amount;
+            }
+        }
+    });
+    if (qrAmount <= 0) qrAmount = net;
+
+    const modal = document.getElementById('pos-qr-modal');
+    document.getElementById('pos-qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=210x210&margin=0&data=Loading...';
+    document.getElementById('pos-qr-amount-txt').innerText = 'Rs ' + qrAmount.toFixed(2);
+    modal.style.display = 'flex';
+
+    fetch(`api/get_qr_code.php?amount=${qrAmount}&txn_no=<?php echo $txn_number; ?>`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success') {
+                document.getElementById('pos-qr-img').src = res.qr_src;
+                document.getElementById('pos-qr-company-name').innerText = res.company_name;
+                document.getElementById('pos-qr-amount-txt').innerText = res.formatted_amount;
+            }
+        })
+        .catch(err => console.error('Error fetching QR code:', err));
+}
+
+function closePosQrModal() {
+    document.getElementById('pos-qr-modal').style.display = 'none';
 }
 
 function completeSale() {
@@ -543,7 +624,22 @@ function completeSale() {
     .then(res => {
         if(res.status === 'success') {
             nsNotify('Sale Completed! Transaction: ' + res.txn_number);
-            setTimeout(() => location.reload(), 1500);
+
+            const posId = res.pos_id || '';
+            const invoiceNo = res.txn_number || '';
+            
+            // Short confirmation prompt to print Abbreviated Tax Invoice
+            const shouldPrint = confirm('Want invoice print?');
+            
+            if (shouldPrint) {
+                if (posId) {
+                    window.open('api/print_pos.php?id=' + posId, '_blank');
+                } else if (invoiceNo) {
+                    window.open('api/print_pos.php?invoice_no=' + invoiceNo, '_blank');
+                }
+            }
+
+            setTimeout(() => location.reload(), 500);
         } else {
             nsNotify('Error: ' + res.message, 'error');
             btn.disabled = false;

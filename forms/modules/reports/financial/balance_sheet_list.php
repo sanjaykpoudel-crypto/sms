@@ -19,15 +19,18 @@ $as_of      = $date_to;
  */
 function get_gl_bal($db, $id_or_subtype, $as_of, $start_date, $is_id = true) {
     $field = $is_id ? 'j.account_id' : 'a.account_subtype';
+    $loc_sql = rpt_location_sql('h');
     $row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     ", [$id_or_subtype, $start_date, $as_of]);
     return (float)($row['bal'] ?? 0);
 }
+
+$loc_sql = rpt_location_sql('h');
 
 // ─── ASSETS ───────────────────────────────────────────────────────────────────
 $cash_on_hand   = get_gl_bal($db, 'acc-1010', $as_of, $start_date);
@@ -37,11 +40,11 @@ $bank_balance   = (float)($db->fetchOne("
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_subtype = 'bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$start_date, $as_of])['bal'] ?? 0);
 
-$ar             = get_gl_bal($db, 'receivable', $as_of, $start_date, false);
-$inventory_val  = get_gl_bal($db, 'inventory', $as_of, $start_date, false);
+$ar             = get_gl_bal($db, 'Accounts Receivable', $as_of, $start_date, false);
+$inventory_val  = get_gl_bal($db, 'Inventory Asset', $as_of, $start_date, false);
 
 // Other Assets (Fixed assets, etc.)
 $other_assets_list = $db->fetchAll("
@@ -50,10 +53,10 @@ $other_assets_list = $db->fetchAll("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'asset' 
-      AND a.account_subtype NOT IN ('receivable', 'inventory') 
+      AND a.account_subtype NOT IN ('Accounts Receivable', 'Inventory Asset') 
       AND a.id != 'acc-1010' 
-      AND a.account_subtype != 'bank'
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND a.account_subtype != 'Bank'
+      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
 ", [$start_date, $as_of]);
@@ -64,8 +67,8 @@ $total_current_assets = $cash_on_hand + $bank_balance + $ar + $inventory_val;
 $total_assets         = $total_current_assets + $other_assets;
 
 // ─── LIABILITIES ──────────────────────────────────────────────────────────────
-$ap             = -get_gl_bal($db, 'payable', $as_of, $start_date, false); // Liabilities are credits (negative in GL balance)
-$tax_payable    = -get_gl_bal($db, 'tax', $as_of, $start_date, false);
+$ap             = -get_gl_bal($db, 'Accounts Payable', $as_of, $start_date, false);
+$tax_payable    = -get_gl_bal($db, 'Other Current Liability', $as_of, $start_date, false);
 
 // Other Liabilities
 $other_liabilities_list = $db->fetchAll("
@@ -74,8 +77,8 @@ $other_liabilities_list = $db->fetchAll("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'liability' 
-      AND a.account_subtype NOT IN ('payable', 'tax')
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND a.account_subtype NOT IN ('Accounts Payable', 'Other Current Liability')
+      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
 ", [$start_date, $as_of]);
@@ -147,6 +150,7 @@ $is_balanced = abs($total_assets - $total_liabilities_equity) < 0.05;
 <?php rpt_filter_bar('Balance Sheet', [
     ['name'=>'date_from','label'=>'From Date','type'=>'date','default'=>$date_from],
     ['name'=>'date_to',  'label'=>'To Date',  'type'=>'date','default'=>$date_to],
+    rpt_location_filter(),
 ], ''); ?>
 
 <div class="bs-grid">

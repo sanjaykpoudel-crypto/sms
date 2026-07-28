@@ -20,12 +20,35 @@ if ($id) {
         'party_id' => $_GET['party_id'] ?? '',
         'party_type' => $party_type,
         'memo' => '',
-        'reference_number' => ''
+        'reference_number' => '',
+        'location_id' => get_accounting_preference('default_location_id') ?: ''
     ];
 }
 
-// Fetch Cash and Bank Accounts
-$accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('cash', 'bank') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+// Fetch Cash and Bank Accounts with calculated balances
+$accounts = $db->fetchAll("
+    SELECT 
+        a.id, a.account_name, a.account_subtype, a.normal_balance,
+        COALESCE(
+            SUM(
+                CASE 
+                    WHEN h.id IS NOT NULL THEN
+                        CASE 
+                            WHEN a.normal_balance = 'debit' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END)
+                            ELSE (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END)
+                        END
+                    ELSE 0
+                END
+            ),
+            0
+        ) as balance
+    FROM accounts a
+    LEFT JOIN journal_entries j ON a.id = j.account_id
+    LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.account_subtype IN ('Bank') AND a.is_active = 1 AND a.is_deleted = 0
+    GROUP BY a.id
+    ORDER BY a.account_name ASC
+");
 
 // Fetch Customers and Vendors
 $customers = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
@@ -43,9 +66,10 @@ $default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_fie
     .pos-pay-box { background: #fff; border: 1px solid #ddd; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
     .pos-pay-header { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #666; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
     
-    .pos-pay-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #eee; }
-    .pos-pay-select { flex: 1.5; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; outline: none; }
-    .pos-pay-input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; font-weight: 700; text-align: right; outline: none; }
+    .pos-pay-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #eee; }
+    .pos-pay-select { width: 100%; height: 40px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; outline: none; box-sizing: border-box; }
+    .pos-pay-input { flex: 1; height: 40px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; font-weight: 700; text-align: right; outline: none; box-sizing: border-box; }
+    .pos-pay-del-btn { height: 40px; display: inline-flex; align-items: center; justify-content: center; }
     
     .pos-summary-box { background: #4a5d7a; color: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; text-align: center; }
     .pos-summary-label { font-size: 11px; text-transform: uppercase; opacity: 0.8; margin-bottom: 5px; }
@@ -127,6 +151,20 @@ $default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_fie
                             <label class="ns-label">Notes</label>
                             <textarea name="memo" class="ns-input" style="height: 40px;"><?php echo $data['memo'] ?? ''; ?></textarea>
                         </div>
+                        <div class="ns-form-group">
+                            <label class="ns-label">Location</label>
+                            <select name="location_id" class="ns-select">
+                                <option value="">-- Select Location --</option>
+                                <?php
+                                $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+                                foreach (get_active_locations() as $loc):
+                                ?>
+                                    <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
@@ -178,19 +216,23 @@ $default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_fie
                             $isNew = ($pl === null);
                         ?>
                         <div class="pos-pay-row">
-                            <select name="bank_account_id[]" class="pos-pay-select" required>
-                                <option value="">Select Account...</option>
-                                <?php foreach($accounts as $acc): 
-                                    $isSelected = (!$isNew && $pl['bank_account_id'] == $acc['id']) || ($isNew && $acc['id'] == $default_bank);
-                                ?>
-                                    <option value="<?php echo $acc['id']; ?>" <?php echo $isSelected ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($acc['account_name']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <div style="flex: 1.5; display: flex; flex-direction: column;">
+                                <select name="bank_account_id[]" class="pos-pay-select account-select" required onchange="updateAccountBalanceDisplay(this)">
+                                    <option value="" data-balance="0">Select Account...</option>
+                                    <?php foreach($accounts as $acc): 
+                                        $isSelected = (!$isNew && $pl['bank_account_id'] == $acc['id']) || ($isNew && $acc['id'] == $default_bank);
+                                        $formatted_bal = number_format((float)$acc['balance'], 2);
+                                    ?>
+                                        <option value="<?php echo $acc['id']; ?>" data-balance="<?php echo $acc['balance']; ?>" <?php echo $isSelected ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($acc['account_name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <span class="account-balance-badge" style="font-size: 11px; font-weight: 700; color: #2563eb; margin-top: 4px; display: none;"></span>
+                            </div>
                             <input type="number" step="0.01" name="line_amount[]" class="pos-pay-input payment-line-amount" 
                                    value="<?php echo $isNew ? '0.00' : $pl['amount']; ?>" oninput="calculatePaymentTotals()">
-                            <button type="button" class="ns-btn-icon" style="color: #c00; margin-left: 5px;" onclick="removePaymentRow(this)"><i class="fas fa-times"></i></button>
+                            <button type="button" class="ns-btn-icon pos-pay-del-btn" style="color: #c00; margin-left: 5px;" onclick="removePaymentRow(this)"><i class="fas fa-times"></i></button>
                         </div>
                         <?php endforeach; ?>
                     </div>
@@ -248,24 +290,52 @@ $default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_fie
 
     const accounts = <?php echo json_encode($accounts); ?>;
 
+function updateAccountBalanceDisplay(selectEl) {
+    const selectedOpt = selectEl.options[selectEl.selectedIndex];
+    const badge = selectEl.parentNode.querySelector('.account-balance-badge');
+    if (!badge) return;
+    
+    if (selectedOpt && selectEl.value) {
+        const balVal = parseFloat(selectedOpt.getAttribute('data-balance') || 0);
+        const formattedBal = balVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        badge.innerHTML = `<i class="fas fa-wallet" style="margin-right: 4px;"></i> Balance: NPR ${formattedBal}`;
+        badge.style.display = 'block';
+        if (balVal < 0) {
+            badge.style.color = '#dc2626';
+        } else {
+            badge.style.color = '#2563eb';
+        }
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
 function addPaymentRow() {
     const container = document.getElementById('payment-rows-container');
     const row = document.createElement('div');
     row.className = 'pos-pay-row';
     
-    let options = '<option value="">Select Account...</option>';
+    let options = '<option value="" data-balance="0">Select Account...</option>';
     accounts.forEach(acc => {
-        options += `<option value="${acc.id}">${acc.account_name}</option>`;
+        options += `<option value="${acc.id}" data-balance="${acc.balance}">${acc.account_name}</option>`;
     });
 
     row.innerHTML = `
-        <select name="bank_account_id[]" class="pos-pay-select" required>
-            ${options}
-        </select>
+        <div style="flex: 1.5; display: flex; flex-direction: column;">
+            <select name="bank_account_id[]" class="pos-pay-select account-select" required onchange="updateAccountBalanceDisplay(this)">
+                ${options}
+            </select>
+            <span class="account-balance-badge" style="font-size: 11px; font-weight: 700; color: #2563eb; margin-top: 4px; display: none;"></span>
+        </div>
         <input type="number" step="0.01" name="line_amount[]" class="pos-pay-input payment-line-amount" value="0.00" oninput="calculatePaymentTotals()">
-        <button type="button" class="ns-btn-icon" style="color: #c00; margin-left: 5px;" onclick="removePaymentRow(this)"><i class="fas fa-times"></i></button>
+        <button type="button" class="ns-btn-icon pos-pay-del-btn" style="color: #c00; margin-left: 5px;" onclick="removePaymentRow(this)"><i class="fas fa-times"></i></button>
     `;
     container.appendChild(row);
+    
+    const newSelect = row.querySelector('.account-select');
+    if (newSelect) {
+        updateAccountBalanceDisplay(newSelect);
+    }
 }
 
 function removePaymentRow(btn) {
@@ -349,16 +419,20 @@ function toggleApply(checkbox) {
     const balanceDue = parseFloat(row.querySelector('.balance-due-text').innerText) || 0;
     
     if (checkbox.checked) {
-        const totalPayment = parseFloat(document.getElementById('net_amount').value) || 0;
-        let alreadyApplied = 0;
-        document.querySelectorAll('.apply-amount-input').forEach(input => {
-            if (input !== amountInput && input.closest('tr').querySelector('.apply-checkbox').checked) {
-                alreadyApplied += parseFloat(input.value) || 0;
-            }
-        });
-        
-        const remaining = Math.max(0, totalPayment - alreadyApplied);
-        amountInput.value = Math.min(remaining, balanceDue).toFixed(2);
+        if (balanceDue < 0) {
+            amountInput.value = balanceDue.toFixed(2);
+        } else {
+            const totalPayment = parseFloat(document.getElementById('net_amount').value) || 0;
+            let alreadyApplied = 0;
+            document.querySelectorAll('.apply-amount-input').forEach(input => {
+                if (input !== amountInput && input.closest('tr').querySelector('.apply-checkbox').checked) {
+                    alreadyApplied += parseFloat(input.value) || 0;
+                }
+            });
+            
+            const remaining = Math.max(0, totalPayment - alreadyApplied);
+            amountInput.value = Math.min(remaining, balanceDue).toFixed(2);
+        }
         amountInput.readOnly = false;
     } else {
         amountInput.value = '0.00';
@@ -390,8 +464,8 @@ function fetchOpenTransactions() {
         let html = '';
         data.forEach((row, idx) => {
             const appliedAmt = parseFloat(row.applied_amount) || 0;
-            const isChecked = appliedAmt > 0 ? 'checked' : '';
-            const readOnly = appliedAmt > 0 ? '' : 'readonly';
+            const isChecked = Math.abs(appliedAmt) > 0.0001 ? 'checked' : '';
+            const readOnly = Math.abs(appliedAmt) > 0.0001 ? '' : 'readonly';
             let typeBadge = '';
             if (row.txn_type === 'Journal') {
                 typeBadge = '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">JOURNAL</span>';
@@ -400,15 +474,19 @@ function fetchOpenTransactions() {
             } else if (row.txn_type === 'Bill') {
                 typeBadge = '<span style="font-size:10px; background:#fff7ed; color:#c2410c; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">BILL</span>';
             }
+            const itemKey = row.line_id ? (row.id + ':' + row.line_id) : row.id;
+            const isNegative = (parseFloat(row.balance_due) < 0);
+            const balanceColor = isNegative ? 'color: #dc2626; font-weight: bold;' : '';
+
             html += `
                 <tr>
                     <td style="text-align: center;">${idx + 1}</td>
                     <td><a href="?page=transactions/view&id=${row.id}" target="_blank">${row.txn_number}</a>${typeBadge}</td>
                     <td>${row.txn_date}</td>
                     <td style="text-align: right;">${parseFloat(row.total_amount).toFixed(2)}</td>
-                    <td style="text-align: right;" class="balance-due-text">${parseFloat(row.balance_due).toFixed(2)}</td>
-                    <td><input type="number" name="apply_amount[${row.id}]" class="ns-input apply-amount-input" value="${appliedAmt.toFixed(2)}" step="0.01" style="text-align: right;" ${readOnly} oninput="updateUnappliedBalance()"></td>
-                    <td style="text-align: center;"><input type="checkbox" name="apply_txn_id[]" value="${row.id}" class="apply-checkbox" onchange="toggleApply(this)" ${isChecked}></td>
+                    <td style="text-align: right; ${balanceColor}" class="balance-due-text">${parseFloat(row.balance_due).toFixed(2)}</td>
+                    <td><input type="number" name="apply_amount[${itemKey}]" class="ns-input apply-amount-input" value="${appliedAmt.toFixed(2)}" step="0.01" style="text-align: right;" ${readOnly} oninput="updateUnappliedBalance()"></td>
+                    <td style="text-align: center;"><input type="checkbox" name="apply_txn_id[]" value="${itemKey}" class="apply-checkbox" onchange="toggleApply(this)" ${isChecked}></td>
                 </tr>
             `;
         });
@@ -425,5 +503,8 @@ window.addEventListener('load', function() {
         fetchOpenTransactions();
     }
     calculatePaymentTotals();
+    document.querySelectorAll('.account-select').forEach(selectEl => {
+        updateAccountBalanceDisplay(selectEl);
+    });
 });
 </script>

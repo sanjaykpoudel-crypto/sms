@@ -11,6 +11,9 @@ if ($id) {
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'New'; ?> Employee / User</div>
     <div class="ns-page-actions">
         <button type="submit" form="user-form" class="ns-btn ns-btn-primary"><?php echo $id ? 'Edit' : 'Save'; ?></button>
+        <?php if ($id): ?>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDelete('users', '<?php echo $id; ?>', function() { window.location.href = '?page=system/users/user_list'; })"><i class="fas fa-trash-alt"></i> Delete</button>
+        <?php endif; ?>
         <button type="button" onclick="history.back()" class="ns-btn">Cancel</button>
     </div>
 </div>
@@ -52,7 +55,7 @@ if ($id) {
             </div>
         </div>
 
-        <div class="ns-section-title">Role & Status</div>
+        <div class="ns-section-title">Role, Location & Status</div>
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
@@ -67,8 +70,21 @@ if ($id) {
             </div>
             <div style="flex: 1;">
                 <div class="ns-form-group">
-                    <label class="ns-label" style="display: block; width: 150px; text-align: right; padding-right: 15px;">Active</label>
-                    <input type="checkbox" name="is_active" <?php echo ($data['is_active'] ?? 1) ? 'checked' : ''; ?>>
+                    <label class="ns-label">Assigned Location</label>
+                    <select name="location_id" class="ns-select">
+                        <option value="">-- All / Default --</option>
+                        <?php foreach (get_active_locations() as $loc): ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo (($data['location_id'] ?? '') == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div style="flex: 0.5;">
+                <div class="ns-form-group">
+                    <label class="ns-label" style="display: block; width: 100px; text-align: left;">Inactive</label>
+                    <input type="checkbox" name="is_inactive" <?php echo (isset($data['is_active']) && $data['is_active'] == 0) ? 'checked' : ''; ?> style="width: 18px; height: 18px; cursor: pointer;">
                 </div>
             </div>
         </div>

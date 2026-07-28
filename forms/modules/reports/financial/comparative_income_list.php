@@ -38,10 +38,12 @@ if ($this_fy) {
 
 // 4. Set date ranges
 $date_from_this = $this_fy ? $this_fy['start_date'] : '1970-01-01';
-$date_to_this   = $this_fy ? $this_fy['end_date'] : '1970-01-01';
+$date_to_this = $this_fy ? $this_fy['end_date'] : '1970-01-01';
 
 $date_from_prev = $prev_fy ? $prev_fy['start_date'] : '1970-01-01';
-$date_to_prev   = $prev_fy ? $prev_fy['end_date'] : '1970-01-01';
+$date_to_prev = $prev_fy ? $prev_fy['end_date'] : '1970-01-01';
+
+$loc_sql = rpt_location_sql('h');
 
 // 5. Fetch balances for This FY
 $this_bal_rows = $db->fetchAll("
@@ -51,13 +53,13 @@ $this_bal_rows = $db->fetchAll("
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE h.txn_date BETWEEN ? AND ?
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
     GROUP BY j.account_id
 ", [$date_from_this, $date_to_this]);
 
 $this_balances = [];
 foreach ($this_bal_rows as $row) {
-    $this_balances[$row['account_id']] = (float)$row['bal'];
+    $this_balances[$row['account_id']] = (float) $row['bal'];
 }
 
 // 6. Fetch balances for Prev FY
@@ -70,18 +72,18 @@ if ($prev_fy) {
         JOIN transaction_headers h ON j.header_id = h.id
         WHERE h.txn_date BETWEEN ? AND ?
           AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.source IS NULL
+          AND h.source IS NULL {$loc_sql}
         GROUP BY j.account_id
     ", [$date_from_prev, $date_to_prev]);
 
     foreach ($prev_bal_rows as $row) {
-        $prev_balances[$row['account_id']] = (float)$row['bal'];
+        $prev_balances[$row['account_id']] = (float) $row['bal'];
     }
 }
 
 // 7. Fetch all active and non-deleted accounts of type income and expense
 $accounts = $db->fetchAll("
-    SELECT id, account_code, account_name, account_type, account_subtype
+    SELECT id, REPLACE(id, 'acc-', '') as account_code, account_name, account_type, account_subtype
     FROM accounts
     WHERE account_type IN ('income', 'expense') AND is_deleted = 0 AND is_active = 1
     ORDER BY account_name ASC
@@ -95,7 +97,7 @@ $expense_accounts = [];
 foreach ($accounts as $acc) {
     $bal_this = $this_balances[$acc['id']] ?? 0.00;
     $bal_prev = $prev_balances[$acc['id']] ?? 0.00;
-    
+
     // Negate income accounts to reflect credit balances as positive amounts
     if ($acc['account_type'] === 'income') {
         $bal_this = -$bal_this;
@@ -117,7 +119,7 @@ foreach ($accounts as $acc) {
 
     if ($acc['account_type'] === 'income') {
         $revenue_accounts[] = $acc_data;
-    } elseif ($acc['account_subtype'] === 'cogs') {
+    } elseif ($acc['account_subtype'] === 'Cost of Goods Sold') {
         $cogs_accounts[] = $acc_data;
     } else {
         $expense_accounts[] = $acc_data;
@@ -141,7 +143,8 @@ $net_profit_this = $gross_profit_this - $total_exp_this;
 $net_profit_prev = $gross_profit_prev - $total_exp_prev;
 
 // Helper function to render variance column
-function render_variance_cols($this_val, $prev_val, $is_expense = false) {
+function render_variance_cols($this_val, $prev_val, $is_expense = false)
+{
     $variance = $this_val - $prev_val;
     $formatted_var = rpt_currency(abs($variance));
 
@@ -189,6 +192,7 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
         font-size: 13px;
         background: #fff;
     }
+
     .comp-table th {
         background: #003087;
         color: #fff;
@@ -200,19 +204,23 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
         font-size: 11px;
         letter-spacing: 0.5px;
     }
+
     .comp-table th:first-child {
         text-align: left;
     }
+
     .comp-table td {
         padding: 9px 16px;
         border-bottom: 1px solid #edf2f7;
         text-align: right;
     }
+
     .comp-table td:first-child {
         text-align: left;
         font-weight: 500;
         color: #334155;
     }
+
     .comp-section-row td {
         background: #f8fafc;
         font-weight: 700;
@@ -225,6 +233,7 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
         border-bottom: 2px solid #cbd5e1;
         border-top: 1px solid #e2e8f0;
     }
+
     .comp-subtotal-row td {
         font-weight: 700;
         background: #f1f5f9;
@@ -233,37 +242,49 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
         font-size: 13px;
         color: #0f172a;
     }
+
     .comp-grand-total-row td {
         font-weight: 800;
         font-size: 14px;
         border-top: 2px solid #003087;
         border-bottom: 4px double #003087;
     }
-    .text-success { color: #16a34a !important; }
-    .text-danger { color: #dc2626 !important; }
-    .text-muted { color: #94a3b8 !important; }
-    
+
+    .text-success {
+        color: #16a34a !important;
+    }
+
+    .text-danger {
+        color: #dc2626 !important;
+    }
+
+    .text-muted {
+        color: #94a3b8 !important;
+    }
+
     .comp-card {
         max-width: 900px;
         margin: 0 auto;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
         border-radius: 12px;
         overflow: hidden;
         border: 1px solid #e2e8f0;
     }
-    
+
     .comp-header {
         text-align: center;
         padding: 24px;
         background: #fff;
         border-bottom: 2px solid #003087;
     }
+
     .comp-title {
         font-size: 20px;
         font-weight: 800;
         color: #003087;
         letter-spacing: 0.5px;
     }
+
     .comp-subtitle {
         font-size: 13px;
         color: #64748b;
@@ -278,17 +299,6 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
 
 <div class="ns-portlet comp-card">
     <div class="ns-portlet-content" style="padding: 0;">
-        <div class="comp-header">
-            <div class="comp-title">COMPARATIVE INCOME STATEMENT</div>
-            <div class="comp-subtitle">
-                This Fiscal Year: <strong><?= htmlspecialchars($this_fy['name'] ?? 'N/A') ?></strong> (<?= htmlspecialchars($date_from_this) ?> to <?= htmlspecialchars($date_to_this) ?>)<br>
-                Previous Fiscal Year: <strong><?= htmlspecialchars($prev_fy['name'] ?? 'None') ?></strong> 
-                <?php if ($prev_fy): ?>
-                    (<?= htmlspecialchars($date_from_prev) ?> to <?= htmlspecialchars($date_to_prev) ?>)
-                <?php endif; ?>
-            </div>
-        </div>
-
         <table class="comp-table" id="comparative-income-table">
             <thead>
                 <tr>
@@ -312,19 +322,20 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                         <td class="text-muted"><?= rpt_currency(0) ?></td>
                         <td class="text-muted">0.0%</td>
                     </tr>
-                <?php else: foreach ($revenue_accounts as $rev): 
-                    $var = render_variance_cols($rev['this_val'], $rev['prev_val'], false);
-                ?>
-                    <tr>
-                        <td><?= htmlspecialchars($rev['name']) ?></td>
-                        <td><?= rpt_currency($rev['this_val']) ?></td>
-                        <td><?= rpt_currency($rev['prev_val']) ?></td>
-                        <td><?= $var['amount'] ?></td>
-                        <td><?= $var['pct'] ?></td>
-                    </tr>
-                <?php endforeach; endif; ?>
-                
-                <?php 
+                <?php else:
+                    foreach ($revenue_accounts as $rev):
+                        $var = render_variance_cols($rev['this_val'], $rev['prev_val'], false);
+                        ?>
+                        <tr>
+                            <td><?= htmlspecialchars($rev['name']) ?></td>
+                            <td><?= rpt_currency($rev['this_val']) ?></td>
+                            <td><?= rpt_currency($rev['prev_val']) ?></td>
+                            <td><?= $var['amount'] ?></td>
+                            <td><?= $var['pct'] ?></td>
+                        </tr>
+                    <?php endforeach; endif; ?>
+
+                <?php
                 $rev_total_var = render_variance_cols($total_rev_this, $total_rev_prev, false);
                 ?>
                 <tr class="comp-subtotal-row">
@@ -347,19 +358,20 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                         <td class="text-muted"><?= rpt_currency(0) ?></td>
                         <td class="text-muted">0.0%</td>
                     </tr>
-                <?php else: foreach ($cogs_accounts as $cogs): 
-                    $var = render_variance_cols($cogs['this_val'], $cogs['prev_val'], true);
-                ?>
-                    <tr>
-                        <td><?= htmlspecialchars($cogs['name']) ?></td>
-                        <td><?= rpt_currency($cogs['this_val']) ?></td>
-                        <td><?= rpt_currency($cogs['prev_val']) ?></td>
-                        <td><?= $var['amount'] ?></td>
-                        <td><?= $var['pct'] ?></td>
-                    </tr>
-                <?php endforeach; endif; ?>
-                
-                <?php 
+                <?php else:
+                    foreach ($cogs_accounts as $cogs):
+                        $var = render_variance_cols($cogs['this_val'], $cogs['prev_val'], true);
+                        ?>
+                        <tr>
+                            <td><?= htmlspecialchars($cogs['name']) ?></td>
+                            <td><?= rpt_currency($cogs['this_val']) ?></td>
+                            <td><?= rpt_currency($cogs['prev_val']) ?></td>
+                            <td><?= $var['amount'] ?></td>
+                            <td><?= $var['pct'] ?></td>
+                        </tr>
+                    <?php endforeach; endif; ?>
+
+                <?php
                 $cogs_total_var = render_variance_cols($total_cogs_this, $total_cogs_prev, true);
                 ?>
                 <tr class="comp-subtotal-row">
@@ -371,10 +383,11 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                 </tr>
 
                 <!-- GROSS PROFIT -->
-                <?php 
+                <?php
                 $gp_total_var = render_variance_cols($gross_profit_this, $gross_profit_prev, false);
                 ?>
-                <tr class="comp-subtotal-row" style="background: #e0f2fe; color: #0369a1; border-top: 2px solid #0284c7; border-bottom: 2px solid #0284c7;">
+                <tr class="comp-subtotal-row"
+                    style="background: #e0f2fe; color: #0369a1; border-top: 2px solid #0284c7; border-bottom: 2px solid #0284c7;">
                     <td>Gross Profit</td>
                     <td><?= rpt_currency($gross_profit_this) ?></td>
                     <td><?= rpt_currency($gross_profit_prev) ?></td>
@@ -394,19 +407,20 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                         <td class="text-muted"><?= rpt_currency(0) ?></td>
                         <td class="text-muted">0.0%</td>
                     </tr>
-                <?php else: foreach ($expense_accounts as $exp): 
-                    $var = render_variance_cols($exp['this_val'], $exp['prev_val'], true);
-                ?>
-                    <tr>
-                        <td><?= htmlspecialchars($exp['name']) ?></td>
-                        <td><?= rpt_currency($exp['this_val']) ?></td>
-                        <td><?= rpt_currency($exp['prev_val']) ?></td>
-                        <td><?= $var['amount'] ?></td>
-                        <td><?= $var['pct'] ?></td>
-                    </tr>
-                <?php endforeach; endif; ?>
-                
-                <?php 
+                <?php else:
+                    foreach ($expense_accounts as $exp):
+                        $var = render_variance_cols($exp['this_val'], $exp['prev_val'], true);
+                        ?>
+                        <tr>
+                            <td><?= htmlspecialchars($exp['name']) ?></td>
+                            <td><?= rpt_currency($exp['this_val']) ?></td>
+                            <td><?= rpt_currency($exp['prev_val']) ?></td>
+                            <td><?= $var['amount'] ?></td>
+                            <td><?= $var['pct'] ?></td>
+                        </tr>
+                    <?php endforeach; endif; ?>
+
+                <?php
                 $exp_total_var = render_variance_cols($total_exp_this, $total_exp_prev, true);
                 ?>
                 <tr class="comp-subtotal-row">
@@ -418,13 +432,14 @@ function render_variance_cols($this_val, $prev_val, $is_expense = false) {
                 </tr>
 
                 <!-- NET PROFIT -->
-                <?php 
+                <?php
                 $net_total_var = render_variance_cols($net_profit_this, $net_profit_prev, false);
                 $net_bg = $net_profit_this >= 0 ? '#dcfce7' : '#fee2e2';
                 $net_fg = $net_profit_this >= 0 ? '#166534' : '#991b1b';
                 $net_border = $net_profit_this >= 0 ? '#15803d' : '#b91c1c';
                 ?>
-                <tr class="comp-grand-total-row" style="background: <?= $net_bg ?>; color: <?= $net_fg ?>; border-top: 2.5px solid <?= $net_border ?>; border-bottom: 5px double <?= $net_border ?>;">
+                <tr class="comp-grand-total-row"
+                    style="background: <?= $net_bg ?>; color: <?= $net_fg ?>; border-top: 2.5px solid <?= $net_border ?>; border-bottom: 5px double <?= $net_border ?>;">
                     <td><?= $net_profit_this >= 0 ? 'NET PROFIT' : 'NET LOSS' ?></td>
                     <td><?= rpt_currency($net_profit_this) ?></td>
                     <td><?= rpt_currency($net_profit_prev) ?></td>

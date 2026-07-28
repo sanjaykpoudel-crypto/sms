@@ -193,8 +193,7 @@ function processItem($data, $db, $pdo, $userId) {
         $tax_id = $tax_rec['id'];
     }
 
-    $status_rec = $db->fetchOne("SELECT id FROM reference_codes WHERE type = 'status' AND name = 'Active'");
-    $status_id  = $status_rec ? $status_rec['id'] : null;
+    $status_id = null;
 
     $payload = [
         'action' => $existing ? 'update' : 'save',
@@ -431,7 +430,9 @@ function processTransactionBuffer($rows, $type, $db, $pdo, $userId) {
 
         $pdo->commit();
     } catch (Exception $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         throw $e;
     }
 }

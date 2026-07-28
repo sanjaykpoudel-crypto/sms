@@ -9,58 +9,35 @@ $db = db();
 $today = date('Y-m-d');
 
 // Fetch customer aging outstanding balances
-$sql = "
-    SELECT 
-        c.customer_code,
-        c.full_name as customer_name,
-        COALESCE(SUM(open_docs.balance_due), 0.00) as total_due,
-        COALESCE(SUM(CASE WHEN DATEDIFF(?, open_docs.doc_date) BETWEEN 0 AND 30 THEN open_docs.balance_due ELSE 0.00 END), 0.00) as bucket_30,
-        COALESCE(SUM(CASE WHEN DATEDIFF(?, open_docs.doc_date) BETWEEN 31 AND 60 THEN open_docs.balance_due ELSE 0.00 END), 0.00) as bucket_60,
-        COALESCE(SUM(CASE WHEN DATEDIFF(?, open_docs.doc_date) BETWEEN 61 AND 90 THEN open_docs.balance_due ELSE 0.00 END), 0.00) as bucket_90,
-        COALESCE(SUM(CASE WHEN DATEDIFF(?, open_docs.doc_date) > 90 THEN open_docs.balance_due ELSE 0.00 END), 0.00) as bucket_over_90
-    FROM customers c
-    JOIN (
-        SELECT ci.customer_id, ci.invoice_date as doc_date, ci.balance_due
-        FROM customer_invoices ci
-        JOIN transaction_headers h ON ci.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-        WHERE ci.balance_due > 0.01
+$customers = $db->fetchAll("SELECT id, customer_code, full_name FROM customers WHERE is_deleted = 0 ORDER BY full_name ASC");
 
-        UNION ALL
-
-        SELECT 
-            COALESCE(j.party_id, h.party_id) as customer_id,
-            h.txn_date as doc_date,
-            (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0)) as balance_due
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN transaction_links tl ON tl.child_id = h.id AND tl.link_type LIKE 'payment:%'
-        WHERE (j.party_type = 'customer' OR j.party_type IS NULL) 
-          AND h.is_deleted = 0 
-          AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.txn_type IN ('Journal', 'journal_entry')
-        GROUP BY h.id, j.party_id, h.party_id, h.txn_date
-        HAVING balance_due > 0.01
-    ) open_docs ON c.id = open_docs.customer_id
-    WHERE c.is_deleted = 0
-    GROUP BY c.id, c.customer_code, c.full_name
-    HAVING total_due > 0.00
-    ORDER BY c.full_name ASC
-";
-
-$rows = $db->fetchAll($sql, [$today, $today, $today, $today]);
-
+$rows = [];
 $total_due = 0.0;
 $total_30 = 0.0;
 $total_60 = 0.0;
 $total_90 = 0.0;
 $total_over_90 = 0.0;
 
-foreach ($rows as $r) {
-    $total_due += (float)$r['total_due'];
-    $total_30 += (float)$r['bucket_30'];
-    $total_60 += (float)$r['bucket_60'];
-    $total_90 += (float)$r['bucket_90'];
-    $total_over_90 += (float)$r['bucket_over_90'];
+foreach ($customers as $c) {
+    $ag = get_customer_aging_summary($db, $c['id'], $today);
+    $b = $ag['aging30'];
+    $tot = $ag['total_due'];
+    if ($tot > 0.005) {
+        $rows[] = [
+            'customer_code' => $c['customer_code'],
+            'customer_name' => $c['full_name'],
+            'total_due'     => $tot,
+            'bucket_30'     => $b['current'] + $b['b30'],
+            'bucket_60'     => $b['b60'],
+            'bucket_90'     => $b['b90'],
+            'bucket_over_90'=> $b['over_90'],
+        ];
+        $total_due     += $tot;
+        $total_30      += ($b['current'] + $b['b30']);
+        $total_60      += $b['b60'];
+        $total_90      += $b['b90'];
+        $total_over_90 += $b['over_90'];
+    }
 }
 ?>
 <?php rpt_header('Accounts Receivable (AR) Aging Report'); ?>

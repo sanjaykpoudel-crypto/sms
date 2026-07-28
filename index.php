@@ -45,7 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
 $is_logged_in = isset($_SESSION['user_id']);
 
 // Always fetch system branding (needed on both login + dashboard)
-if (!isset($db)) $db = db();
+if (!isset($db))
+    $db = db();
 try {
     $sys_logo = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'logo'")['meta_value'] ?? '';
     $sys_name = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'name'")['meta_value'] ?? 'SMS ERP';
@@ -69,7 +70,7 @@ if ($is_logged_in) {
     }
 
     $page = $_GET['page'] ?? 'home';
-    
+
     // Audit log for page views (Dashboard and Reports)
     if ($page === 'home' || strpos($page, 'reports/') === 0) {
         try {
@@ -92,7 +93,7 @@ if ($is_logged_in) {
             // Fail silently
         }
     }
-    
+
     // Check if it's a print page to hide headers/nav
     $is_print_page = (strpos($page, '/print') !== false || strpos($page, 'print/') !== false || $page === 'print');
 }
@@ -166,7 +167,7 @@ if ($is_logged_in) {
             padding: 15px 25px;
             border-radius: 8px;
             background: #fff;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
             display: flex;
             align-items: center;
             gap: 12px;
@@ -175,14 +176,29 @@ if ($is_logged_in) {
             font-weight: 600;
             border-left: 5px solid var(--ns-primary);
         }
-        #ns-notification.show { transform: translateX(0); }
-        #ns-notification.success { border-left-color: #2ecc71; }
-        #ns-notification.error { border-left-color: #e74c3c; }
+
+        #ns-notification.show {
+            transform: translateX(0);
+        }
+
+        #ns-notification.success {
+            border-left-color: #2ecc71;
+        }
+
+        #ns-notification.error {
+            border-left-color: #e74c3c;
+        }
 
         <?php if ($is_logged_in && !empty($sys_font = ($db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'system_font'")['meta_value'] ?? ''))): ?>
-        body, .ns-input, .ns-btn, table {
-            font-family: <?php echo $sys_font; ?> !important;
-        }
+            body,
+            .ns-input,
+            .ns-btn,
+            table {
+                font-family:
+                    <?php echo $sys_font; ?>
+                    !important;
+            }
+
         <?php endif; ?>
     </style>
 </head>
@@ -201,12 +217,15 @@ if ($is_logged_in) {
             <div style="text-align:center; margin-bottom:20px;">
                 <?php if (!empty($sys_logo) && file_exists(__DIR__ . '/' . $sys_logo)): ?>
                     <div style="margin-bottom:15px; display: flex; justify-content: center; align-items: center;">
-                        <img src="<?php echo htmlspecialchars($sys_logo); ?>" alt="Logo" style="max-height: 85px; max-width: 200px; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.35)); border-radius: 4px;">
+                        <img src="<?php echo htmlspecialchars($sys_logo); ?>" alt="Logo"
+                            style="max-height: 85px; max-width: 200px; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.35)); border-radius: 4px;">
                     </div>
                 <?php else: ?>
-                    <div style="font-size:40px; color:rgba(255,255,255,0.8); margin-bottom:10px;"><i class="fas fa-cube"></i></div>
+                    <div style="font-size:40px; color:rgba(255,255,255,0.8); margin-bottom:10px;"><i class="fas fa-cube"></i>
+                    </div>
                 <?php endif; ?>
-                <div style="font-size:20px; font-weight:700; color:#fff; letter-spacing:0.5px;"><?php echo htmlspecialchars($sys_name); ?></div>
+                <div style="font-size:20px; font-weight:700; color:#fff; letter-spacing:0.5px;">
+                    <?php echo htmlspecialchars($sys_name); ?></div>
             </div>
             <div class="glass-card">
                 <div class="auth-header">
@@ -258,7 +277,7 @@ if ($is_logged_in) {
             });
         </script>
     <?php else: ?>
-        <?php 
+        <?php
         if ($is_print_page) {
             $parts = explode('/', $page);
             $count = count($parts);
@@ -275,11 +294,13 @@ if ($is_logged_in) {
             <div style="display: flex; align-items: center; gap: 20px;">
                 <div class="ns-logo" style="display: flex; align-items: center; gap: 10px;">
                     <?php if (!empty($sys_logo) && file_exists(__DIR__ . '/' . $sys_logo)): ?>
-                        <img src="<?php echo htmlspecialchars($sys_logo); ?>" alt="Logo" style="height:28px; max-width: 120px; object-fit: contain; border-radius: 2px; vertical-align: middle;">
+                        <img src="<?php echo htmlspecialchars($sys_logo); ?>" alt="Logo"
+                            style="height:28px; max-width: 120px; object-fit: contain; border-radius: 2px; vertical-align: middle;">
                     <?php else: ?>
                         <i class="fas fa-cube" style="font-size:22px;"></i>
                     <?php endif; ?>
-                    <span style="font-size:15px; font-weight:700; letter-spacing:0.3px;"><?php echo htmlspecialchars($sys_name); ?></span>
+                    <span
+                        style="font-size:15px; font-weight:700; letter-spacing:0.3px;"><?php echo htmlspecialchars($sys_name); ?></span>
                 </div>
                 <div
                     style="font-size: 11px; color: rgba(255,255,255,0.5); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 20px; cursor: pointer;">
@@ -288,26 +309,30 @@ if ($is_logged_in) {
             </div>
             <div style="display: flex; align-items: center; gap: 20px;">
                 <div style="text-align: right; margin-right: 15px;">
-<?php
-    // Determine display name: prefer full_name, fallback to username
-    $displayName = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
-    // Determine role display: capitalize and map admin to Administrator
-    $rawRole = strtolower($_SESSION['role'] ?? 'user');
-    $roleMap = [
-        'admin' => 'Administrator',
-        'manager' => 'Manager',
-        // Add more mappings as needed
-    ];
-    $displayRole = $roleMap[$rawRole] ?? ucfirst($rawRole);
-?>
-<div style="font-size: 12px; font-weight: bold; letter-spacing: 0.2px;">
-    <?php echo htmlspecialchars($displayName); ?>
-</div>
-<div style="font-size: 10px; color: var(--ns-accent); opacity: 0.85; text-transform: capitalize; letter-spacing: 0.3px;">
-    <i class="fas fa-user-tag" style="margin-right: 3px; font-size: 9px;"></i><?php echo htmlspecialchars($displayRole); ?>
-</div>
+                    <?php
+                    // Determine display name: prefer full_name, fallback to username
+                    $displayName = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
+                    // Determine role display: capitalize and map admin to Administrator
+                    $rawRole = strtolower($_SESSION['role'] ?? 'user');
+                    $roleMap = [
+                        'admin' => 'Administrator',
+                        'manager' => 'Manager',
+                        // Add more mappings as needed
+                    ];
+                    $displayRole = $roleMap[$rawRole] ?? ucfirst($rawRole);
+                    ?>
+                    <div style="font-size: 12px; font-weight: bold; letter-spacing: 0.2px;">
+                        <?php echo htmlspecialchars($displayName); ?>
+                    </div>
+                    <div
+                        style="font-size: 10px; color: var(--ns-accent); opacity: 0.85; text-transform: capitalize; letter-spacing: 0.3px;">
+                        <i class="fas fa-user-tag"
+                            style="margin-right: 3px; font-size: 9px;"></i><?php echo htmlspecialchars($displayRole); ?>
+                    </div>
                 </div>
-                <button id="ns-theme-toggle" title="Toggle Theme" style="background: none; border: none; color: white; font-size: 15px; cursor: pointer; transition: var(--ns-transition); margin-right: 15px; display: inline-flex; align-items: center; justify-content: center;" onmouseover="this.style.color='var(--ns-accent)'" onmouseout="this.style.color='white'">
+                <button id="ns-theme-toggle" title="Toggle Theme"
+                    style="background: none; border: none; color: white; font-size: 15px; cursor: pointer; transition: var(--ns-transition); margin-right: 15px; display: inline-flex; align-items: center; justify-content: center;"
+                    onmouseover="this.style.color='var(--ns-accent)'" onmouseout="this.style.color='white'">
                     <i class="fas fa-moon"></i>
                 </button>
                 <a href="logout.php" style="color: white; font-size: 16px; transition: var(--ns-transition);" title="Logout"
@@ -322,11 +347,14 @@ if ($is_logged_in) {
                 <i class="fas fa-tasks" style="margin-right: 8px;"></i> Activities <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="?page=activity/calendar" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i> Calendar</a>
-                    <a href="?page=activity&type=task" class="ns-dropdown-item"><i class="fas fa-check-square"></i> Tasks</a>
+                    <a href="?page=activity/calendar" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i>
+                        Calendar</a>
+                    <a href="?page=activity&type=task" class="ns-dropdown-item"><i class="fas fa-check-square"></i>
+                        Tasks</a>
                     <a href="?page=activity&type=event" class="ns-dropdown-item"><i class="fas fa-bullhorn"></i> Events</a>
                     <a href="?page=activity&type=meeting" class="ns-dropdown-item"><i class="fas fa-users"></i> Meetings</a>
-                    <a href="?page=activity&type=phone_call" class="ns-dropdown-item"><i class="fas fa-phone-alt"></i> Phone Calls</a>
+                    <a href="?page=activity&type=phone_call" class="ns-dropdown-item"><i class="fas fa-phone-alt"></i> Phone
+                        Calls</a>
                     <a href="?page=activity" class="ns-dropdown-item"><i class="fas fa-list"></i> All Activities</a>
                 </div>
             </div>
@@ -335,7 +363,9 @@ if ($is_logged_in) {
                     class="fas fa-home"></i></a>
 
             <div class="ns-nav-item">
-                <i class="fas fa-exchange-alt" style="margin-right: 8px;"></i> <a href="?page=transactions/transactions_list" style="color:inherit; text-decoration:none;">Transactions</a> <i class="fas fa-caret-down"
+                <i class="fas fa-exchange-alt" style="margin-right: 8px;"></i> <a
+                    href="?page=transactions/transactions_list"
+                    style="color:inherit; text-decoration:none;">Transactions</a> <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <div class="ns-dropdown-item">
@@ -409,11 +439,20 @@ if ($is_logged_in) {
                             <a href="?page=transactions/transfer/manage" class="ns-sub-dropdown-item">New Transfer</a>
                         </div>
                     </div>
+                    <div class="ns-dropdown-item">
+                        <i class="fas fa-boxes-packing"></i> Inventory Transfer <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=transactions/inventory_transfer/manage" class="ns-sub-dropdown-item">New Transfer</a>
+                            <a href="?page=transactions/inventory_transfer" class="ns-sub-dropdown-item">Transfer List</a>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="ns-nav-item">
-                <a href="?page=master/master_list" style="color:inherit; text-decoration:none;">Lists</a> <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
+                <a href="?page=master/master_list" style="color:inherit; text-decoration:none;">Lists</a> <i
+                    class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <a href="?page=master/account" class="ns-dropdown-item"><i class="fas fa-list-ul"></i> Accounts</a>
                     <a href="?page=master/customer" class="ns-dropdown-item"><i class="fas fa-users"></i> Customers</a>
@@ -423,21 +462,28 @@ if ($is_logged_in) {
                 </div>
             </div>
 
-            <div class="ns-nav-item" onclick="if(event.target.tagName !== 'A' && !event.target.closest('.ns-dropdown')) window.location='?page=reports/reports_list';">
-                <a href="?page=reports/reports_list" style="color:inherit; text-decoration:none;">Reports</a> <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
+            <div class="ns-nav-item"
+                onclick="if(event.target.tagName !== 'A' && !event.target.closest('.ns-dropdown')) window.location='?page=reports/reports_list';">
+                <a href="?page=reports/reports_list" style="color:inherit; text-decoration:none;">Reports</a> <i
+                    class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
                     <div class="ns-dropdown-item">
                         <i class="fas fa-file-invoice-dollar"></i> Financial <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/financial/balance_sheet" class="ns-sub-dropdown-item">Balance Sheet</a>
-                            <a href="?page=reports/financial/comparative_balance_sheet" class="ns-sub-dropdown-item">Comparative Balance Sheet</a>
-                            <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income Statement</a>
-                            <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative Income Statement</a>
-                            <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit Report</a>
+                            <a href="?page=reports/financial/comparative_balance_sheet"
+                                class="ns-sub-dropdown-item">Comparative Balance Sheet</a>
+                            <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income
+                                Statement</a>
+                            <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative
+                                Income Statement</a>
+                            <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit
+                                Report</a>
                             <a href="?page=reports/financial/trial_balance" class="ns-sub-dropdown-item">Trial Balance</a>
                             <a href="?page=reports/financial/general_ledger" class="ns-sub-dropdown-item">General Ledger</a>
-                            <a href="?page=reports/financial/equity_statement" class="ns-sub-dropdown-item">Equity Statement</a>
+                            <a href="?page=reports/financial/equity_statement" class="ns-sub-dropdown-item">Equity
+                                Statement</a>
                             <a href="?page=reports/financial/cash_book" class="ns-sub-dropdown-item">Cash Book</a>
                         </div>
                     </div>
@@ -464,8 +510,11 @@ if ($is_logged_in) {
                         <i class="fas fa-user-tie"></i> Vendors <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
+                            <a href="?page=reports/vendors/balance_confirmation" class="ns-sub-dropdown-item">Vendor Balance
+                                Confirmation</a>
                             <a href="?page=reports/vendors/ap_register" class="ns-sub-dropdown-item">AP Register</a>
-                            <a href="?page=reports/vendors/ap_payment_by_bill" class="ns-sub-dropdown-item">AP Payment by Bill</a>
+                            <a href="?page=reports/vendors/ap_payment_by_bill" class="ns-sub-dropdown-item">AP Payment by
+                                Bill</a>
                             <a href="?page=reports/vendors/open_bills" class="ns-sub-dropdown-item">Open Bills</a>
                             <a href="?page=reports/vendors/payable_aging" class="ns-sub-dropdown-item">AP Aging</a>
                         </div>
@@ -474,11 +523,15 @@ if ($is_logged_in) {
                         <i class="fas fa-warehouse"></i> Inventory <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/inventory/inventory_valuation" class="ns-sub-dropdown-item">Inventory Valuation</a>
-                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Current Inventory Snapshot</a>
+                            <a href="?page=reports/inventory/inventory_valuation" class="ns-sub-dropdown-item">Inventory
+                                Valuation</a>
+                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Current Inventory
+                                Snapshot</a>
                             <a href="?page=reports/inventory/stock_ledger" class="ns-sub-dropdown-item">Stock Ledger</a>
-                            <a href="?page=reports/inventory/inventory_revenue" class="ns-sub-dropdown-item">Inventory Revenue</a>
-                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability</a>
+                            <a href="?page=reports/inventory/inventory_revenue" class="ns-sub-dropdown-item">Inventory
+                                Revenue</a>
+                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory
+                                Profitability</a>
                             <a href="?page=reports/inventory/low_stock" class="ns-sub-dropdown-item">Low Stock Report</a>
                             <a href="?page=reports/inventory/less_stock" class="ns-sub-dropdown-item">Less Stock Report</a>
                             <a href="?page=reports/inventory/urgent_buy" class="ns-sub-dropdown-item">Urgent Purchases</a>
@@ -497,19 +550,25 @@ if ($is_logged_in) {
                         <i class="fas fa-users"></i> Customers <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
+                            <a href="?page=reports/customers/balance_confirmation" class="ns-sub-dropdown-item">Customer
+                                Balance Confirmation</a>
                             <a href="?page=reports/customers/statement" class="ns-sub-dropdown-item">Customer Statement</a>
                             <a href="?page=reports/customers/ar_register" class="ns-sub-dropdown-item">AR Register</a>
-                            <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment by Invoice</a>
+                            <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment
+                                by Invoice</a>
                             <a href="?page=reports/customers/receivable_aging" class="ns-sub-dropdown-item">AR Aging</a>
                         </div>
                     </div>
                     <div class="ns-dropdown-item" style="background: #f0f9ff;">
-                        <i class="fas fa-lightbulb" style="color: #0284c7;"></i> <strong style="color: #0369a1;">General Insights</strong> <i class="fas fa-caret-right"
+                        <i class="fas fa-lightbulb" style="color: #0284c7;"></i> <strong style="color: #0369a1;">General
+                            Insights</strong> <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px; color: #0284c7;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/financial/break_even_payback" class="ns-sub-dropdown-item" style="font-weight: 700; color: #0284c7;">Break-Even & Investment Payback</a>
+                            <a href="?page=reports/financial/break_even_payback" class="ns-sub-dropdown-item"
+                                style="font-weight: 700; color: #0284c7;">Break-Even & Investment Payback</a>
                             <a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a>
-                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability Insights</a>
+                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory
+                                Profitability Insights</a>
                         </div>
                     </div>
                 </div>
@@ -518,21 +577,33 @@ if ($is_logged_in) {
             <div class="ns-nav-item">
                 Setup <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System Information</a>
-                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Users & Roles</a>
-                    <a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i> Accounting Periods / Closing</a>
-                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i> Accounting Lists</a>
-                    <a href="?page=system/settings/accounting_preferences" class="ns-dropdown-item"><i class="fas fa-file-contract"></i> Accounting Preferences</a>
-                    <a href="?page=master/account/opening_balance" class="ns-dropdown-item"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a>
-                    <a href="?page=system/ref_codes/manage" class="ns-dropdown-item"><i class="fas fa-list-ol"></i> Auto Generated Numbers</a>
-                    <a href="?page=system/import_export/manage" class="ns-dropdown-item"><i class="fas fa-file-import"></i> Import / Export Data</a>
-                    <a href="?page=system/backup/manage" class="ns-dropdown-item"><i class="fas fa-database"></i> Backup & Restore</a>
+                    <a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System
+                        Information</a>
+                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Users &
+                        Roles</a>
+                    <a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i>
+                        Accounting Periods / Closing</a>
+                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i>
+                        Accounting Lists</a>
+                    <a href="?page=system/settings/accounting_preferences" class="ns-dropdown-item"><i
+                            class="fas fa-file-contract"></i> Accounting Preferences</a>
+                    <a href="?page=master/account/opening_balance" class="ns-dropdown-item"><i
+                            class="fas fa-balance-scale"></i> Bank Opening Balances</a>
+                    <a href="?page=system/settings/whatsapp_settings" class="ns-dropdown-item"><i class="fab fa-whatsapp"
+                            style="color:#25D366;"></i> WhatsApp Integration</a>
+                    <a href="?page=system/ref_codes/manage" class="ns-dropdown-item"><i class="fas fa-list-ol"></i> Auto
+                        Generated Numbers</a>
+                    <a href="?page=system/import_export/manage" class="ns-dropdown-item"><i class="fas fa-file-import"></i>
+                        Import / Export Data</a>
+                    <a href="?page=system/backup/manage" class="ns-dropdown-item"><i class="fas fa-database"></i> Backup &
+                        Restore</a>
                 </div>
             </div>
         </nav>
 
         <!-- Main Application Content -->
-        <div class="ns-content <?php echo ($page === 'home' || $page === 'print' || $is_print_page) ? 'ns-content-flush' : ''; ?>">
+        <div
+            class="ns-content <?php echo ($page === 'home' || $page === 'print' || $is_print_page) ? 'ns-content-flush' : ''; ?>">
             <?php
             if ($page == 'home' || $page == 'home-v3') {
                 include 'home.php';
@@ -540,7 +611,7 @@ if ($is_logged_in) {
                 // Security: Sanitize page parameter to prevent path traversal
                 $page = str_replace(['../', '..\\'], '', $page);
                 $page = preg_replace('/[^a-zA-Z0-9\/_\-]/', '', $page);
-                
+
                 // Extract module parts
                 $parts = explode('/', $page);
                 $count = count($parts);
@@ -550,13 +621,15 @@ if ($is_logged_in) {
 
                     if ($action == 'manage') {
                         $module_name = $parts[$count - 2];
-                        if ($module_name == 'users') $module_name = 'user';
+                        if ($module_name == 'users')
+                            $module_name = 'user';
                         $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_manage.php";
                     } elseif ($action == 'view' || $action == 'print') {
                         $page_path = "forms/modules/" . $dir_path . "/" . $action . ".php";
                     } else {
                         $module_name = $action;
-                        if ($module_name == 'users') $module_name = 'user';
+                        if ($module_name == 'users')
+                            $module_name = 'user';
 
                         // Primary path: forms/modules/{page}/{action}_list.php
                         $page_path = "forms/modules/" . $page . "/" . $module_name . "_list.php";
@@ -596,42 +669,42 @@ if ($is_logged_in) {
     <script src="assets/js/ns-transactions.js"></script>
     <script>
         <?php if ($is_logged_in): ?>
-            // Theme toggle logic
-            (function() {
-                const toggleBtn = document.getElementById('ns-theme-toggle');
-                if (toggleBtn) {
-                    const icon = toggleBtn.querySelector('i');
-                    // Check saved theme
-                    if (localStorage.getItem('ns_theme') === 'dark') {
-                        document.body.classList.add('dark-theme');
-                        icon.className = 'fas fa-sun';
-                    }
-                    toggleBtn.addEventListener('click', function() {
-                        document.body.classList.toggle('dark-theme');
-                        const isDark = document.body.classList.contains('dark-theme');
-                        localStorage.setItem('ns_theme', isDark ? 'dark' : 'light');
-                        icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
-                        
-                        // Update active chart colors dynamically
-                        if (typeof Chart !== 'undefined' && Chart.instances) {
-                            setTimeout(() => {
-                                Object.values(Chart.instances).forEach(instance => {
-                                    if (instance.options && instance.options.scales) {
-                                        const xTicks = instance.options.scales.x ? instance.options.scales.x.ticks : null;
-                                        const yTicks = instance.options.scales.y ? instance.options.scales.y.ticks : null;
-                                        const yGrid = instance.options.scales.y ? instance.options.scales.y.grid : null;
-                                        
-                                        if (xTicks) xTicks.color = isDark ? '#94a3b8' : '#64748b';
-                                        if (yTicks) yTicks.color = isDark ? '#94a3b8' : '#64748b';
-                                        if (yGrid) yGrid.color = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-                                        instance.update();
-                                    }
-                                });
-                            }, 50);
+                // Theme toggle logic
+                (function () {
+                    const toggleBtn = document.getElementById('ns-theme-toggle');
+                    if (toggleBtn) {
+                        const icon = toggleBtn.querySelector('i');
+                        // Check saved theme
+                        if (localStorage.getItem('ns_theme') === 'dark') {
+                            document.body.classList.add('dark-theme');
+                            icon.className = 'fas fa-sun';
                         }
-                    });
-                }
-            })();
+                        toggleBtn.addEventListener('click', function () {
+                            document.body.classList.toggle('dark-theme');
+                            const isDark = document.body.classList.contains('dark-theme');
+                            localStorage.setItem('ns_theme', isDark ? 'dark' : 'light');
+                            icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
+
+                            // Update active chart colors dynamically
+                            if (typeof Chart !== 'undefined' && Chart.instances) {
+                                setTimeout(() => {
+                                    Object.values(Chart.instances).forEach(instance => {
+                                        if (instance.options && instance.options.scales) {
+                                            const xTicks = instance.options.scales.x ? instance.options.scales.x.ticks : null;
+                                            const yTicks = instance.options.scales.y ? instance.options.scales.y.ticks : null;
+                                            const yGrid = instance.options.scales.y ? instance.options.scales.y.grid : null;
+
+                                            if (xTicks) xTicks.color = isDark ? '#94a3b8' : '#64748b';
+                                            if (yTicks) yTicks.color = isDark ? '#94a3b8' : '#64748b';
+                                            if (yGrid) yGrid.color = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+                                            instance.update();
+                                        }
+                                    });
+                                }, 50);
+                            }
+                        });
+                    }
+                })();
 
             // Global UX: Clear zero on focus
             document.addEventListener('focus', function (e) {
@@ -730,6 +803,9 @@ if ($is_logged_in) {
 
             // Initialize DataTables for all list tables
             $(document).ready(function () {
+                if ($.fn.dataTable) {
+                    $.fn.dataTable.ext.errMode = 'none';
+                }
                 $('.ns-table').DataTable({
                     "pageLength": 25,
                     "order": [], // Maintain server-side sorting (latest created on top)
@@ -739,7 +815,7 @@ if ($is_logged_in) {
                         "lengthMenu": "Show _MENU_ entries",
                         "search": "Quick Search:"
                     },
-                    "initComplete": function(settings, json) {
+                    "initComplete": function (settings, json) {
                         if ($('#inactive-filter-container').length) {
                             $('#inactive-filter-container').appendTo('.dataTables_length');
                             $('#inactive-filter-container').show();
@@ -753,12 +829,12 @@ if ($is_logged_in) {
             const toast = document.getElementById('ns-notification');
             const icon = toast.querySelector('i');
             const text = toast.querySelector('span');
-            
+
             toast.className = 'show ' + type;
             icon.className = 'fas ' + (type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle');
             icon.style.color = type === 'success' ? '#2ecc71' : '#e74c3c';
             text.innerText = message;
-            
+
             setTimeout(() => {
                 toast.classList.remove('show');
             }, 4000);
@@ -766,7 +842,7 @@ if ($is_logged_in) {
 
         function nsDelete(table, id, callback) {
             if (!confirm('Are you sure you want to delete this record?')) return;
-            
+
             const payload = {
                 action: 'delete',
                 table: table,
@@ -779,20 +855,20 @@ if ($is_logged_in) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             })
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    nsNotify(data.message);
-                    if (callback) callback();
-                    else location.reload();
-                } else {
-                    nsNotify(data.message || 'Delete failed', 'error');
-                }
-            })
-            .catch(err => nsNotify('Network error', 'error'));
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        nsNotify(data.message);
+                        if (callback) callback();
+                        else location.reload();
+                    } else {
+                        nsNotify(data.message || 'Delete failed', 'error');
+                    }
+                })
+                .catch(err => nsNotify('Network error', 'error'));
         }
     </script>
-    
+
     <div id="ns-notification">
         <i></i>
         <span></span>
@@ -826,15 +902,18 @@ if ($is_logged_in) {
             };
 
             // Close on click outside
-            modal.onclick = function(e) {
+            modal.onclick = function (e) {
                 if (e.target === modal) cleanup();
             };
         }
     </script>
     <!-- Global Confirmation Modal -->
-    <div id="ns-modal" style="display: none; position: fixed; z-index: 10001; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
-        <div style="background-color: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); width: 400px; max-width: 90%; text-align: center; font-family: inherit;">
-            <div style="font-size: 40px; color: #f39c12; margin-bottom: 15px;"><i class="fas fa-exclamation-triangle"></i></div>
+    <div id="ns-modal"
+        style="display: none; position: fixed; z-index: 10001; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div
+            style="background-color: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); width: 400px; max-width: 90%; text-align: center; font-family: inherit;">
+            <div style="font-size: 40px; color: #f39c12; margin-bottom: 15px;"><i
+                    class="fas fa-exclamation-triangle"></i></div>
             <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--ns-primary);">Confirmation Required</h3>
             <p id="modal-message" style="margin-bottom: 25px; color: #555; line-height: 1.5; font-size: 15px;"></p>
             <div style="display: flex; justify-content: center; gap: 15px;">

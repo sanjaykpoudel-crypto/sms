@@ -15,20 +15,25 @@ if ($id) {
         'memo' => '',
         'status' => 'posted',
         // Optional default account (e.g. acc-6160 - Miscellaneous Expense)
-        'party_id' => 'acc-6160' 
+        'party_id' => 'acc-6160'
     ];
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku, cost_price, current_stock FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
-$expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$expense_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$locations = $db->fetchAll("SELECT id, name FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY name ASC");
+$default_loc_id = get_user_default_location_id();
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-warehouse" style="margin-right: 10px; color: var(--ns-accent);"></i>
         <?php echo $id ? 'Edit' : 'New'; ?> Inventory Adjustment</div>
     <div class="ns-page-actions">
-        <button type="submit" form="adjustment-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
+        <button type="submit" form="adjustment-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i>
+            Save</button>
         <?php if ($id): ?>
-            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/adjustment')"><i class="fas fa-trash-alt"></i> Delete</button>
+            <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
+                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/adjustment')"><i
+                    class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
         <a href="?page=transactions/adjustment" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
@@ -44,13 +49,15 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
             <div style="flex: 1; min-width: 300px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Adjustment #</label>
-                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number'] ?? ''; ?>" readonly style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
+                    <input type="text" name="txn_number" class="ns-input"
+                        value="<?php echo $data['txn_number'] ?? ''; ?>" readonly
+                        style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Adjustment Account <span class="ns-required">*</span></label>
                     <select name="adjustment_account_id" class="ns-select" required>
                         <option value="">Select Account</option>
-                        <?php foreach($expense_accounts as $acc): ?>
+                        <?php foreach ($expense_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['party_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($acc['account_name']); ?>
                             </option>
@@ -61,11 +68,13 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
             <div style="flex: 1; min-width: 300px;">
                 <div class="ns-form-group">
                     <label class="ns-label">Date <span class="ns-required">*</span></label>
-                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>" required>
+                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>"
+                        required>
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Memo / Reason</label>
-                    <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>" placeholder="e.g., Damaged items, annual audit recount...">
+                    <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>"
+                        placeholder="e.g., Damaged items, annual audit recount...">
                 </div>
             </div>
         </div>
@@ -76,13 +85,16 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                 <thead>
                     <tr>
                         <th width="36" style="text-align: center;">#</th>
-                        <th width="220">Item Name <span class="ns-required">*</span></th>
+                        <th width="200">Item Name <span class="ns-required">*</span></th>
+                        <th width="150">Location <span class="ns-required">*</span></th>
                         <th width="100" style="text-align: right;">Current Stock</th>
-                        <th width="120" style="text-align: right;">Adjustment Qty (+/-) <span class="ns-required">*</span></th>
+                        <th width="120" style="text-align: right;">Adjustment Qty (+/-) <span
+                                class="ns-required">*</span></th>
                         <th width="100" style="text-align: right; color: #312e81;">New Stock</th>
                         <th width="80" style="text-align: center;">Unit</th>
                         <th width="110" style="text-align: right;">Current Cost</th>
-                        <th width="120" style="text-align: right;">New/Adjusted Cost <span class="ns-required">*</span></th>
+                        <th width="120" style="text-align: right;">New/Adjusted Cost <span class="ns-required">*</span>
+                        </th>
                         <th width="130" style="text-align: right; color: var(--ns-primary);">Adjusted Value</th>
                         <th width="55" style="text-align: center;">Actions</th>
                     </tr>
@@ -98,6 +110,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                         $adjustedVal = $isNew ? '0.00' : ($ti['quantity'] * $ti['unit_price']);
                         $unit = $isNew ? '' : ($ti['unit'] ?? '');
                         $selItem = $isNew ? '' : $ti['item_id'];
+                        $selLoc  = $isNew ? $default_loc_id : ($ti['location_id'] ?? $default_loc_id);
                         ?>
                         <tr>
                             <td style="text-align: center; vertical-align: middle;"><?php echo $idx + 1; ?></td>
@@ -109,15 +122,37 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
                                     <?php endforeach; ?>
                                 </select>
                             </td>
-                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="" readonly style="background: #f8fafc; color: #475569; font-weight: 600;"></td>
-                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num" value="<?php echo $qty; ?>" step="any" onfocus="this.select()" oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" placeholder="e.g. -5 or 10" required></td>
-                            <td><input type="text" class="ns-input new-stock-input ns-input-num ns-input-readonly" value="" readonly style="background: #eef2ff; color: #312e81; font-weight: 700;" tabindex="-1"></td>
-                            <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
-                            <td><input type="number" class="ns-input current-cost-input ns-input-num ns-input-readonly" value="<?php echo $currentCost; ?>" readonly></td>
-                            <td><input type="number" name="rate[]" class="ns-input new-cost-input ns-input-num" value="<?php echo $newCost; ?>" min="0" step="any" onfocus="this.select()" oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" required></td>
-                            <td><input type="number" name="amount[]" class="ns-input amount-input ns-input-num ns-input-subtotal" value="<?php echo $adjustedVal; ?>" readonly></td>
+                            <td>
+                                <select name="line_location_id[]" class="ns-select loc-select" onchange="adjFetchLocationStock(this)" required>
+                                    <option value="">Select location...</option>
+                                    <?php foreach ($locations as $loc): ?>
+                                        <option value="<?php echo $loc['id']; ?>" <?php echo $loc['id'] == $selLoc ? 'selected' : ''; ?>><?php echo htmlspecialchars($loc['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value=""
+                                    readonly style="background: #f0fdf4; color: #166534; font-weight: 700; text-align: right;"
+                                    title="Current stock at selected location"></td>
+                            <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num"
+                                    value="<?php echo $qty; ?>" step="any" onfocus="this.select()"
+                                    oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" placeholder="e.g. -5 or 10"
+                                    required></td>
+                            <td><input type="text" class="ns-input new-stock-input ns-input-num ns-input-readonly" value=""
+                                    readonly style="background: #eef2ff; color: #312e81; font-weight: 700;" tabindex="-1">
+                            </td>
+                            <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;"
+                                    value="<?php echo htmlspecialchars($unit); ?>" readonly tabindex="-1"></td>
+                            <td><input type="number" class="ns-input current-cost-input ns-input-num ns-input-readonly"
+                                    value="<?php echo $currentCost; ?>" readonly></td>
+                            <td><input type="number" name="rate[]" class="ns-input new-cost-input ns-input-num"
+                                    value="<?php echo $newCost; ?>" min="0" step="any" onfocus="this.select()"
+                                    oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" required></td>
+                            <td><input type="number" name="amount[]"
+                                    class="ns-input amount-input ns-input-num ns-input-subtotal"
+                                    value="<?php echo $adjustedVal; ?>" readonly></td>
                             <td style="text-align: center;">
-                                <span class="ns-line-btn ns-remove-line" onclick="nsRemoveLine(this)" title="Remove Line"><i class="fas fa-trash-alt"></i></span>
+                                <span class="ns-line-btn ns-remove-line" onclick="nsRemoveLine(this)" title="Remove Line"><i
+                                        class="fas fa-trash-alt"></i></span>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -126,14 +161,17 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
         </div>
 
         <div class="ns-grid-actions">
-            <button type="button" class="ns-btn" onclick="nsAddLine('adjustment-items-table')"><i class="fas fa-plus-circle"></i> Add Line</button>
-            <button type="button" class="ns-btn" onclick="nsClearLines('adjustment-items-table')" style="color: var(--ns-danger);"><i class="fas fa-eraser"></i> Clear All</button>
+            <button type="button" class="ns-btn" onclick="nsAddLine('adjustment-items-table')"><i
+                    class="fas fa-plus-circle"></i> Add Line</button>
+            <button type="button" class="ns-btn" onclick="nsClearLines('adjustment-items-table')"
+                style="color: var(--ns-danger);"><i class="fas fa-eraser"></i> Clear All</button>
         </div>
 
         <div class="ns-total-box" style="margin-top: 20px;">
             <div class="ns-total-row" style="border-top: 2px solid var(--ns-primary); padding-top: 8px;">
                 <span style="color: var(--ns-primary); font-weight: bold; font-size: 13px;">NET ADJUSTED VALUE</span>
-                <span id="adjustment-grand-total" style="font-size: 20px; color: var(--ns-primary); font-weight: bold;">Rs. 0.00</span>
+                <span id="adjustment-grand-total"
+                    style="font-size: 20px; color: var(--ns-primary); font-weight: bold;">Rs. 0.00</span>
             </div>
         </div>
         <div style="clear: both; margin-bottom: 50px;"></div>
@@ -141,10 +179,10 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
 </div>
 
 <script>
-    document.getElementById('adjustment-form').addEventListener('submit', function(e) {
+    document.getElementById('adjustment-form').addEventListener('submit', function (e) {
         e.preventDefault();
         const form = this;
-        
+
         let hasValidItems = false;
         let validationError = '';
         const rows = form.querySelectorAll('#adjustment-items-table tbody tr');
@@ -168,7 +206,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
 
         const submitBtn = document.querySelector('button[form="adjustment-form"]');
         const originalText = submitBtn.innerHTML;
-        
+
         submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
         submitBtn.disabled = true;
 
@@ -177,24 +215,24 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
             method: 'POST',
             body: formData
         })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'success') {
-                nsNotify(data.message || 'Adjustment saved successfully.');
-                setTimeout(() => {
-                    window.location.href = '?page=transactions/view&id=' + data.id;
-                }, 1500);
-            } else {
-                nsNotify(data.message || 'Error occurred while saving.', 'error');
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    nsNotify(data.message || 'Adjustment saved successfully.');
+                    setTimeout(() => {
+                        window.location.href = '?page=transactions/view&id=' + data.id;
+                    }, 1500);
+                } else {
+                    nsNotify(data.message || 'Error occurred while saving.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
+            })
+            .catch(err => {
+                nsNotify('Network error or server failed.', 'error');
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
-            }
-        })
-        .catch(err => {
-            nsNotify('Network error or server failed.', 'error');
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        });
+            });
     });
 
     function adjCalcRow(el) {
@@ -225,7 +263,7 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
         document.querySelectorAll('#adjustment-items-table tbody tr').forEach(row => {
             netTotal += parseFloat(row.querySelector('.amount-input')?.value) || 0;
         });
-        document.getElementById('adjustment-grand-total').innerText = 'Rs. ' + Math.abs(netTotal).toLocaleString(undefined, {minimumFractionDigits: 2});
+        document.getElementById('adjustment-grand-total').innerText = 'Rs. ' + Math.abs(netTotal).toLocaleString(undefined, { minimumFractionDigits: 2 });
     }
 
     function adjFetchItem(select) {
@@ -242,18 +280,47 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
             return;
         }
 
+        // Fetch item details (cost, unit)
         fetch('api/get_item_details.php?id=' + itemId)
             .then(r => r.json())
             .then(data => {
                 if (data.error) return;
-                const currentStock = (data.current_stock !== undefined && data.current_stock !== null) ? parseFloat(data.current_stock) : 0;
-                row.querySelector('.stock-input').value = currentStock.toFixed(2);
                 row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
                 row.querySelector('.current-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
                 row.querySelector('.new-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
-                
-                adjCalcRow(row.querySelector('.qty-input'));
+
+                // Now fetch location-specific stock
+                adjFetchLocationStock(row.querySelector('.loc-select'));
             });
+    }
+
+    function adjFetchLocationStock(locSelect) {
+        const row = locSelect.closest('tr');
+        const itemSel = row.querySelector('select[name="item_id[]"]');
+        const itemId = itemSel ? itemSel.value : '';
+        const locId  = locSelect.value;
+
+        const stockInput   = row.querySelector('.stock-input');
+        const newStockEl   = row.querySelector('.new-stock-input');
+
+        if (!itemId || !locId) {
+            stockInput.value = '';
+            if (newStockEl) newStockEl.value = '';
+            return;
+        }
+
+        stockInput.value = '...';
+        fetch('api/get_item_location_stock.php?item_id=' + encodeURIComponent(itemId) + '&location_id=' + encodeURIComponent(locId))
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    stockInput.value = '0.00';
+                } else {
+                    stockInput.value = parseFloat(data.stock).toFixed(2);
+                }
+                adjCalcRow(row.querySelector('.qty-input'));
+            })
+            .catch(() => { stockInput.value = '0.00'; adjCalcRow(row.querySelector('.qty-input')); });
     }
 
     function adjCheckEnter(e) {
@@ -270,11 +337,20 @@ $expense_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM ac
     }
 
     // Auto-fetch details on load for editing
-    window.addEventListener('load', function() {
+    window.addEventListener('load', function () {
         document.querySelectorAll('#adjustment-items-table tbody tr').forEach(row => {
-            const sel = row.querySelector('select');
-            if (sel && sel.value) {
-                adjFetchItem(sel);
+            const itemSel = row.querySelector('select[name="item_id[]"]');
+            const locSel  = row.querySelector('select[name="line_location_id[]"]');
+            if (itemSel && itemSel.value && locSel && locSel.value) {
+                // Fetch cost/unit for the item, then fetch location stock
+                fetch('api/get_item_details.php?id=' + itemSel.value)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.error) return;
+                        row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
+                        row.querySelector('.current-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
+                        adjFetchLocationStock(locSel);
+                    });
             }
         });
         adjCalcTotals();

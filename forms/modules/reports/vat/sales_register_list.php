@@ -8,6 +8,7 @@ $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to = $_GET['date_to'] ?? $today;
 
 // VAT on Sales (Invoices + POS — no double-counting of POS summaries)
+$loc_sql = rpt_location_sql('th');
 $sales = $db->fetchAll("
     SELECT ci.invoice_date AS txn_date, ci.invoice_number AS txn_number, c.full_name AS party, c.pan_number,
            ci.subtotal, ci.tax_amount, ci.total_amount, ci.payment_status, 'Invoice' as txn_type
@@ -19,7 +20,7 @@ $sales = $db->fetchAll("
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND ci.tax_amount > 0
       AND ci.invoice_number NOT LIKE 'POS-%'
-      AND ci.invoice_number NOT LIKE 'INV-POS-%'
+      AND ci.invoice_number NOT LIKE 'INV-POS-%' {$loc_sql}
 
     UNION ALL
 

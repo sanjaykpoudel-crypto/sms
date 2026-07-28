@@ -7,7 +7,7 @@ $status_filter = $show_all ? "" : " AND c.is_active = 1 ";
 
 $customers = $db->fetchAll(
     "
-    SELECT c.*, 
+    SELECT c.*, loc.name as location_name,
     ((
         SELECT COALESCE(SUM(ci.total_amount), 0) 
         FROM customer_invoices ci 
@@ -30,14 +30,25 @@ $customers = $db->fetchAll(
         FROM customer_invoices ci 
         JOIN transaction_headers th ON ci.header_id = th.id 
         WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ) + (
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0)
+    ) + COALESCE((
+        SELECT SUM(
+            CASE WHEN j.party_id = c.id THEN (CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) ELSE 0 END
+        ) - COALESCE((
+            SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
+            FROM transaction_links tl
+            JOIN transaction_headers ph ON tl.parent_id = ph.id
+            JOIN payments p ON ph.id = p.header_id
+            WHERE tl.child_id = th.id 
+              AND tl.link_type LIKE 'payment:%'
+              AND p.customer_id = c.id
+              AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+        ), 0.00)
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id
-        LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
-        WHERE (j.party_id = c.id OR th.party_id = c.id) AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
-    )) AS total_due
+        WHERE j.party_id = c.id AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+    ), 0.00)) AS total_due
     FROM customers c 
+    LEFT JOIN locations loc ON c.location_id = loc.id
     WHERE c.is_deleted = 0 $status_filter
     ORDER BY c.full_name ASC
 "
@@ -64,6 +75,7 @@ $customers = $db->fetchAll(
                 <tr>
                     <th width="50" style="text-align: center;">#</th>
                     <th>Full Name</th>
+                    <th>Location</th>
                     <th>Type</th>
                     <th>Phone</th>
                     <th>Email</th>
@@ -81,6 +93,7 @@ $customers = $db->fetchAll(
                 <tr>
                     <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td><?php echo htmlspecialchars($row['full_name']); ?></td>
+                    <td><span style="font-weight: 600; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #e0f2fe; color: #0369a1;"><?php echo htmlspecialchars($row['location_name'] ?? 'Gokarna'); ?></span></td>
                     <td><?php echo htmlspecialchars(ucfirst($row['customer_type'])); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>
                     <td><?php echo htmlspecialchars($row['email']); ?></td>

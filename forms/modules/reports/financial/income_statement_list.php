@@ -7,6 +7,8 @@ $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? date('Y-m-01');
 $date_to    = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('h');
+
 // Fetch GL Revenue (Credit balances on income accounts)
 $revenue_rows = $db->fetchAll("
     SELECT a.account_name, -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
@@ -16,7 +18,7 @@ $revenue_rows = $db->fetchAll("
     WHERE a.account_type = 'income'
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
 ", [$date_from, $date_to]);
@@ -29,10 +31,10 @@ $cogs = (float)($db->fetchOne("
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND a.account_subtype = 'cogs'
+    WHERE a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold'
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
 ", [$date_from, $date_to])['bal'] ?? 0);
 
 $gross_profit = $total_revenue - $cogs;
@@ -43,10 +45,10 @@ $expenses_rows = $db->fetchAll("
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND a.account_subtype != 'cogs'
+    WHERE a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold'
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING amount != 0
     ORDER BY a.account_name
@@ -66,15 +68,11 @@ $net_profit = $gross_profit - $total_expenses;
 <?php rpt_filter_bar('Income Statement (P&L)', [
     ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
     ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
+    rpt_location_filter(),
 ], ''); ?>
 
 <div class="ns-portlet" style="max-width:700px;margin:0 auto">
   <div class="ns-portlet-content" style="padding:0">
-    <div style="text-align:center;padding:20px 16px;border-bottom:2px solid #003087">
-      <div style="font-size:18px;font-weight:800;color:#003087">INCOME STATEMENT</div>
-      <div style="font-size:13px;color:#666;margin-top:4px">Period: <?= $date_from ?> to <?= $date_to ?></div>
-    </div>
-
     <div class="is-section">REVENUE</div>
     <?php if (empty($revenue_rows)): ?>
       <div class="is-row"><span style="color:#888">No revenue recorded.</span><span>Rs 0.00</span></div>

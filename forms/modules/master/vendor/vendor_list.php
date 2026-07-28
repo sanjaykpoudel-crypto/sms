@@ -6,25 +6,51 @@ $show_all = isset($_GET['show_all']) && $_GET['show_all'] == '1';
 $status_filter = $show_all ? "" : " AND v.is_active = 1 ";
 
 $vendors = $db->fetchAll("
-    SELECT v.*, 
+    SELECT v.*, loc.name as location_name,
     ((
         SELECT COALESCE(SUM(vb.total_amount), 0) 
         FROM vendor_bills vb 
         JOIN transaction_headers th ON vb.header_id = th.id 
         WHERE vb.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ) + (
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0)
+        SELECT COALESCE(SUM(CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0)
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (j.party_id = v.id OR th.party_id = v.id) AND (j.party_type = 'vendor' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+        WHERE j.party_id = v.id AND (j.party_type = 'vendor' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
     )) AS total_purchase,
     (
         SELECT COALESCE(SUM(p.amount), 0) 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id 
         WHERE p.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ) AS total_paid
+    ) AS total_paid,
+    (
+        COALESCE((
+            SELECT SUM(vb.balance_due) 
+            FROM vendor_bills vb 
+            JOIN transaction_headers th ON vb.header_id = th.id 
+            WHERE vb.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+        ), 0.00) 
+        + 
+        COALESCE((
+            SELECT SUM(
+                CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) ELSE 0 END
+            ) - COALESCE((
+                SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
+                FROM transaction_links tl
+                JOIN transaction_headers ph ON tl.parent_id = ph.id
+                WHERE tl.child_id = th.id 
+                  AND tl.link_type LIKE 'payment:%'
+                  AND ph.txn_type = 'vendor_payment'
+                  AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+            ), 0.00)
+            FROM journal_entries j
+            JOIN transaction_headers th ON j.header_id = th.id
+            WHERE j.party_id = v.id AND (j.party_type = 'vendor' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+        ), 0.00)
+    ) AS total_due
     FROM vendors v 
+    LEFT JOIN locations loc ON v.location_id = loc.id
     WHERE v.is_deleted = 0 $status_filter
     ORDER BY v.company_name ASC
 ");
@@ -50,6 +76,7 @@ $vendors = $db->fetchAll("
                 <tr>
                     <th width="50" style="text-align: center;">#</th>
                     <th>Company Name</th>
+                    <th>Location</th>
                     <th>Contact</th>
                     <th>Phone</th>
                     <th>Email</th>
@@ -62,11 +89,12 @@ $vendors = $db->fetchAll("
             </thead>
             <tbody>
                 <?php $sn = 1; foreach ($vendors as $row): 
-                    $remaining = $row['total_purchase'] - $row['total_paid'];
+                    $remaining = $row['total_due'];
                 ?>
                 <tr>
                     <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                     <td><?php echo htmlspecialchars($row['company_name']); ?></td>
+                    <td><span style="font-weight: 600; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #e0f2fe; color: #0369a1;"><?php echo htmlspecialchars($row['location_name'] ?? 'Gokarna'); ?></span></td>
                     <td><?php echo htmlspecialchars($row['contact_name']); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>
                     <td><?php echo htmlspecialchars($row['email']); ?></td>

@@ -16,13 +16,13 @@ $date_to   = $_GET['date_to']   ?? $today;
 
 // 1. Fetch Loans & Initial Investment Accounts
 $loans = $db->fetchAll("
-    SELECT a.account_code, a.account_name,
+    SELECT REPLACE(a.id, 'acc-', '') as account_code, a.account_name,
            SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as balance
     FROM accounts a
     LEFT JOIN journal_entries j ON a.id = j.account_id
     LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
-    WHERE a.account_code LIKE '25%' OR a.account_code = '3100'
-    GROUP BY a.id, a.account_code, a.account_name
+    WHERE a.id LIKE 'acc-25%' OR a.id = 'acc-3100'
+    GROUP BY a.id, a.account_name
     HAVING balance != 0
 ");
 
@@ -40,7 +40,7 @@ $shutter_cost = (float)($db->fetchOne("
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_code = '1510' AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
+    WHERE a.id = 'acc-1510' AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
 ")['total'] ?? 290000.00);
 
 $initial_setup_expenses = (float)($db->fetchOne("
@@ -53,13 +53,15 @@ $initial_setup_expenses = (float)($db->fetchOne("
 // Total Initial Outlay Target
 $total_investment_target = $total_loans;
 
+$loc_sql = rpt_location_sql('h');
+
 // 3. Calculate Period Operating Profit / Loss
 $revenue = (float)($db->fetchOne("
     SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) AS v 
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'income' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.account_type = 'income' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
 
 $cogs = (float)($db->fetchOne("
@@ -67,7 +69,7 @@ $cogs = (float)($db->fetchOne("
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_code = '5100' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    WHERE a.id = 'acc-5100' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
 
 $operating_expenses = (float)($db->fetchOne("
@@ -75,8 +77,8 @@ $operating_expenses = (float)($db->fetchOne("
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND a.account_code != '5100' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND (h.txn_number IS NULL OR h.txn_number != 'JV-20260717-001')
+    WHERE a.account_type = 'expense' AND a.id != 'acc-5100' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND (h.txn_number IS NULL OR h.txn_number != 'JV-20260717-001') {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
 
 $gross_profit   = $revenue - $cogs;

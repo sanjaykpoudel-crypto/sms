@@ -299,6 +299,22 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <a href="?page=transactions/inventory_transfer/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#0284c7;"></span>
+                    <span>
+                        New Inventory Transfer <span class="txn-badge-new">Multi-Loc</span>
+                        <span class="txn-desc">Transfer stock between store locations and warehouses</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <a href="?page=transactions/inventory_transfer" class="txn-link-item">
+                    <span class="txn-dot" style="background:#0369a1;"></span>
+                    <span>
+                        Inventory Transfer Register
+                        <span class="txn-desc">View log of stock transfers between locations</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
             </div>
         </div>
 

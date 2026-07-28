@@ -7,6 +7,7 @@ $today = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('h');
 $rows = $db->fetchAll("
     SELECT 
         i.sku, i.item_name, rc.name as item_category,
@@ -15,6 +16,7 @@ $rows = $db->fetchAll("
             WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-SUM-%' THEN l.line_total
             ELSE l.line_total - l.tax_amount
         END)  AS gross_revenue,
+        SUM(l.cost_price * l.quantity) AS total_cost,
         SUM(l.gross_profit) AS gross_profit
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
@@ -22,15 +24,15 @@ $rows = $db->fetchAll("
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE h.txn_type IN ('customer_invoice','POS')
       AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY i.id
     ORDER BY gross_revenue DESC
 ", [$date_from, $date_to]);
 
 $total_revenue = array_sum(array_column($rows, 'gross_revenue'));
+$total_cost    = array_sum(array_column($rows, 'total_cost'));
 $total_profit  = array_sum(array_column($rows, 'gross_profit'));
 $total_qty     = array_sum(array_column($rows, 'qty_sold'));
-?>
 ?>
 
 <?php rpt_filter_bar('Sales by Item', [
@@ -40,6 +42,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
 
 <div class="rpt-summary">
     <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_revenue) ?></div><div class="lbl">Total Revenue</div></div>
+    <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_cost) ?></div><div class="lbl">Total Cost</div></div>
     <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_profit) ?></div><div class="lbl">Gross Profit</div></div>
     <div class="rpt-summary-card"><div class="val"><?= number_format($total_qty) ?></div><div class="lbl">Total Units Sold</div></div>
     <div class="rpt-summary-card"><div class="val"><?= $total_revenue > 0 ? number_format($total_profit/$total_revenue*100,1).'%' : '0%' ?></div><div class="lbl">Profit Margin</div></div>
@@ -52,6 +55,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
         <th>Item Name</th><th>Category</th>
         <th style="text-align:right">Qty Sold</th>
         <th style="text-align:right">Revenue</th>
+        <th style="text-align:right">Total Cost</th>
         <th style="text-align:right">Gross Profit</th>
         <th style="text-align:right">Margin %</th>
       </tr></thead>
@@ -65,6 +69,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td style="text-align:right"><?= number_format($r['qty_sold'],2) ?></td>
           <td style="text-align:right"><?= rpt_currency($r['gross_revenue']) ?></td>
+          <td style="text-align:right"><?= rpt_currency($r['total_cost']) ?></td>
           <td style="text-align:right"><?= rpt_currency($r['gross_profit']) ?></td>
           <td style="text-align:right;color:<?= $color ?>;font-weight:600"><?= number_format($margin,1) ?>%</td>
         </tr>
@@ -74,6 +79,7 @@ $total_qty     = array_sum(array_column($rows, 'qty_sold'));
         <td colspan="2">TOTAL</td>
         <td style="text-align:right"><?= number_format($total_qty,2) ?></td>
         <td style="text-align:right"><?= rpt_currency($total_revenue) ?></td>
+        <td style="text-align:right"><?= rpt_currency($total_cost) ?></td>
         <td style="text-align:right"><?= rpt_currency($total_profit) ?></td>
         <td style="text-align:right"><?= $total_revenue > 0 ? number_format($total_profit/$total_revenue*100,1).'%' : '0%' ?></td>
       </tr></tfoot>

@@ -25,6 +25,21 @@
                 <span style="opacity: 0.3;">|</span>
                 <span>Query: <strong id="dv4-query-time">—</strong></span>
             </div>
+            <div style="display: flex; align-items: center; gap: 6px; background: #ffffff; padding: 4px 10px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                <i class="fas fa-map-marker-alt" style="font-size: 12px; color: #0284c7;"></i>
+                <label style="font-size: 12px; font-weight: 600; color: #475569; white-space: nowrap; margin: 0;">Location:</label>
+                <select id="dv4-location-select" class="ns-select" style="height: 28px; padding: 2px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #cbd5e1; cursor: pointer; background: #fff; font-weight: 600; color: #1e293b;">
+                    <option value="all">All Locations</option>
+                    <?php 
+                    $user_def_loc = get_user_default_location_id();
+                    foreach (get_active_locations() as $loc): 
+                    ?>
+                        <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($user_def_loc == $loc['id']) ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <button class="dv4-btn" id="dv4-theme-btn" title="Toggle Dark/Light Mode">
                 <i class="fas fa-moon"></i> Theme
             </button>
@@ -71,6 +86,13 @@
             <div class="dv4-kpi-value" id="kpi-gross-profit-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-gross-profit-sub"></div>
         </a>
+        <!-- Total Discount Given Today -->
+        <a class="dv4-kpi kpi-discount dv4-kpi-link" id="kpi-tile-discount" style="background: linear-gradient(135deg, #f59e0b, #d97706);" href="?page=reports/sales/register" title="View Sales & Discounts">
+            <i class="fas fa-tags dv4-kpi-icon"></i>
+            <div class="dv4-kpi-label">Today's Discount</div>
+            <div class="dv4-kpi-value" id="kpi-discount-val">—</div>
+            <div class="dv4-kpi-sub" id="kpi-discount-sub"></div>
+        </a>
         <!-- Today's Purchase -->
         <a class="dv4-kpi kpi-bank dv4-kpi-link" id="kpi-tile-purchase" style="background: linear-gradient(135deg, #6366f1, #4f46e5);" href="#" title="View Purchases Report">
             <i class="fas fa-shopping-cart dv4-kpi-icon"></i>
@@ -100,14 +122,14 @@
             <div class="dv4-kpi-sub" id="kpi-bank-sub"></div>
         </a>
         <!-- Receivables (AR) -->
-        <a class="dv4-kpi kpi-ar dv4-kpi-link" id="kpi-tile-ar" href="#" title="View AR Statement">
+        <a class="dv4-kpi kpi-ar dv4-kpi-link" id="kpi-tile-ar" href="?page=reports/sales/open_invoices" title="View Open Invoices Report">
             <i class="fas fa-hand-holding-usd dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Receivables (AR)</div>
             <div class="dv4-kpi-value" id="kpi-ar-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-ar-sub"></div>
         </a>
         <!-- Payables (AP) -->
-        <a class="dv4-kpi kpi-ap dv4-kpi-link" id="kpi-tile-ap" href="#" title="View AP Report">
+        <a class="dv4-kpi kpi-ap dv4-kpi-link" id="kpi-tile-ap" href="?page=reports/vendors/open_bills" title="View Open Bills Report">
             <i class="fas fa-file-invoice dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Payables (AP)</div>
             <div class="dv4-kpi-value" id="kpi-ap-val">—</div>

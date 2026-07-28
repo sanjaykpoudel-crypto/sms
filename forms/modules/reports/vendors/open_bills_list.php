@@ -8,13 +8,31 @@ $as_of_date = $_GET['as_of_date'] ?? $today;
 $vendor_id  = $_GET['vendor_id']  ?? '';
 $status     = $_GET['status']     ?? ''; // '' or 'overdue'
 
-// Fetch vendors for filter dropdown
-$vendors_list = $db->fetchAll("SELECT id, company_name FROM vendors WHERE is_deleted = 0 ORDER BY company_name ASC");
+// Fetch only vendors with open balances for dynamic filter dropdown
+$vendors_list = $db->fetchAll("
+    SELECT DISTINCT v.id, v.company_name 
+    FROM vendors v 
+    WHERE v.is_deleted = 0 
+      AND (
+          EXISTS (
+              SELECT 1 FROM vendor_bills vb 
+              JOIN transaction_headers th ON vb.header_id = th.id 
+              WHERE vb.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void','voided','draft') AND vb.balance_due > 0.01
+          )
+          OR EXISTS (
+              SELECT 1 FROM journal_entries j 
+              JOIN transaction_headers th ON j.header_id = th.id 
+              WHERE j.party_id = v.id AND (j.party_type = 'vendor' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void','voided','draft') AND th.txn_type IN ('Journal','journal_entry')
+          )
+      )
+    ORDER BY v.company_name ASC
+");
 $vendor_options = ['' => 'All Vendors'];
 foreach ($vendors_list as $v) {
     $vendor_options[$v['id']] = $v['company_name'];
 }
 
+$loc_sql_th = rpt_location_sql('th');
 $where_vend = ($vendor_id !== '') ? " AND vb.vendor_id = '$vendor_id'" : "";
 $where_vend_j = ($vendor_id !== '') ? " AND (j.party_id = '$vendor_id' OR th.party_id = '$vendor_id')" : "";
 $where_overdue = ($status === 'overdue') ? " AND vb.due_date < '$as_of_date'" : "";
@@ -25,7 +43,7 @@ $sql = "
         th.id as header_id,
         th.txn_date as bill_date,
         th.txn_number as bill_number,
-        v.company_name as vendor_name,
+        COALESCE(v.company_name, 'Unknown Vendor') as vendor_name,
         vb.due_date,
         DATEDIFF(?, vb.due_date) as days_overdue,
         vb.total_amount,
@@ -36,7 +54,7 @@ $sql = "
     LEFT JOIN vendors v ON vb.vendor_id = v.id
     WHERE th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND vb.balance_due > 0.01 {$where_vend} {$where_overdue}
+      AND vb.balance_due > 0.01 {$where_vend} {$where_overdue} {$loc_sql_th}
 
     UNION ALL
 
@@ -44,24 +62,42 @@ $sql = "
         th.id as header_id,
         th.txn_date as bill_date,
         th.txn_number as bill_number,
-        v.company_name as vendor_name,
+        COALESCE(v.company_name, 'Unknown Vendor') as vendor_name,
         th.txn_date as due_date,
         DATEDIFF(?, th.txn_date) as days_overdue,
-        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
-        COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
-        (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due
+        SUM(CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        COALESCE((
+            SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
+            FROM transaction_links tl
+            JOIN transaction_headers ph ON tl.parent_id = ph.id
+            WHERE tl.child_id = th.id 
+              AND tl.link_type LIKE 'payment:%'
+              AND ph.txn_type = 'vendor_payment'
+              AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+        ), 0.00) as amount_paid,
+        (
+            SUM(CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            - 
+            COALESCE((
+                SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
+                FROM transaction_links tl
+                JOIN transaction_headers ph ON tl.parent_id = ph.id
+                WHERE tl.child_id = th.id 
+                  AND tl.link_type LIKE 'payment:%'
+                  AND ph.txn_type = 'vendor_payment'
+                  AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+            ), 0.00)
+        ) as balance_due
     FROM journal_entries j
     JOIN transaction_headers th ON j.header_id = th.id
-    LEFT JOIN vendors v ON COALESCE(j.party_id, th.party_id) = v.id
-    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
+    JOIN vendors v ON j.party_id = v.id
     WHERE (j.party_type = 'vendor' OR j.party_type IS NULL)
-      AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND th.txn_type IN ('Journal', 'journal_entry') {$where_vend_j} {$where_overdue_j}
-    GROUP BY th.id, th.txn_date, th.txn_number, v.company_name
+    GROUP BY th.id, th.txn_date, th.txn_number, v.id, v.company_name
     HAVING balance_due > 0.01
-    ORDER BY due_date ASC, bill_number DESC
+    ORDER BY vendor_name ASC, due_date ASC, bill_number DESC
 ";
 $params = [$as_of_date, $as_of_date];
 $rows = $db->fetchAll($sql, $params);

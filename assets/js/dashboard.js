@@ -613,12 +613,13 @@
             today_sales:        `?page=reports/sales/register&date_from=${today}&date_to=${today}`,
             today_expenses:     `?page=transactions/expense&date_from=${today}&date_to=${today}`,
             today_gross_profit: `?page=reports/financial/daily_profit&date_from=${today}&date_to=${today}`,
+            today_discount:     `?page=reports/sales/register&date_from=${today}&date_to=${today}`,
             today_purchase:     `?page=reports/purchases/by_vendor&date_from=${today}&date_to=${today}`,
             today_net_profit:   `?page=reports/financial/daily_profit&date_from=${today}&date_to=${today}`,
             cash_on_hand:    `?page=reports/financial/general_ledger&account_type=cash`,
             bank_balance:    `?page=reports/financial/general_ledger&account_type=bank`,
-            ar:              `?page=reports/customers/statement`,
-            ap:              `?page=reports/purchases/by_vendor`,
+            ar:              `?page=reports/sales/open_invoices`,
+            ap:              `?page=reports/vendors/open_bills`,
             inventory_value: `?page=reports/inventory/stock_summary`,
             low_stock:       `?page=reports/inventory/low_stock`
         };
@@ -709,6 +710,7 @@
             { id: 'kpi-sales-val',        sub: 'kpi-sales-sub',        k: 'today_sales',        suffix: 'vs yesterday', tile: 'kpi-tile-sales' },
             { id: 'kpi-expenses-val',     sub: 'kpi-expenses-sub',     k: 'today_expenses',     suffix: 'vs yesterday', tile: 'kpi-tile-expenses' },
             { id: 'kpi-gross-profit-val', sub: 'kpi-gross-profit-sub', k: 'today_gross_profit', suffix: 'vs yesterday', tile: 'kpi-tile-gross-profit' },
+            { id: 'kpi-discount-val',     sub: 'kpi-discount-sub',     k: 'today_discount',     suffix: 'vs yesterday', tile: 'kpi-tile-discount' },
             { id: 'kpi-purchase-val',     sub: 'kpi-purchase-sub',     k: 'today_purchase',     suffix: 'vs yesterday', tile: 'kpi-tile-purchase' },
             { id: 'kpi-net-profit-val',   sub: 'kpi-net-profit-sub',   k: 'today_net_profit',   suffix: 'vs yesterday', tile: 'kpi-tile-net-profit' },
             { id: 'kpi-cash-val',         sub: 'kpi-cash-sub',         k: 'cash_on_hand',       suffix: 'vs yesterday', tile: 'kpi-tile-cash' },
@@ -971,7 +973,7 @@
                 accounts.forEach(acc => {
                     const opt = document.createElement('option');
                     opt.value = acc.id;
-                    opt.textContent = acc.account_name + ' (' + acc.account_code + ')';
+                    opt.textContent = acc.account_name;
                     select.appendChild(opt);
                 });
                 // Restore previous selection if it still exists
@@ -1000,7 +1002,7 @@
         if (stats) stats.style.display = '';
         if (empty) empty.style.display = 'none';
         safe(() => {
-            if (headerName) headerName.textContent = ' — ' + acc.account_name + ' (' + acc.account_code + ')';
+            if (headerName) headerName.textContent = ' — ' + acc.account_name;
             const opening = parseFloat(acc.balance || 0) - parseFloat(acc.today_in || 0) + parseFloat(acc.today_out || 0);
             const openEl = el('ba-opening');
             if (openEl) { openEl.textContent = fmtFull(opening); openEl.style.color = opening >= 0 ? 'var(--dv4-text)' : '#ef4444'; }
@@ -1037,7 +1039,12 @@
     function refreshDashboard() {
         const loader = el('dv4-loader');
         if (loader) loader.classList.add('active');
-        fetch(CONFIG.API)
+        let url = CONFIG.API;
+        const locSel = el('dv4-location-select');
+        if (locSel && locSel.value) {
+            url += '?location_id=' + encodeURIComponent(locSel.value) + '&nocache=1';
+        }
+        fetch(url)
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'error') { console.error('[DV4] API Error:', data.message); if (loader) loader.classList.remove('active'); return; }
@@ -1077,6 +1084,8 @@
         initTheme(); initCharts(); initFAB(); initBankAccountSelect();
         const refreshBtn = el('dv4-refresh-btn');
         if (refreshBtn) refreshBtn.addEventListener('click', refreshDashboard);
+        const locSel = el('dv4-location-select');
+        if (locSel) locSel.addEventListener('change', refreshDashboard);
         const rangeSel = $('chart-sales-range');
         if (rangeSel) rangeSel.addEventListener('change', window.refreshSalesChart);
         refreshDashboard();

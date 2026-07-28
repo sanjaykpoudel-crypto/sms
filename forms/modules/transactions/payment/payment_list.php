@@ -17,7 +17,7 @@ $sql = "
         h.txn_date, 
         h.txn_number, 
         h.txn_type,
-        COALESCE(h.net_amount, SUM(p.amount), 0) as total_amount,
+        COALESCE(NULLIF(SUM(p.amount), 0), NULLIF(h.net_amount, 0), 0) as total_amount,
         GROUP_CONCAT(DISTINCT COALESCE(acc.account_name, p.payment_method) SEPARATOR ', ') as methods,
         MAX(COALESCE(c.full_name, v.company_name)) as party_name,
         h.created_by,

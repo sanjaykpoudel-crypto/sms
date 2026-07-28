@@ -7,6 +7,7 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('th');
 $rows = $db->fetchAll("
     SELECT 
         v.vendor_code, v.company_name, v.phone,
@@ -17,7 +18,7 @@ $rows = $db->fetchAll("
     FROM vendor_bills vb
     JOIN vendors v ON vb.vendor_id = v.id
     JOIN transaction_headers th ON vb.header_id = th.id
-    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY vb.vendor_id
     ORDER BY total_purchased DESC
 ", [$date_from, $date_to]);
@@ -43,6 +44,7 @@ $total_balance = array_sum(array_column($rows, 'balance_due'));
 <?php rpt_filter_bar('Purchase by Vendor', [
     ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
     ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
+    rpt_location_filter(),
 ], 'tbl-pur-vendor'); ?>
 
 <div class="rpt-summary">

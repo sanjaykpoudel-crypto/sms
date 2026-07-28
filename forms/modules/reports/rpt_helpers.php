@@ -24,13 +24,74 @@ function rpt_header(string $title) {
         .rpt-summary-card .lbl { font-size: 11px; color: #64748b; margin-top: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
         
         @media print { 
-            .rpt-header-print { display: block !important; } 
-            .rpt-toolbar, .ns-header, .ns-nav, .rpt-summary, .ns-card-header, .ns-card-tools, form { display: none !important; } 
+            .rpt-main-print-wrapper { width: 100% !important; border-collapse: collapse !important; border: none !important; margin: 0 !important; padding: 0 !important; }
+            .rpt-main-print-thead { display: table-header-group !important; }
+            thead { display: table-header-group !important; }
+            tfoot { display: table-footer-group !important; }
+            tr { break-inside: avoid !important; page-break-inside: avoid !important; }
+            .rpt-header-print { 
+                display: flex !important; 
+                align-items: center !important; 
+                justify-content: space-between !important; 
+                border-bottom: 2px solid #0f172a !important; 
+                padding-bottom: 12px !important; 
+                margin-bottom: 15px !important; 
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important; 
+            } 
+            .rpt-doc-title-print { 
+                display: block !important; 
+                text-align: center !important; 
+                font-size: 16px !important; 
+                font-weight: 800 !important; 
+                margin: 12px 0 12px 0 !important; 
+                text-transform: uppercase !important; 
+                letter-spacing: 0.5px !important; 
+                background: #f1f5f9 !important; 
+                padding: 6px 0 !important; 
+                border-radius: 4px !important; 
+                border: 1px solid #cbd5e1 !important; 
+                color: #003087 !important; 
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important; 
+            }
+            .rpt-filter-info-print { 
+                display: block !important; 
+                text-align: center !important; 
+                font-size: 11px !important; 
+                font-weight: 500 !important; 
+                color: #334155 !important; 
+                margin: -4px 0 15px 0 !important; 
+                padding: 5px 12px !important; 
+                background: #f8fafc !important; 
+                border-radius: 4px !important; 
+                border: 1px dashed #cbd5e1 !important; 
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important; 
+            }
+            .rpt-toolbar, .ns-header, .ns-nav, .rpt-summary, .ns-card-header, .ns-card-tools, form, .no-print, #whatsappModal, .modal, .modal-backdrop, .dataTables_length, .dataTables_filter, .dataTables_info, .dataTables_paginate { display: none !important; } 
             .ns-card, .ns-portlet { border: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; } 
             .ns-portlet-content { padding: 0 !important; }
-            body { background: #fff !important; margin: 0; padding: 0; } 
-            .ns-table { width: 100% !important; border-collapse: collapse !important; }
-            .ns-table th, .ns-table td { border: 1px solid #eee !important; padding: 8px !important; }
+            body { background: #fff !important; margin: 0; padding: 15px; } 
+            .ns-table, .ns-report-table-static { width: 100% !important; border-collapse: collapse !important; font-size: 11px !important; }
+            .ns-table th, .ns-table td, .ns-report-table-static th, .ns-report-table-static td { border: 1px solid #cbd5e1 !important; padding: 6px 8px !important; }
+            .ns-table th, .ns-report-table-static th, table.dataTable thead th { 
+                background-color: #f1f5f9 !important; 
+                font-weight: 700 !important; 
+                color: #0f172a !important; 
+                text-transform: uppercase !important; 
+                border: 1px solid #cbd5e1 !important; 
+                border-bottom: 2px solid #003087 !important; 
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important; 
+            }
+        }
+        .ns-table th, .ns-report-table-static th, table.dataTable thead th { 
+            background-color: #f8fafc !important; 
+            border-bottom: 2px solid #003087 !important; 
+            color: #0f172a !important; 
+            font-weight: 700 !important; 
+            text-transform: uppercase !important; 
         }
         .ns-report-table-static { width: 100%; border-collapse: collapse; font-size: 13px; }
         .ns-report-table-static th { background: #f8f9fa; color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding: 12px 15px; border-bottom: 2px solid #edf2f7; text-align: left; }
@@ -143,20 +204,96 @@ function rpt_header(string $title) {
             textEl.textContent = checked.length + " Accounts Selected";
         }
     }
+    
     </script>';
-    echo '<div class="rpt-header-print" style="display:none; text-align:center; margin-bottom: 10px; border-bottom: 2px solid #333; padding-bottom: 6px;">';
-    if (!empty($sys['logo'])) {
-        echo '<img src="'.$sys['logo'].'" style="max-height: 40px; margin-bottom: 4px;"><br>';
+    $sys_company_name    = $sys['name'] ?? ($sys['company_name'] ?? 'MNS LIQUORS (P) LTD.');
+    $sys_company_address = $sys['address'] ?? ($sys['company_address'] ?? 'Kathmandu, Nepal');
+    $sys_company_phone   = $sys['contact'] ?? ($sys['company_phone'] ?? ($sys['phone'] ?? ''));
+    $sys_company_pan     = $sys['pan_no'] ?? ($sys['company_pan'] ?? ($sys['pan_vat_number'] ?? ($sys['pan'] ?? '')));
+    $sys_company_email   = $sys['email'] ?? ($sys['company_email'] ?? '');
+    $sys_logo            = $sys['logo'] ?? '';
+    $sys_short_name      = $sys['short_name'] ?? 'MNS';
+    static $shutdown_registered = false;
+    if (!$shutdown_registered) {
+        $shutdown_registered = true;
+        register_shutdown_function(function() {
+            echo '</td></tr></tbody></table>';
+        });
     }
-    echo '<h2 style="margin:0; text-transform:uppercase; font-size: 16px;">'.htmlspecialchars($sys['name'] ?? 'MNS LIQUORS').'</h2>';
-    echo '<p style="margin:2px 0; font-size:11px; line-height: 1.3;">'.nl2br(htmlspecialchars($sys['address'] ?? '')).'</p>';
-    echo '<p style="margin:2px 0; font-size:11px;">PAN: '.htmlspecialchars($sys['pan_no'] ?? '').' | Phone: '.htmlspecialchars($sys['contact'] ?? '').'</p>';
-    echo '<h3 style="margin:6px 0 2px 0; border-top: 1px solid #ddd; padding-top: 4px; font-size: 14px;">'.$title.'</h3>';
-    echo '</div>';
+
+    echo '<table class="rpt-main-print-wrapper" style="width:100%; border-collapse:collapse; border:none; margin:0; padding:0;">';
+    echo '<thead class="rpt-main-print-thead" style="display:table-header-group;"><tr><td style="border:none; padding:0;">';
+
+    echo '  <div class="rpt-header-print" style="display:none; align-items: center; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 15px;">';
+    echo '    <div class="header-logo" style="flex: 0 0 140px; text-align: left;">';
+    if (!empty($sys_logo) && (file_exists($sys_logo) || file_exists('../' . $sys_logo))) {
+        echo '        <img src="'.htmlspecialchars($sys_logo).'" alt="Logo" style="max-height: 75px; max-width: 130px; object-fit: contain;">';
+    } else {
+        echo '        <div style="font-size: 26px; font-weight: 900; color: #003087; line-height: 1; letter-spacing: -0.5px;">'.htmlspecialchars($sys_short_name).'</div>';
+    }
+    echo '    </div>';
+    echo '    <div class="header-details" style="flex: 1; text-align: right;">';
+    echo '        <div class="company-name" style="font-size: 22px; font-weight: 800; color: #003087; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px;">'.htmlspecialchars($sys_company_name).'</div>';
+    echo '        <div class="company-info" style="font-size: 12px; color: #475569; line-height: 1.3;">';
+    echo '            '.nl2br(htmlspecialchars($sys_company_address)).'<br>';
+    echo '            Phone: '.htmlspecialchars($sys_company_phone);
+    if (!empty($sys_company_email)) {
+        echo ' | Email: '.htmlspecialchars($sys_company_email);
+    }
+    echo '            <br>';
+    echo '            <strong style="color: #0f172a;">PAN / VAT No: '.htmlspecialchars($sys_company_pan).'</strong>';
+    echo '        </div>';
+    echo '    </div>';
+    echo '  </div>';
+
+    echo '  <div class="rpt-doc-title-print" style="display:none; text-align: center; font-size: 16px; font-weight: 800; margin: 12px 0 18px 0; text-transform: uppercase; letter-spacing: 0.5px; background: #f1f5f9; padding: 6px 0; border-radius: 4px; border: 1px solid #cbd5e1; color: #003087;">';
+    echo htmlspecialchars($title);
+    echo '  </div>';
+
+    echo '</td></tr></thead>';
+    echo '<tbody><tr><td style="border:none; padding:0;">';
 }
 
-function rpt_filter_bar(string $title, array $filters, string $export_id = '') {
+function rpt_filter_bar(string $title, array $filters, string $export_id = '', string $extra_html = '') {
     rpt_header($title);
+    
+    // Build filter parameter summary string for printout
+    $summary_parts = [];
+    foreach ($filters as $f) {
+        $lbl = $f['label'] ?? '';
+        $fieldName = $f['name'] ?? '';
+        $raw_val = $_GET[$fieldName] ?? ($f['default'] ?? '');
+        
+        if ($f['type'] === 'date') {
+            if (!empty($raw_val)) {
+                $summary_parts[] = '<strong>' . htmlspecialchars($lbl) . ':</strong> ' . htmlspecialchars((string)$raw_val);
+            }
+        } elseif (!empty($f['options'])) {
+            $val_str = is_array($raw_val) ? implode(',', $raw_val) : (string)$raw_val;
+            $opt_txt = $f['options'][$val_str] ?? ($val_str === '' ? 'All' : $val_str);
+            $summary_parts[] = '<strong>' . htmlspecialchars($lbl) . ':</strong> ' . htmlspecialchars((string)$opt_txt);
+        }
+    }
+    
+    if (!empty($summary_parts)) {
+        echo '<div class="rpt-filter-info-print" style="display:none; text-align: center; font-size: 11px; font-weight: 500; color: #475569; margin: -10px 0 15px 0; padding: 4px 10px; background: #f8fafc; border-radius: 4px; border: 1px dashed #cbd5e1;">';
+        echo implode(' &nbsp;|&nbsp; ', $summary_parts);
+        echo ' &nbsp;|&nbsp; <strong>Printed On:</strong> ' . date('Y-m-d h:i A');
+        echo '</div>';
+    }
+
+    // Ensure location filter is present in filters array
+    $has_loc_filter = false;
+    foreach ($filters as $f) {
+        if (($f['name'] ?? '') === 'location_id' || ($f['name'] ?? '') === 'location') {
+            $has_loc_filter = true;
+            break;
+        }
+    }
+    if (!$has_loc_filter) {
+        $filters[] = rpt_location_filter();
+    }
+
     $today = date('Y-m-d');
     $month_start = date('Y-m-01');
     echo '<div class="rpt-toolbar">';
@@ -184,11 +321,11 @@ function rpt_filter_bar(string $title, array $filters, string $export_id = '') {
             }
             $selected_vals = array_map('strval', $selected_vals);
 
-            $total_count = 0;
+            // Resolve options label text
             $selected_labels = [];
+            $total_count = count($f['options'] ?? []);
             foreach ($f['options'] as $ov => $ol) {
                 if ($ov === '') continue;
-                $total_count++;
                 if (in_array((string)$ov, $selected_vals, true)) {
                     $selected_labels[] = $ol;
                 }
@@ -249,6 +386,9 @@ function rpt_filter_bar(string $title, array $filters, string $export_id = '') {
         echo '<button type="button" class="ns-btn" onclick="exportTableToCSV(\''.$export_id.'\')"><i class="fas fa-file-csv"></i> CSV</button>';
         echo '<button type="button" class="ns-btn" onclick="window.print()"><i class="fas fa-print"></i> Print</button>';
     }
+    if (!empty($extra_html)) {
+        echo ' ' . $extra_html;
+    }
     echo '</form>';
     echo '</div>';
 }
@@ -273,5 +413,154 @@ function rpt_date($date): string {
 
 function rpt_badge(string $text, string $color = '#888'): string {
     return '<span style="background:'.$color.';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">'.$text.'</span>';
+}
+
+function rpt_get_location_options(): array {
+    static $loc_options = null;
+    if ($loc_options === null) {
+        $db = db();
+        $rows = $db->fetchAll("SELECT id, name FROM locations WHERE is_deleted = 0 AND is_active = 1 ORDER BY name ASC");
+        $loc_options = ['' => 'All Locations'];
+        foreach ($rows as $r) {
+            $loc_options[$r['id']] = $r['name'];
+        }
+    }
+    return $loc_options;
+}
+
+function rpt_location_filter(string $name = 'location_id', string $label = 'Location'): array {
+    return [
+        'name' => $name,
+        'label' => $label,
+        'type' => 'select',
+        'options' => rpt_get_location_options()
+    ];
+}
+
+function rpt_location_sql(string $alias = 'h'): string {
+    $loc_id = $_GET['location_id'] ?? '';
+    if (!empty($loc_id)) {
+        $db = db();
+        return " AND {$alias}.location_id = " . $db->getConnection()->quote($loc_id) . " ";
+    }
+    return "";
+}
+
+function get_customer_aging_summary($db, string $customer_id, ?string $as_of_date = null): array {
+    if (!$as_of_date) $as_of_date = date('Y-m-d');
+    $loc_sql = rpt_location_sql('h');
+    
+    $debits = [];
+    
+    // 1. Invoices gross totals
+    $inv_rows = $db->fetchAll("
+        SELECT ci.id, ci.invoice_number as doc_no, ci.invoice_date as doc_date, ci.total_amount as amount
+        FROM customer_invoices ci
+        JOIN transaction_headers h ON ci.header_id = h.id
+        WHERE ci.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND ci.invoice_date <= ? {$loc_sql}
+        ORDER BY ci.invoice_date ASC
+    ", [$customer_id, $as_of_date]);
+    
+    foreach ($inv_rows as $inv) {
+        $debits[] = [
+            'doc_no' => $inv['doc_no'],
+            'date'   => $inv['doc_date'],
+            'amount' => (float)$inv['amount'],
+            'open'   => (float)$inv['amount'],
+        ];
+    }
+    
+    // 2. Journal Entries (Debits to AR or opening customer receivables)
+    $jv_rows = $db->fetchAll("
+        SELECT j.id, h.txn_number as doc_no, h.txn_date as doc_date, j.amount
+        FROM journal_entries j
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE (j.party_id = ? OR h.party_id = ?) 
+          AND j.entry_type = 'debit'
+          AND (j.account_id = 'acc-1100' OR h.txn_type IN ('Journal', 'journal_entry'))
+          AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_date <= ? {$loc_sql}
+        ORDER BY h.txn_date ASC
+    ", [$customer_id, $customer_id, $as_of_date]);
+    
+    foreach ($jv_rows as $jv) {
+        $already = false;
+        foreach ($debits as $d) {
+            if ($d['doc_no'] === $jv['doc_no']) { $already = true; break; }
+        }
+        if (!$already) {
+            $debits[] = [
+                'doc_no' => $jv['doc_no'],
+                'date'   => $jv['doc_date'],
+                'amount' => (float)$jv['amount'],
+                'open'   => (float)$jv['amount'],
+            ];
+        }
+    }
+    
+    usort($debits, function($a, $b) {
+        return strtotime($a['date']) - strtotime($b['date']);
+    });
+    
+    // 3. Payments received for this customer
+    $payments = $db->fetchAll("
+        SELECT p.id, p.amount, p.payment_date as doc_date
+        FROM payments p
+        JOIN transaction_headers h ON p.header_id = h.id
+        WHERE p.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND p.payment_date <= ? {$loc_sql}
+    ", [$customer_id, $as_of_date]);
+    
+    $total_unapplied_credits = 0.0;
+    foreach ($payments as $p) {
+        $total_unapplied_credits += (float)$p['amount'];
+    }
+    
+    $jv_credits = $db->fetchAll("
+        SELECT j.amount
+        FROM journal_entries j
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE (j.party_id = ? OR h.party_id = ?)
+          AND j.entry_type = 'credit'
+          AND j.account_id = 'acc-1100'
+          AND h.txn_type IN ('Journal', 'journal_entry')
+          AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_date <= ? {$loc_sql}
+    ", [$customer_id, $customer_id, $as_of_date]);
+    
+    foreach ($jv_credits as $jvc) {
+        $total_unapplied_credits += (float)$jvc['amount'];
+    }
+    
+    foreach ($debits as &$d) {
+        if ($total_unapplied_credits <= 0) break;
+        $apply = min($d['open'], $total_unapplied_credits);
+        $d['open'] -= $apply;
+        $total_unapplied_credits -= $apply;
+    }
+    unset($d);
+    
+    $aging7 = ['current' => 0.0, '1_7' => 0.0, '8_14' => 0.0, '15_21' => 0.0, 'over_21' => 0.0];
+    $aging30 = ['current' => 0.0, 'b30' => 0.0, 'b60' => 0.0, 'b90' => 0.0, 'over_90' => 0.0];
+    
+    foreach ($debits as $d) {
+        if ($d['open'] <= 0.001) continue;
+        $days = (int)floor((strtotime($as_of_date) - strtotime($d['date'])) / 86400);
+        
+        if ($days <= 0)      $aging7['current'] += $d['open'];
+        elseif ($days <= 7)  $aging7['1_7']     += $d['open'];
+        elseif ($days <= 14) $aging7['8_14']    += $d['open'];
+        elseif ($days <= 21) $aging7['15_21']   += $d['open'];
+        else                 $aging7['over_21'] += $d['open'];
+
+        if ($days <= 0)       $aging30['current'] += $d['open'];
+        elseif ($days <= 30)  $aging30['b30']     += $d['open'];
+        elseif ($days <= 60)  $aging30['b60']     += $d['open'];
+        elseif ($days <= 90)  $aging30['b90']     += $d['open'];
+        else                  $aging30['over_90'] += $d['open'];
+    }
+    
+    return [
+        'aging7'  => $aging7,
+        'aging30' => $aging30,
+        'total_due' => array_sum($aging7)
+    ];
 }
 ?>

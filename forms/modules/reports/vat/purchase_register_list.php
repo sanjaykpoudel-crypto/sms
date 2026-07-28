@@ -7,13 +7,14 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('th');
 $bills = $db->fetchAll("
     SELECT vb.bill_date, vb.vendor_invoice_number AS bill_number, v.company_name AS vendor, v.pan_number,
            vb.subtotal, vb.tax_amount, vb.total_amount, vb.payment_status
     FROM vendor_bills vb
     JOIN vendors v ON vb.vendor_id = v.id
     JOIN transaction_headers th ON vb.header_id = th.id
-    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND vb.tax_amount > 0
+    WHERE vb.bill_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND vb.tax_amount > 0 {$loc_sql}
     ORDER BY vb.bill_date DESC
 ", [$date_from, $date_to]);
 

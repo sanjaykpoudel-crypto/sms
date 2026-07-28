@@ -15,6 +15,7 @@ foreach ($vendors_list as $v) {
     $vendor_options[$v['id']] = $v['company_name'];
 }
 
+$loc_sql_th = rpt_location_sql('th');
 $where_vend = ($vendor_id !== '') ? " AND vb.vendor_id = '$vendor_id'" : "";
 $where_vend_j = ($vendor_id !== '') ? " AND (j.party_id = '$vendor_id' OR th.party_id = '$vendor_id')" : "";
 
@@ -40,7 +41,7 @@ $sql = "
     LEFT JOIN vendors v ON vb.vendor_id = v.id
     WHERE th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_date BETWEEN ? AND ? {$where_vend}
+      AND th.txn_date BETWEEN ? AND ? {$where_vend} {$loc_sql_th}
     
     UNION ALL
 
@@ -69,7 +70,7 @@ $sql = "
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND th.txn_type IN ('Journal', 'journal_entry')
-      AND th.txn_date BETWEEN ? AND ? {$where_vend_j}
+      AND th.txn_date BETWEEN ? AND ? {$where_vend_j} {$loc_sql_th}
     GROUP BY th.id, th.txn_date, th.txn_number, v.company_name
     ORDER BY txn_date DESC, txn_number DESC
 ";

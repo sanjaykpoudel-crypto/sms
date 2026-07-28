@@ -59,18 +59,20 @@ try {
     else if ($from_sub === 'cash' && $to_sub === 'bank') $transfer_type = 'cash_to_bank';
     else if ($from_sub === 'bank' && $to_sub === 'cash') $transfer_type = 'bank_to_cash';
 
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+
     if (!$id) {
         $id = generate_uuid();
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, created_by) 
-                      VALUES (?, ?, 'account_transfer', ?, ?, ?, ?, ?, ?, ?, ?, 'account', ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, created_by, location_id) 
+                      VALUES (?, ?, 'account_transfer', ?, ?, ?, ?, ?, ?, ?, ?, 'account', ?, ?, ?)", [
             $id, $txn_number, $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
-            $status, $txn_number, $memo, $amount, $from_account_id, $_SESSION['user_id']
+            $status, $txn_number, $memo, $amount, $from_account_id, $_SESSION['user_id'], $location_id
         ]);
         incrementTransactionNumber('account_transfer');
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ? WHERE id = ?", [
-            $txn_date, $memo, $amount, $from_account_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ? WHERE id = ?", [
+            $txn_date, $memo, $amount, $from_account_id, $location_id, $id
         ]);
         
         $db->execute("DELETE FROM account_transfers WHERE header_id = ?", [$id]);
@@ -95,6 +97,7 @@ try {
     ]);
 
     $pdo->commit();
+    clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Fund transfer recorded successfully.', 'id' => $id]);
     exit;

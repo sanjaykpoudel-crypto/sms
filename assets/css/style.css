@@ -293,6 +293,50 @@ body {
     font-size: 11px;
 }
 
+/* Force Table Header/Cell Alignment Classes */
+.text-right,
+th.text-right,
+td.text-right,
+.ns-table th.text-right,
+.ns-table td.text-right,
+table.dataTable thead th.text-right,
+table.dataTable tbody td.text-right,
+table.dataTable tfoot td.text-right {
+    text-align: right !important;
+}
+
+.text-left,
+th.text-left,
+td.text-left,
+.ns-table th.text-left,
+.ns-table td.text-left,
+table.dataTable thead th.text-left,
+table.dataTable tbody td.text-left,
+table.dataTable tfoot td.text-left {
+    text-align: left !important;
+}
+
+.text-center,
+th.text-center,
+td.text-center,
+.ns-table th.text-center,
+.ns-table td.text-center,
+table.dataTable thead th.text-center,
+table.dataTable tbody td.text-center,
+table.dataTable tfoot td.text-center {
+    text-align: center !important;
+}
+
+/* Align DataTables TH and TD paddings when sorting icons are hidden */
+table.dataTable thead th,
+table.dataTable thead th.sorting,
+table.dataTable thead th.sorting_asc,
+table.dataTable thead th.sorting_desc,
+.ns-table th {
+    padding-right: 15px !important;
+    padding-left: 15px !important;
+}
+
 .ns-table td, .ns-item-table td, .ns-settings-table td {
     padding: 10px 15px;
     border-bottom: 1px solid #f0f0f0;

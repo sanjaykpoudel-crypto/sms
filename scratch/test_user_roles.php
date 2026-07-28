@@ -1,0 +1,2 @@
+<?php
+// Cleanup test file

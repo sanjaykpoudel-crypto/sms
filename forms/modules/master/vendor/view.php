@@ -28,19 +28,29 @@ $bills = $db->fetchAll("
     WHERE vb.vendor_id = ? AND th.is_deleted = 0
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
-        (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0)) as balance_due,
+        SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        (
+            SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            - COALESCE((
+                SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
+                FROM transaction_links tl
+                JOIN transaction_headers ph ON tl.parent_id = ph.id
+                WHERE tl.child_id = h.id 
+                  AND tl.link_type LIKE 'payment:%'
+                  AND ph.txn_type = 'vendor_payment'
+                  AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
+            ), 0.00)
+        ) as balance_due,
         h.status as payment_status
     FROM journal_entries j
     JOIN transaction_headers h ON j.header_id = h.id
-    LEFT JOIN transaction_links tl ON tl.child_id = h.id AND tl.link_type LIKE 'payment:%'
-    WHERE (j.party_id = ? OR h.party_id = ?) 
+    WHERE j.party_id = ? 
       AND (j.party_type = 'vendor' OR j.party_type IS NULL) 
       AND h.is_deleted = 0 
       AND h.txn_type IN ('Journal', 'journal_entry')
     GROUP BY h.id, h.txn_number, h.txn_date, h.status
     ORDER BY doc_date DESC LIMIT 50
-", [$id, $id, $id]);
+", [$id, $id, $id, $id]);
 // Fetch related records (Payments)
 $payments = $db->fetchAll("
     SELECT th.id as header_id, th.txn_number, th.txn_date, th.created_at,

@@ -22,7 +22,8 @@ if ($id) {
         'net_amount' => 0,
         'discount_amount' => 0,
         'status' => 'open',
-        'memo' => ''
+        'memo' => '',
+        'location_id' => get_accounting_preference('default_location_id') ?: ''
     ];
 }
 
@@ -38,7 +39,7 @@ $all_customers = $db->fetchAll("
     GROUP BY c.id
     ORDER BY c.full_name ASC
 ");
-$all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-file-invoice-dollar"
@@ -147,6 +148,20 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                     <input type="date" name="due_date" class="ns-input" value="<?php echo $data['due_date']; ?>">
                 </div>
                 <div class="ns-form-group">
+                    <label class="ns-label">Location</label>
+                    <select name="location_id" class="ns-select">
+                        <option value="">-- Select Location --</option>
+                        <?php 
+                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+                        foreach (get_active_locations() as $loc): 
+                        ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="ns-form-group">
                     <label class="ns-label">Memo / Remarks</label>
                     <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>"
                         placeholder="Enter any notes here...">
@@ -154,14 +169,31 @@ $all_accounts = $db->fetchAll("SELECT id, account_code, account_name FROM accoun
                 <div class="ns-form-group">
                     <label class="ns-label">Status</label>
                     <select name="status" class="ns-select" <?php echo $id ? 'disabled' : ''; ?>>
-                        <option value="open" <?php echo ($data['status'] ?? '') == 'open' ? 'selected' : ''; ?>>Open
-                        </option>
-                        <option value="paid" <?php echo ($data['status'] ?? '') == 'paid' ? 'selected' : ''; ?>>Paid in
-                            Full</option>
-                        <option value="partial" <?php echo ($data['status'] ?? '') == 'partial' ? 'selected' : ''; ?>>
-                            Partially Paid</option>
-                        <option value="voided" <?php echo ($data['status'] ?? '') == 'voided' ? 'selected' : ''; ?>>Voided
-                        </option>
+                        <?php
+                        $status_options = get_payment_status_list();
+                        $curr_status = strtolower($data['status'] ?? 'open');
+                        $rendered_keys = [];
+                        foreach ($status_options as $st):
+                            $st_name = $st['name'];
+                            $st_val = strtolower($st['code'] ?: $st_name);
+                            $rendered_keys[$st_val] = true;
+                            $sel = ($curr_status === $st_val || $curr_status === strtolower($st_name)) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo htmlspecialchars($st_val); ?>" <?php echo $sel; ?>><?php echo htmlspecialchars($st_name); ?></option>
+                        <?php endforeach; ?>
+                        <?php
+                        $default_txn_statuses = [
+                            'open' => 'Open',
+                            'paid' => 'Paid in Full',
+                            'partial' => 'Partially Paid',
+                            'voided' => 'Voided'
+                        ];
+                        foreach ($default_txn_statuses as $dk => $dv):
+                            if (!isset($rendered_keys[$dk])):
+                                $sel = ($curr_status === $dk) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo $dk; ?>" <?php echo $sel; ?>><?php echo $dv; ?></option>
+                        <?php endif; endforeach; ?>
                     </select>
                     <?php if ($id): ?>
                         <input type="hidden" name="status"

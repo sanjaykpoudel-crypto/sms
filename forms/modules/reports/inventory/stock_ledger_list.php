@@ -3,10 +3,15 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$today     = date('Y-m-d');
-$date_from = $_GET['date_from'] ?? date('Y-m-01');
-$date_to   = $_GET['date_to']   ?? $today;
-$item_id   = $_GET['item_id']   ?? '';
+$today       = date('Y-m-d');
+$date_from   = $_GET['date_from']   ?? date('Y-m-01');
+$date_to     = $_GET['date_to']     ?? $today;
+$category_id = $_GET['category_id'] ?? '';
+$item_id     = $_GET['item_id']     ?? '';
+
+$categories = $db->fetchAll("SELECT id, name FROM reference_codes WHERE type = 'category' ORDER BY name ASC");
+$cat_options = ['' => 'All Categories'];
+foreach ($categories as $c) { $cat_options[$c['id']] = $c['name']; }
 
 $items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 AND is_active=1 ORDER BY item_name ASC");
 $item_options = ['' => 'All Items'];
@@ -22,6 +27,14 @@ if ($item_id) {
     $item_clause = " AND i.id = :item_id ";
     $params['item_id'] = $item_id;
 }
+
+$cat_clause = '';
+if ($category_id) {
+    $cat_clause = " AND i.item_category = :category_id ";
+    $params['category_id'] = $category_id;
+}
+
+$loc_sql = rpt_location_sql('h');
 
 $rows = $db->fetchAll("
     SELECT 
@@ -55,11 +68,13 @@ $rows = $db->fetchAll("
                 END
             ELSE 0 
         END), 0) AS qty_out
+        
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-    WHERE i.is_deleted = 0 AND i.is_active = 1 $item_clause
-    GROUP BY i.id, i.sku, i.item_name, i.cost_price
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+    WHERE i.is_deleted = 0 AND i.is_active = 1 {$item_clause} {$cat_clause}
+    GROUP BY i.id
+    HAVING (opening_qty != 0 OR qty_in != 0 OR qty_out != 0)
     ORDER BY i.item_name ASC
 ", $params);
 
@@ -73,9 +88,10 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
 ?>
 
 <?php rpt_filter_bar('Stock Ledger', [
-    ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
-    ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
-    ['name'=>'item_id',  'label'=>'Item','type'=>'select','default'=>'','options'=>$item_options],
+    ['name'=>'date_from',  'label'=>'From',    'type'=>'date',  'default'=>date('Y-m-01')],
+    ['name'=>'date_to',    'label'=>'To',      'type'=>'date',  'default'=>$today],
+    ['name'=>'category_id','label'=>'Category','type'=>'select','default'=>'','options'=>$cat_options],
+    ['name'=>'item_id',    'label'=>'Item',    'type'=>'select','default'=>'','options'=>$item_options],
 ], 'tbl-stock-ledger'); ?>
 
 <div class="rpt-summary">
@@ -89,17 +105,17 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
   <div class="ns-portlet-content">
     <table class="ns-table" id="tbl-stock-ledger">
       <thead><tr>
-        <th>Item Name</th>
-        <th style="text-align:right">Opening Qty</th>
-        <th style="text-align:right">Qty In</th>
-        <th style="text-align:right">Qty Out</th>
-        <th style="text-align:right">Closing Qty</th>
-        <th style="text-align:right">Cost Price</th>
-        <th style="text-align:right">Stock Value</th>
+        <th class="text-left">Item Name</th>
+        <th class="text-center">Opening Qty</th>
+        <th class="text-center">Qty In</th>
+        <th class="text-center">Qty Out</th>
+        <th class="text-center">Closing Qty</th>
+        <th class="text-right">Cost Price</th>
+        <th class="text-right">Stock Value</th>
       </tr></thead>
       <tbody>
       <?php if (empty($filtered_rows)): ?>
-        <tr><td colspan="7" style="text-align:center;color:#888;padding:30px">No stock items found.</td></tr>
+        <tr><td colspan="7" class="text-center" style="color:#888;padding:30px">No stock items found.</td></tr>
       <?php else: 
         $grand_opening = 0;
         $grand_closing = 0;
@@ -112,24 +128,24 @@ $total_out = array_sum(array_column($filtered_rows, 'qty_out'));
             $grand_value += $stock_value;
       ?>
         <tr>
-          <td><?= htmlspecialchars($r['item_name']) ?></td>
-          <td style="text-align:right;color:#666"><?= number_format($r['opening_qty'],0) ?></td>
-          <td style="text-align:right;color:#1a7f37;font-weight:600"><?= $r['qty_in']>0 ? number_format($r['qty_in'],0) : '—' ?></td>
-          <td style="text-align:right;color:#c00;font-weight:600"><?= $r['qty_out']>0 ? number_format($r['qty_out'],0) : '—' ?></td>
-          <td style="text-align:right;font-weight:700"><?= number_format($closing,0) ?></td>
-          <td style="text-align:right"><?= rpt_currency($r['cost_price']) ?></td>
-          <td style="text-align:right;font-weight:600"><?= rpt_currency($stock_value) ?></td>
+          <td class="text-left"><?= htmlspecialchars($r['item_name']) ?></td>
+          <td class="text-center" style="color:#666"><?= number_format($r['opening_qty'],0) ?></td>
+          <td class="text-center" style="color:#1a7f37;font-weight:600"><?= $r['qty_in']>0 ? number_format($r['qty_in'],0) : '—' ?></td>
+          <td class="text-center" style="color:#c00;font-weight:600"><?= $r['qty_out']>0 ? number_format($r['qty_out'],0) : '—' ?></td>
+          <td class="text-center" style="font-weight:700"><?= number_format($closing,0) ?></td>
+          <td class="text-right"><?= rpt_currency($r['cost_price']) ?></td>
+          <td class="text-right" style="font-weight:600"><?= rpt_currency($stock_value) ?></td>
         </tr>
       <?php endforeach; endif; ?>
       </tbody>
       <tfoot><tr style="font-weight:700;background:#f8f9fa">
-        <td colspan="1">TOTAL</td>
-        <td style="text-align:right;color:#666"><?= number_format($grand_opening,0) ?></td>
-        <td style="text-align:right;color:#1a7f37"><?= number_format($total_in,0) ?></td>
-        <td style="text-align:right;color:#c00"><?= number_format($total_out,0) ?></td>
-        <td style="text-align:right"><?= number_format($grand_closing,0) ?></td>
+        <td class="text-left" colspan="1">TOTAL</td>
+        <td class="text-center" style="color:#666"><?= number_format($grand_opening,0) ?></td>
+        <td class="text-center" style="color:#1a7f37"><?= number_format($total_in,0) ?></td>
+        <td class="text-center" style="color:#c00"><?= number_format($total_out,0) ?></td>
+        <td class="text-center" style="font-weight:700"><?= number_format($grand_closing,0) ?></td>
         <td></td>
-        <td style="text-align:right"><?= rpt_currency($grand_value) ?></td>
+        <td class="text-right"><?= rpt_currency($grand_value) ?></td>
       </tr></tfoot>
     </table>
   </div>

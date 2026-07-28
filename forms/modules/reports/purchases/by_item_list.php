@@ -7,6 +7,7 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? date('Y-m-01');
 $date_to   = $_GET['date_to']   ?? $today;
 
+$loc_sql = rpt_location_sql('h');
 $rows = $db->fetchAll("
     SELECT 
         i.sku, i.item_name, rc.name as item_category,
@@ -19,7 +20,7 @@ $rows = $db->fetchAll("
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE h.txn_type = 'vendor_bill'
       AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY i.id
     ORDER BY total_cost DESC
 ", [$date_from, $date_to]);

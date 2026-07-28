@@ -106,17 +106,22 @@ try {
         throw new Exception("No active customer found. Please create a 'Walk-in Customer' first.");
     }
 
+    $location_id = $_POST['location_id'] ?? ($data['location_id'] ?? '');
+    if (empty($location_id)) {
+        $location_id = get_user_default_location_id();
+    }
+
     // 3. Save or Update pos_entry
     if ($is_update) {
         $db->execute(
-            "UPDATE pos_entry SET date_time = ?, customer_id = ?, gross_amount = ?, discount_type = ?, discount_value = ?, discount_amount = ?, tax_amount = ?, net_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            [$txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $pos_id]
+            "UPDATE pos_entry SET date_time = ?, customer_id = ?, gross_amount = ?, discount_type = ?, discount_value = ?, discount_amount = ?, tax_amount = ?, net_amount = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [$txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $location_id, $pos_id]
         );
     } else {
         $db->execute(
-            "INSERT INTO pos_entry (id, invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)",
-            [$pos_id, $txn_number, $txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $_SESSION['user_id']]
+            "INSERT INTO pos_entry (id, invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by, location_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)",
+            [$pos_id, $txn_number, $txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $_SESSION['user_id'], $location_id]
         );
     }
 
@@ -197,6 +202,7 @@ try {
     }
 
     $pdo->commit();
+    clear_dashboard_cache();
 
     // 7. Regenerate Daily Summary Invoices and Payments
     // We synchronize the summary for the transaction date.

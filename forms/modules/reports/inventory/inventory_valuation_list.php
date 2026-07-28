@@ -13,6 +13,7 @@ foreach($catQuery as $c) {
 }
 
 // Calculate stock = purchases - sales for each item
+$loc_sql = rpt_location_sql('h');
 $rows = $db->fetchAll("
     SELECT 
         i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
@@ -24,7 +25,7 @@ $rows = $db->fetchAll("
         END), 0) AS stock_qty
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
     LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
     WHERE i.is_deleted = 0 AND i.is_active = 1

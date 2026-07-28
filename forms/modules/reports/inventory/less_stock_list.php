@@ -3,6 +3,8 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
+$loc_sql = rpt_location_sql('h');
+
 $items = $db->fetchAll("
     SELECT 
         i.id, i.sku, i.item_name, rc.name as category_name, i.reorder_level, i.reorder_qty, i.cost_price,
@@ -12,7 +14,7 @@ $items = $db->fetchAll("
             ELSE 0 END), 0) as current_stock
     FROM items i
     LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
     WHERE i.is_deleted = 0 AND i.is_active = 1
     GROUP BY i.id

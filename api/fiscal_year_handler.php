@@ -452,7 +452,7 @@ function run_validation($pdo, $db, $start, $end) {
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'receivable' AND h.txn_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
+        WHERE a.account_subtype = 'Accounts Receivable' AND h.txn_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
     ", [$start, $end])['bal'] ?? 0);
     
     // Subledger customer invoices outstanding as of period end date ($end)
@@ -494,7 +494,7 @@ function run_validation($pdo, $db, $start, $end) {
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'payable' AND h.txn_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
+        WHERE a.account_subtype = 'Accounts Payable' AND h.txn_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
     ", [$start, $end])['bal'] ?? 0);
     
     // Subledger vendor bills outstanding as of period end date ($end)
@@ -536,7 +536,7 @@ function run_validation($pdo, $db, $start, $end) {
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'inventory' AND h.txn_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
+        WHERE a.account_subtype = 'Inventory Asset' AND h.txn_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status != 'void'
     ", [$end])['bal'] ?? 0);
     
     $items_inv_rows = $db->fetchAll("
@@ -668,7 +668,7 @@ function run_preview($pdo, $db, $start, $end, $retained_earnings_acct, $income_s
     
     foreach ($expenses as $e) {
         $bal = (float)$e['balance'];
-        if ($e['account_subtype'] === 'cogs') {
+        if ($e['account_subtype'] === 'Cost of Goods Sold') {
             $total_cogs += $bal;
         } else {
             $total_operating_expenses += $bal;

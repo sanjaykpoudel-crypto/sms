@@ -1,5 +1,7 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) { session_start(); }
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!isset($_SESSION['user_id'])) {
     header('Content-Type: application/json');
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
@@ -40,55 +42,66 @@ try {
     check_fiscal_year_lock($txn_date);
 
     // Line data
-    $account_ids     = $_POST['account_id']       ?? [];
-    $debits          = $_POST['debit']             ?? [];
-    $credits         = $_POST['credit']            ?? [];
-    $line_party_types = $_POST['line_party_type']  ?? [];
-    $line_party_ids  = $_POST['line_party_id']     ?? [];
-    $line_memos      = $_POST['line_memo']         ?? [];
+    $account_ids = $_POST['account_id'] ?? [];
+    $debits = $_POST['debit'] ?? [];
+    $credits = $_POST['credit'] ?? [];
+    $line_party_types = $_POST['line_party_type'] ?? [];
+    $line_party_ids = $_POST['line_party_id'] ?? [];
+    $line_memos = $_POST['line_memo'] ?? [];
 
     $total_debit = 0;
-    foreach ($debits as $d) $total_debit += (float)$d;
+    foreach ($debits as $d)
+        $total_debit += (float) $d;
 
     $fiscal = calculate_fiscal_info($txn_date);
+
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
 
     if (!$id) {
         $id = generate_uuid();
         $db->execute(
             "INSERT INTO transaction_headers
-                (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, created_by)
-             VALUES (?, ?, 'Journal', ?, ?, ?, ?, 'posted', ?, ?, ?, ?)",
-            [$id, $txn_number, $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $_SESSION['user_id']]
+                (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, created_by, location_id)
+             VALUES (?, ?, 'Journal', ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?)",
+            [$id, $txn_number, $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $_SESSION['user_id'], $location_id]
         );
         incrementTransactionNumber('journal_entry');
     } else {
         $db->execute(
-            "UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, net_amount = ? WHERE id = ?",
-            [$txn_date, $ref_number, $memo, $total_debit, $id]
+            "UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, net_amount = ?, location_id = ? WHERE id = ?",
+            [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $location_id, $id]
         );
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
     }
 
     foreach ($account_ids as $idx => $acc_id) {
-        if (empty($acc_id)) continue;
+        if (empty($acc_id))
+            continue;
 
-        $debit  = (float)($debits[$idx]  ?? 0);
-        $credit = (float)($credits[$idx] ?? 0);
+        $debit = (float) ($debits[$idx] ?? 0);
+        $credit = (float) ($credits[$idx] ?? 0);
         $amount = $debit > 0 ? $debit : $credit;
-        $type   = $debit > 0 ? 'debit' : 'credit';
+        $type = $debit > 0 ? 'debit' : 'credit';
 
-        if ($amount == 0) continue;
+        if ($amount == 0)
+            continue;
 
         $db->execute(
             "INSERT INTO journal_entries
                 (id, header_id, account_id, entry_type, amount, memo, party_type, party_id, entry_date, fiscal_period, fiscal_year, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                generate_uuid(), $id, $acc_id, $type, $amount,
-                $line_memos[$idx]      ?? $memo,
+                generate_uuid(),
+                $id,
+                $acc_id,
+                $type,
+                $amount,
+                $line_memos[$idx] ?? $memo,
                 $line_party_types[$idx] ?? null,
-                $line_party_ids[$idx]  ?? null,
-                $txn_date, $fiscal['period'], $fiscal['year'],
+                $line_party_ids[$idx] ?? null,
+                $txn_date,
+                $fiscal['period'],
+                $fiscal['year'],
                 $_SESSION['user_id']
             ]
         );
@@ -97,7 +110,7 @@ try {
     // Sync to Bank Opening Balances if this is the OPENING-BALANCES journal entry
     if ($txn_number === 'OPENING-BALANCES') {
         // Reset all bank and cash opening balances to 0
-        $db->execute("UPDATE accounts SET opening_balance = 0.00 WHERE account_subtype IN ('bank', 'cash')");
+        $db->execute("UPDATE accounts SET opening_balance = 0.00 WHERE account_subtype IN ('Bank')");
 
         // Fetch the saved journal entries for this transaction
         $saved_entries = $db->fetchAll("SELECT account_id, entry_type, amount FROM journal_entries WHERE header_id = ?", [$id]);
@@ -107,11 +120,11 @@ try {
         foreach ($saved_entries as $entry) {
             $acc_id = $entry['account_id'];
             $entry_type = $entry['entry_type'];
-            $amount = (float)$entry['amount'];
+            $amount = (float) $entry['amount'];
 
             // Check if this account is cash/bank
             $acc = $db->fetchOne("SELECT account_subtype FROM accounts WHERE id = ?", [$acc_id]);
-            if ($acc && in_array($acc['account_subtype'], ['bank', 'cash'])) {
+            if ($acc && in_array($acc['account_subtype'], ['Bank'])) {
                 if (!isset($balances[$acc_id])) {
                     $balances[$acc_id] = 0.00;
                 }
@@ -130,10 +143,12 @@ try {
     }
 
     $pdo->commit();
+    clear_dashboard_cache();
     echo json_encode(['status' => 'success', 'message' => 'Journal Entry saved successfully.', 'id' => $id]);
     exit;
 } catch (Exception $e) {
-    if ($pdo->inTransaction()) $pdo->rollBack();
+    if ($pdo->inTransaction())
+        $pdo->rollBack();
     echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
     exit;
 }
