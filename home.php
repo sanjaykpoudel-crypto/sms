@@ -25,6 +25,7 @@
                 <span style="opacity: 0.3;">|</span>
                 <span>Query: <strong id="dv4-query-time">—</strong></span>
             </div>
+            <?php if (($_SESSION['role'] ?? '') === 'admin'): ?>
             <div style="display: flex; align-items: center; gap: 6px; background: #ffffff; padding: 4px 10px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                 <i class="fas fa-map-marker-alt" style="font-size: 12px; color: #0284c7;"></i>
                 <label style="font-size: 12px; font-weight: 600; color: #475569; white-space: nowrap; margin: 0;">Location:</label>
@@ -40,6 +41,7 @@
                     <?php endforeach; ?>
                 </select>
             </div>
+            <?php endif; ?>
             <button class="dv4-btn" id="dv4-theme-btn" title="Toggle Dark/Light Mode">
                 <i class="fas fa-moon"></i> Theme
             </button>
@@ -136,14 +138,14 @@
             <div class="dv4-kpi-sub" id="kpi-ap-sub"></div>
         </a>
         <!-- Inventory Value -->
-        <a class="dv4-kpi kpi-inv dv4-kpi-link" id="kpi-tile-inv" href="#" title="View Stock Summary">
+        <a class="dv4-kpi kpi-inv dv4-kpi-link" id="kpi-tile-inv" href="?page=reports/inventory/stock_summary&status=available" title="View Stock Summary (Available Items Only)">
             <i class="fas fa-boxes dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Inventory Value</div>
             <div class="dv4-kpi-value" id="kpi-inv-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-inv-sub"></div>
         </a>
         <!-- Low Stock Alerts -->
-        <a class="dv4-kpi kpi-lowstock dv4-kpi-link" id="kpi-tile-low" href="#" title="View Low Stock Report">
+        <a class="dv4-kpi kpi-lowstock dv4-kpi-link" id="kpi-tile-low" href="?page=reports/inventory/stock_summary&status=low_stock" title="View Low Stock Items">
             <i class="fas fa-exclamation-triangle dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Low Stock Alerts</div>
             <div class="dv4-kpi-value" id="kpi-low-val">—</div>

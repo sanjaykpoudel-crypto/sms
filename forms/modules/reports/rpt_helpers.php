@@ -429,17 +429,19 @@ function rpt_get_location_options(): array {
 }
 
 function rpt_location_filter(string $name = 'location_id', string $label = 'Location'): array {
+    $default_loc = $_GET[$name] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
     return [
         'name' => $name,
         'label' => $label,
         'type' => 'select',
+        'default' => $default_loc,
         'options' => rpt_get_location_options()
     ];
 }
 
 function rpt_location_sql(string $alias = 'h'): string {
-    $loc_id = $_GET['location_id'] ?? '';
-    if (!empty($loc_id)) {
+    $loc_id = $_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
+    if (!empty($loc_id) && $loc_id !== 'all') {
         $db = db();
         return " AND {$alias}.location_id = " . $db->getConnection()->quote($loc_id) . " ";
     }

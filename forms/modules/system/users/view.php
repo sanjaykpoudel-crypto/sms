@@ -8,7 +8,12 @@ if (!$id) {
     exit;
 }
 
-$user = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$id]);
+$user = $db->fetchOne("
+    SELECT u.*, l.name as location_name 
+    FROM users u 
+    LEFT JOIN locations l ON u.location_id = l.id 
+    WHERE u.id = ?
+", [$id]);
 
 if (!$user) {
     echo "<div class='alert alert-danger'>User not found.</div>";
@@ -204,6 +209,10 @@ function getDiff($oldJson, $newJson) {
             <div class="detail-group">
                 <div class="detail-label">Email</div>
                 <div class="detail-value"><?php echo htmlspecialchars($user['email'] ?: 'N/A'); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Assigned Location</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['location_name'] ?: 'All / Default'); ?></div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Status</div>

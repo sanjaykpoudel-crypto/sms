@@ -59,7 +59,7 @@ try {
     else if ($from_sub === 'cash' && $to_sub === 'bank') $transfer_type = 'cash_to_bank';
     else if ($from_sub === 'bank' && $to_sub === 'cash') $transfer_type = 'bank_to_cash';
 
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
 
     if (!$id) {
         $id = generate_uuid();

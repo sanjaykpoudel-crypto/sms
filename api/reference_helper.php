@@ -404,7 +404,7 @@ function amount_in_words($amount)
  * Synchronizes the opening balances of accounts from the accounts table
  * to a balanced, posted journal entry header ('OPENING-BALANCES').
  */
-function sync_opening_balance_journal_entries($pdo, $date = null)
+function sync_opening_balance_journal_entries($pdo, $date = null, $location_id = null)
 {
     // 1. Fetch all accounts with non-zero opening balance
     $stmt = $pdo->prepare("SELECT id, account_name, normal_balance, opening_balance FROM accounts WHERE opening_balance != 0.00 AND is_deleted = 0");
@@ -412,7 +412,7 @@ function sync_opening_balance_journal_entries($pdo, $date = null)
     $opening_accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // 2. Check if the OPENING-BALANCES transaction header exists
-    $stmt = $pdo->prepare("SELECT id FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
+    $stmt = $pdo->prepare("SELECT id, location_id FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
     $stmt->execute();
     $header = $stmt->fetch(PDO::FETCH_ASSOC);
     $header_id = $header ? $header['id'] : null;
@@ -424,6 +424,15 @@ function sync_opening_balance_journal_entries($pdo, $date = null)
             $pdo->prepare("DELETE FROM transaction_headers WHERE id = ?")->execute([$header_id]);
         }
         return;
+    }
+
+    // Determine location_id fallback if not provided
+    if (empty($location_id)) {
+        if ($header && !empty($header['location_id'])) {
+            $location_id = $header['location_id'];
+        } elseif (function_exists('get_user_default_location_id')) {
+            $location_id = get_user_default_location_id();
+        }
     }
 
     // Find a valid user ID to satisfy foreign key constraint
@@ -464,20 +473,20 @@ function sync_opening_balance_journal_entries($pdo, $date = null)
         $header_id = 'opening-balances-txn-uuid';
         $stmt = $pdo->prepare("
             INSERT INTO transaction_headers 
-            (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, memo, created_by, net_amount) 
-            VALUES (?, 'OPENING-BALANCES', 'Journal', ?, ?, ?, ?, 'posted', 'System Opening Balances', ?, 0.00)
+            (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, memo, created_by, net_amount, location_id) 
+            VALUES (?, 'OPENING-BALANCES', 'Journal', ?, ?, ?, ?, 'posted', 'System Opening Balances', ?, 0.00, ?)
         ");
-        $stmt->execute([$header_id, $txn_date, $fiscal_year, $fiscal_month, $fiscal_period, $userId]);
+        $stmt->execute([$header_id, $txn_date, $fiscal_year, $fiscal_month, $fiscal_period, $userId, $location_id]);
     } else {
         // Clear existing lines for this header
         $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$header_id]);
         // Update header details just in case
         $stmt = $pdo->prepare("
             UPDATE transaction_headers 
-            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, updated_at = CURRENT_TIMESTAMP 
+            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP 
             WHERE id = ?
         ");
-        $stmt->execute([$txn_date, $fiscal_year, $fiscal_month, $fiscal_period, $header_id]);
+        $stmt->execute([$txn_date, $fiscal_year, $fiscal_month, $fiscal_period, $location_id, $header_id]);
     }
 
     $total_debit = 0.00;
@@ -525,18 +534,18 @@ function sync_opening_balance_journal_entries($pdo, $date = null)
         ];
     }
 
-    // 4. Handle double-entry balancing using Opening Balance account (code 'open') or Owner Capital (acc-3100)
+    // 4. Handle double-entry balancing using Opening Balance account ('Opening Balance') or Owner Capital (acc-3100)
     $difference = $total_debit - $total_credit;
     if (abs($difference) > 0.001) {
-        // Find offset account (account_code = 'open' first)
-        $stmt = $pdo->prepare("SELECT id FROM accounts WHERE account_code = 'open' OR account_name = 'Opening Balance'");
+        // Find offset account (Opening Balance first)
+        $stmt = $pdo->prepare("SELECT id FROM accounts WHERE account_name = 'Opening Balance'");
         $stmt->execute();
         $offset_acc = $stmt->fetch(PDO::FETCH_ASSOC);
         $offset_id = $offset_acc ? $offset_acc['id'] : null;
 
         if (!$offset_id) {
             // Fallback: search for Owner Capital (acc-3100 or another equity account)
-            $stmt = $pdo->prepare("SELECT id FROM accounts WHERE id = 'acc-3100' OR account_code = '3100'");
+            $stmt = $pdo->prepare("SELECT id FROM accounts WHERE id = 'acc-3100' OR account_name LIKE '%Capital%'");
             $stmt->execute();
             $offset_acc = $stmt->fetch(PDO::FETCH_ASSOC);
             $offset_id = $offset_acc ? $offset_acc['id'] : null;
@@ -1119,27 +1128,37 @@ if (!function_exists('get_user_default_location_id')) {
         if (session_status() === PHP_SESSION_NONE) {
             session_start();
         }
+        if (!empty($_SESSION['location_id'])) {
+            return $_SESSION['location_id'];
+        }
         $user_id = $_SESSION['user_id'] ?? null;
         if ($user_id) {
             $db = db();
             $user_loc = $db->fetchOne("SELECT location_id FROM users WHERE id = ?", [$user_id]);
             if (!empty($user_loc['location_id'])) {
-                return $user_loc['location_id'];
+                $_SESSION['location_id'] = $user_loc['location_id'];
+                return $_SESSION['location_id'];
             }
         }
         // Fallback to system accounting preference
         if (function_exists('get_accounting_preference')) {
             $def = get_accounting_preference('default_location_id');
             if (!empty($def)) {
-                return $def;
+                $_SESSION['location_id'] = $def;
+                return $_SESSION['location_id'];
             }
         }
         $loc = db()->fetchOne("SELECT id FROM locations WHERE is_default = 1 AND is_deleted = 0 LIMIT 1");
         if ($loc) {
-            return $loc['id'];
+            $_SESSION['location_id'] = $loc['id'];
+            return $_SESSION['location_id'];
         }
         $loc2 = db()->fetchOne("SELECT id FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY name ASC LIMIT 1");
-        return $loc2['id'] ?? '';
+        $fallback = $loc2['id'] ?? '';
+        if ($fallback) {
+            $_SESSION['location_id'] = $fallback;
+        }
+        return $fallback;
     }
 }
 
@@ -1152,16 +1171,21 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
         foreach ($locations as $loc) {
             $loc_id = $loc['id'];
 
-            // 1. Calculate live stock on hand for this location
+            // 1. Calculate live stock on hand for this location (including inventory transfers)
             $hdr_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') AND h.location_id = ? THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') AND h.location_id = ? THEN -l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND h.party_id = ? THEN l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND h.location_id = ? THEN -l.quantity 
                     ELSE 0 END), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
-                WHERE l.item_id = ? AND h.location_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-            ", [$item_id, $loc_id])['qty'] ?? 0);
+                WHERE l.item_id = ? 
+                  AND (h.location_id = ? OR (h.txn_type = 'inventory_transfer' AND h.party_id = ?))
+                  AND h.is_deleted = 0 
+                  AND h.status NOT IN ('void', 'voided', 'draft')
+            ", [$loc_id, $loc_id, $loc_id, $loc_id, $item_id, $loc_id, $loc_id])['qty'] ?? 0);
 
             // Add POS Entries if matched by location
             // IMPORTANT: Only include POS entries whose items are NOT already in transaction_lines
@@ -1222,6 +1246,13 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
             }
         }
 
+        // Sync total current_stock on items table
+        $db->execute("
+            UPDATE items 
+            SET current_stock = (SELECT COALESCE(SUM(quantity_on_hand), 0) FROM inventory_balances WHERE item_id = ?) 
+            WHERE id = ?
+        ", [$item_id, $item_id]);
+
         // Return formatted inventory balances join locations
         return $db->fetchAll("
             SELECT ib.*, loc.name as location_name, loc.type as location_type
@@ -1230,6 +1261,43 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
             WHERE ib.item_id = ? AND loc.is_deleted = 0
             ORDER BY loc.name ASC
         ", [$item_id]);
+    }
+}
+
+/**
+ * Auto-syncs POS transactions to Items & Customer Invoices every 5 minutes (300 seconds).
+ */
+if (!function_exists('auto_sync_pos_items_and_invoices')) {
+    function auto_sync_pos_items_and_invoices(bool $force = false) {
+        try {
+            $db = db();
+            $last_sync = 0;
+            $row = $db->fetchOne("SELECT value FROM system_info WHERE `key` = 'last_pos_sync_timestamp'");
+            if ($row) {
+                $last_sync = (int)$row['value'];
+            }
+
+            $now = time();
+            if ($force || ($now - $last_sync) >= 300) { // 5 minutes interval
+                $today = date('Y-m-d');
+                sync_daily_pos_summary($today);
+
+                // Sync inventory balances for active items
+                $items = $db->fetchAll("SELECT id FROM items WHERE is_deleted = 0 AND is_active = 1");
+                foreach ($items as $it) {
+                    sync_and_get_item_inventory_balances($db, $it['id']);
+                }
+
+                // Save last sync timestamp
+                if ($row) {
+                    $db->execute("UPDATE system_info SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE `key` = 'last_pos_sync_timestamp'", [(string)$now]);
+                } else {
+                    $db->execute("INSERT INTO system_info (id, `key`, value) VALUES (?, 'last_pos_sync_timestamp', ?)", [generate_uuid(), (string)$now]);
+                }
+            }
+        } catch (Exception $e) {
+            // Silently ignore exception during auto sync
+        }
     }
 }
 ?>

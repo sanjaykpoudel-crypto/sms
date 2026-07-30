@@ -65,25 +65,25 @@ $sql = "
         COALESCE(v.company_name, 'Unknown Vendor') as vendor_name,
         th.txn_date as due_date,
         DATEDIFF(?, th.txn_date) as days_overdue,
-        SUM(CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
         COALESCE((
             SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
             FROM transaction_links tl
             JOIN transaction_headers ph ON tl.parent_id = ph.id
             WHERE tl.child_id = th.id 
-              AND tl.link_type LIKE 'payment:%'
+              AND ph.party_id = v.id
               AND ph.txn_type = 'vendor_payment'
               AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
         ), 0.00) as amount_paid,
         (
-            SUM(CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) 
             - 
             COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
                 JOIN transaction_headers ph ON tl.parent_id = ph.id
                 WHERE tl.child_id = th.id 
-                  AND tl.link_type LIKE 'payment:%'
+                  AND ph.party_id = v.id
                   AND ph.txn_type = 'vendor_payment'
                   AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
             ), 0.00)
@@ -94,7 +94,7 @@ $sql = "
     WHERE (j.party_type = 'vendor' OR j.party_type IS NULL)
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_type IN ('Journal', 'journal_entry') {$where_vend_j} {$where_overdue_j}
+      AND th.txn_type IN ('Journal', 'journal_entry') {$where_vend_j} {$where_overdue_j} {$loc_sql_th}
     GROUP BY th.id, th.txn_date, th.txn_number, v.id, v.company_name
     HAVING balance_due > 0.01
     ORDER BY vendor_name ASC, due_date ASC, bill_number DESC

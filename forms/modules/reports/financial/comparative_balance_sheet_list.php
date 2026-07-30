@@ -47,7 +47,7 @@ $start_date_prev = $prev_fy ? get_report_start_date($as_of_prev) : '1970-01-01';
 /**
  * Helpers to fetch GL balances
  */
-function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id = true, $exclude_inv_adj = false)
+function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id = true)
 {
   $field = $is_id ? 'j.account_id' : 'a.account_subtype';
   $loc_sql = rpt_location_sql('h');
@@ -56,7 +56,7 @@ function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id =
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql} $extra_cond
+        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     ", [$id_or_subtype, $start_date, $as_of]);
   return (float) ($row['bal'] ?? 0);
 }

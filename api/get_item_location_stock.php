@@ -18,16 +18,21 @@ if (!$item_id || !$loc_id) {
 
 $db = db();
 
-// Calculate stock for this item at this specific location from transaction_lines
+// Calculate stock for this item at this specific location from transaction_lines (including inventory transfers)
 $hdr_stock = (float)($db->fetchOne("
     SELECT COALESCE(SUM(CASE 
-        WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-        WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+        WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') AND h.location_id = ? THEN l.quantity 
+        WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') AND h.location_id = ? THEN -l.quantity 
+        WHEN h.txn_type = 'inventory_transfer' AND h.party_id = ? THEN l.quantity 
+        WHEN h.txn_type = 'inventory_transfer' AND h.location_id = ? THEN -l.quantity 
         ELSE 0 END), 0) as qty
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
-    WHERE l.item_id = ? AND h.location_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-", [$item_id, $loc_id])['qty'] ?? 0);
+    WHERE l.item_id = ? 
+      AND (h.location_id = ? OR (h.txn_type = 'inventory_transfer' AND h.party_id = ?))
+      AND h.is_deleted = 0 
+      AND h.status NOT IN ('void', 'voided', 'draft')
+", [$loc_id, $loc_id, $loc_id, $loc_id, $item_id, $loc_id, $loc_id])['qty'] ?? 0);
 
 // POS entries not yet in an INV-POS invoice
 $pos_stock = (float)($db->fetchOne("

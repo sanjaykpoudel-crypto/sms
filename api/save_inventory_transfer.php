@@ -136,7 +136,7 @@ try {
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
     }
 
-    // Insert transaction lines
+    // Insert transaction lines & sync inventory balances across locations
     foreach ($valid_lines as $idx => $line) {
         $item_id = $line['item_id'];
         $inv_account_id = function_exists('get_effective_account') ? (get_effective_account($item_id, 'inventory') ?: 'acc-1200') : 'acc-1200';
@@ -146,6 +146,9 @@ try {
         ", [
             generate_uuid(), $id, $idx + 1, $item_id, $inv_account_id, $line['quantity'], $line['unit_cost'], $line['unit_cost'], $line['line_total']
         ]);
+
+        // Sync real-time inventory balances for Source & Destination locations
+        sync_and_get_item_inventory_balances($db, $item_id);
     }
 
     $pdo->commit();

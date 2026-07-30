@@ -28,7 +28,7 @@ try {
     $memo = $_POST['memo'] ?? '';
     $reference_number = $_POST['reference_number'] ?? '';
     $net_amount = (float)($_POST['net_amount'] ?? 0);
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
 
     if (!$party_id) {
         throw new Exception("Party ID is required");
@@ -135,12 +135,16 @@ try {
         }
         if (abs($apply_amt) <= 0.0001) continue;
 
-        $applied_to_id = explode(':', $raw_key)[0];
-        $affected_doc_ids[] = $applied_to_id;
+        $parts = explode(':', $raw_key);
+        $header_id = $parts[0];
+        $line_id = $parts[1] ?? '';
+        $affected_doc_ids[] = $header_id;
 
-        // Record link (parent=payment, child=invoice/bill/journal, link_type encodes the amount)
+        $link_type_str = !empty($line_id) ? "payment:{$line_id}:{$apply_amt}" : "payment:{$apply_amt}";
+
+        // Record link (parent=payment, child=invoice/bill/journal header, link_type encodes line_id and amount)
         $db->execute("INSERT INTO transaction_links (id, parent_id, child_id, link_type) VALUES (?, ?, ?, ?)", [
-            generate_uuid(), $id, $applied_to_id, 'payment:' . $apply_amt
+            generate_uuid(), $id, $header_id, $link_type_str
         ]);
     }
 

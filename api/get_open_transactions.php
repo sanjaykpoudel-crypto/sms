@@ -37,7 +37,7 @@ if ($party_type === 'customer') {
     // 2. Tagged Journal Entries for Customer
     $journals = $db->fetchAll("
         SELECT 'Journal' as txn_type,
-               CONCAT(h.txn_number, IF(j.memo != '', CONCAT(' (', j.memo, ')'), IF(j.entry_type='credit', ' [Credit]', ''))) as txn_number,
+               h.txn_number as txn_number,
                h.txn_date,
                IF(j.entry_type = 'debit', j.amount, -j.amount) as total_amount,
                (
@@ -48,7 +48,14 @@ if ($party_type === 'customer') {
                        JOIN transaction_headers ph ON tl_all.parent_id = ph.id
                        JOIN payments p ON ph.id = p.header_id
                        WHERE (tl_all.child_id = j.id OR tl_all.child_id = h.id)
-                         AND tl_all.link_type LIKE 'payment:%'
+                         AND (
+                             tl_all.link_type LIKE CONCAT('payment:', j.id, ':%')
+                             OR (
+                                 tl_all.link_type NOT LIKE 'payment:%:%'
+                                 AND tl_all.link_type LIKE 'payment:%'
+                                 AND ABS(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'debit', j.amount, -j.amount)) < 0.01
+                             )
+                         )
                          AND p.customer_id = ?
                          AND (ph.id != ? OR ? = '')
                          AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
@@ -59,7 +66,16 @@ if ($party_type === 'customer') {
                COALESCE(MAX(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0) as applied_amount
         FROM journal_entries j
         JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id) AND tl.parent_id = ?
+        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id) 
+            AND (
+                tl.link_type LIKE CONCAT('payment:', j.id, ':%')
+                OR (
+                    tl.link_type NOT LIKE 'payment:%:%'
+                    AND tl.link_type LIKE 'payment:%'
+                    AND ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'debit', j.amount, -j.amount)) < 0.01
+                )
+            )
+            AND tl.parent_id = ?
         WHERE j.party_id = ? 
           AND (j.party_type = 'customer' OR j.party_type IS NULL) 
           AND h.is_deleted = 0 
@@ -90,7 +106,7 @@ if ($party_type === 'customer') {
     // 2. Tagged Journal Entries for Vendor
     $journals = $db->fetchAll("
         SELECT 'Journal' as txn_type,
-               CONCAT(h.txn_number, IF(j.memo != '', CONCAT(' (', j.memo, ')'), IF(j.entry_type='debit', ' [Debit]', ''))) as txn_number,
+               h.txn_number as txn_number,
                h.txn_date,
                IF(j.entry_type = 'credit', j.amount, -j.amount) as total_amount,
                (
@@ -101,7 +117,14 @@ if ($party_type === 'customer') {
                        JOIN transaction_headers ph ON tl_all.parent_id = ph.id
                        JOIN payments p ON ph.id = p.header_id
                        WHERE (tl_all.child_id = j.id OR tl_all.child_id = h.id)
-                         AND tl_all.link_type LIKE 'payment:%'
+                         AND (
+                             tl_all.link_type LIKE CONCAT('payment:', j.id, ':%')
+                             OR (
+                                 tl_all.link_type NOT LIKE 'payment:%:%'
+                                 AND tl_all.link_type LIKE 'payment:%'
+                                 AND ABS(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'credit', j.amount, -j.amount)) < 0.01
+                             )
+                         )
                          AND p.vendor_id = ?
                          AND (ph.id != ? OR ? = '')
                          AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
@@ -112,7 +135,16 @@ if ($party_type === 'customer') {
                COALESCE(MAX(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0) as applied_amount
         FROM journal_entries j
         JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id) AND tl.parent_id = ?
+        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id) 
+            AND (
+                tl.link_type LIKE CONCAT('payment:', j.id, ':%')
+                OR (
+                    tl.link_type NOT LIKE 'payment:%:%'
+                    AND tl.link_type LIKE 'payment:%'
+                    AND ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'credit', j.amount, -j.amount)) < 0.01
+                )
+            )
+            AND tl.parent_id = ?
         WHERE j.party_id = ? 
           AND (j.party_type = 'vendor' OR j.party_type IS NULL) 
           AND h.is_deleted = 0 

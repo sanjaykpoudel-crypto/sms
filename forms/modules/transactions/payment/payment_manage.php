@@ -393,6 +393,30 @@ function calculatePaymentTotals() {
 
 function updateUnappliedBalance() {
     const totalPayment = parseFloat(document.getElementById('net_amount').value) || 0;
+    
+    // Auto fill checked rows if they are 0.00 or need allocation
+    let currentApplied = 0;
+    const checkedItems = [];
+    document.querySelectorAll('.apply-checkbox').forEach(cb => {
+        const row = cb.closest('tr');
+        const input = row.querySelector('.apply-amount-input');
+        if (cb.checked) {
+            checkedItems.push({ cb, row, input });
+        }
+    });
+
+    checkedItems.forEach(item => {
+        const balanceDue = parseFloat(item.row.querySelector('.balance-due-text').innerText) || 0;
+        let val = parseFloat(item.input.value) || 0;
+        
+        if (val === 0 && balanceDue > 0 && totalPayment > currentApplied) {
+            const remaining = totalPayment - currentApplied;
+            val = Math.min(remaining, balanceDue);
+            item.input.value = val.toFixed(2);
+        }
+        currentApplied += val;
+    });
+
     let totalApplied = 0;
     document.querySelectorAll('.apply-amount-input').forEach(input => {
         if (input.closest('tr').querySelector('.apply-checkbox').checked) {
@@ -430,7 +454,7 @@ function toggleApply(checkbox) {
                 }
             });
             
-            const remaining = Math.max(0, totalPayment - alreadyApplied);
+            const remaining = totalPayment > 0 ? Math.max(0, totalPayment - alreadyApplied) : balanceDue;
             amountInput.value = Math.min(remaining, balanceDue).toFixed(2);
         }
         amountInput.readOnly = false;

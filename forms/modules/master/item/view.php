@@ -17,13 +17,9 @@ $item = $db->fetchOne("
         r.name as category_name,
         r2.name as unit_name,
         (
-            SELECT COALESCE(SUM(CASE 
-                WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-                WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
-                ELSE 0 END), 0)
-            FROM transaction_lines l
-            JOIN transaction_headers h ON l.header_id = h.id
-            WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+            SELECT COALESCE(SUM(quantity_on_hand), 0)
+            FROM inventory_balances
+            WHERE item_id = i.id
         ) as current_stock
     FROM items i
     LEFT JOIN accounts a1 ON i.inventory_account_id = a1.id
@@ -41,6 +37,13 @@ if (!$item) {
 
 // Fetch Inventory Balances per Location
 $inv_balances = sync_and_get_item_inventory_balances($db, $id);
+
+// Sum quantity on hand across all locations
+$total_stock_all_locations = 0;
+foreach ($inv_balances as $ib) {
+    $total_stock_all_locations += (float)($ib['quantity_on_hand'] ?? 0);
+}
+$item['current_stock'] = $total_stock_all_locations;
 
 // Fetch related records (Stock Movements)
 $movements = $db->fetchAll("

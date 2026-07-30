@@ -61,10 +61,23 @@ if ($id) {
                 <div class="ns-form-group">
                     <label class="ns-label">User Role *</label>
                     <select name="role" class="ns-select" required>
-                        <option value="cashier" <?php echo (($data['role'] ?? '') == 'cashier') ? 'selected' : ''; ?>>Cashier</option>
-                        <option value="accountant" <?php echo (($data['role'] ?? '') == 'accountant') ? 'selected' : ''; ?>>Accountant</option>
-                        <option value="manager" <?php echo (($data['role'] ?? '') == 'manager') ? 'selected' : ''; ?>>Manager</option>
-                        <option value="admin" <?php echo (($data['role'] ?? '') == 'admin') ? 'selected' : ''; ?>>Administrator</option>
+                        <option value="">-- Select Role --</option>
+                        <?php 
+                        $roles_list = $db->fetchAll("SELECT role_code, role_name FROM roles WHERE is_active = 1 ORDER BY role_name ASC");
+                        if (empty($roles_list)) {
+                            $roles_list = [
+                                ['role_code' => 'admin', 'role_name' => 'Administrator'],
+                                ['role_code' => 'manager', 'role_name' => 'Manager'],
+                                ['role_code' => 'accountant', 'role_name' => 'Accountant'],
+                                ['role_code' => 'cashier', 'role_name' => 'Cashier']
+                            ];
+                        }
+                        foreach ($roles_list as $r): 
+                        ?>
+                            <option value="<?php echo htmlspecialchars($r['role_code']); ?>" <?php echo (($data['role'] ?? '') == $r['role_code']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($r['role_name']); ?>
+                            </option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
             </div>

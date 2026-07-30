@@ -12,8 +12,8 @@ if (!$id) {
 
 $header = $db->fetchOne("
     SELECT h.*, 
-           fl.name as from_location_name, fl.address as from_location_address,
-           tl.name as to_location_name, tl.address as to_location_address,
+           fl.name as from_location_name, COALESCE(fl.description, '') as from_location_address,
+           tl.name as to_location_name, COALESCE(tl.description, '') as to_location_address,
            u.full_name as creator_name
     FROM transaction_headers h
     LEFT JOIN locations fl ON h.location_id = fl.id
@@ -36,7 +36,7 @@ $lines = $db->fetchAll("
     ORDER BY l.line_number ASC
 ", [$id]);
 
-$company_name = get_system_setting('name', 'MNS Liquors');
+$company_name = function_exists('get_accounting_preference') ? (get_accounting_preference('company_name') ?: 'MNS Liquors') : 'MNS Liquors';
 ?>
 
 <style>
@@ -108,7 +108,6 @@ $company_name = get_system_setting('name', 'MNS Liquors');
             <tr>
                 <th width="40" style="text-align: center;">#</th>
                 <th>Item Name & Description</th>
-                <th width="100">SKU</th>
                 <th width="110" style="text-align: right;">Transferred Qty</th>
                 <th width="120" style="text-align: right;">Unit Cost (Rs)</th>
                 <th width="140" style="text-align: right;">Line Total (Rs)</th>
@@ -125,7 +124,6 @@ $company_name = get_system_setting('name', 'MNS Liquors');
                 <tr>
                     <td style="text-align: center; font-weight: 600;"><?php echo $idx + 1; ?></td>
                     <td style="font-weight: 600; color: #1e293b;"><?php echo htmlspecialchars($line['item_name']); ?></td>
-                    <td><?php echo htmlspecialchars($line['sku']); ?></td>
                     <td style="text-align: right; font-weight: 700;"><?php echo number_format($line['quantity'], 2); ?></td>
                     <td style="text-align: right;"><?php echo number_format($line['cost_price'], 2); ?></td>
                     <td style="text-align: right; font-weight: 700; color: #0284c7;"><?php echo number_format($line['line_total'], 2); ?></td>

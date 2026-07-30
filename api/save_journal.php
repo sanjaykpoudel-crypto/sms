@@ -55,7 +55,7 @@ try {
 
     $fiscal = calculate_fiscal_info($txn_date);
 
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
 
     if (!$id) {
         $id = generate_uuid();

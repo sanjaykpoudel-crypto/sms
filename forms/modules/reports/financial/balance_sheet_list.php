@@ -94,7 +94,7 @@ $revenue = -(float)($db->fetchOne("
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
 ", [$start_date, $as_of])['v'] ?? 0);
 
 $expenses = (float)($db->fetchOne("
@@ -103,7 +103,7 @@ $expenses = (float)($db->fetchOne("
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL
+      AND h.source IS NULL {$loc_sql}
 ", [$start_date, $as_of])['v'] ?? 0);
 
 $retained_earnings = $revenue - $expenses;
@@ -115,7 +115,7 @@ $equity_accounts_list = $db->fetchAll("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'equity'
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
 ", [$start_date, $as_of]);

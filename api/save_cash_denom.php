@@ -52,19 +52,21 @@ try {
         ($coin_1    * 1)
     );
 
+    $location_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
+
     if (!$id) {
         $id = generate_uuid();
         $txn_number = 'CD-' . date('Ymd', strtotime($txn_date)) . '-' . rand(1000, 9999);
         
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, net_amount) 
-                      VALUES (?, ?, 'cash_denomination', ?, ?, ?, ?, 'posted', ?, ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, net_amount, location_id) 
+                      VALUES (?, ?, 'cash_denomination', ?, ?, ?, ?, 'posted', ?, ?, ?, ?)", [
             $id, $txn_number, $txn_date, 
             $fiscal['year'], $fiscal['month'], $fiscal['period'], 
-            $_SESSION['user_id'], $party_id, $net_amount
+            $_SESSION['user_id'], $party_id, $net_amount, $location_id
         ]);
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, party_id = ?, net_amount = ?, txn_type = 'cash_denomination' WHERE id = ?", [
-            $txn_date, $party_id, $net_amount, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, party_id = ?, net_amount = ?, location_id = ?, txn_type = 'cash_denomination' WHERE id = ?", [
+            $txn_date, $party_id, $net_amount, $location_id, $id
         ]);
         $db->execute("DELETE FROM cash_denominations WHERE header_id = ?", [$id]);
     }

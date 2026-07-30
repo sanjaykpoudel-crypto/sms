@@ -2,9 +2,15 @@
 require_once 'database/DBConnection.php';
 $db = db();
 $show_all = isset($_GET['show_all']) && $_GET['show_all'] == '1';
-$status_filter = $show_all ? "" : " AND is_active = 1 ";
+$status_filter = $show_all ? "" : " AND u.is_active = 1 ";
 
-$list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter ORDER BY full_name ASC");
+$list = $db->fetchAll("
+    SELECT u.*, l.name as location_name 
+    FROM users u 
+    LEFT JOIN locations l ON u.location_id = l.id 
+    WHERE u.is_deleted = 0 $status_filter 
+    ORDER BY u.full_name ASC
+");
 ?>
 <div class="ns-page-header">
     <h1 class="ns-page-title">
@@ -30,6 +36,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
                     <th>Username</th>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Location</th>
                     <th>Status</th>
                     <th width="80" style="text-align: center;">Actions</th>
                 </tr>
@@ -42,6 +49,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
                     <td><?php echo htmlspecialchars($row['username']); ?></td>
                     <td><?php echo htmlspecialchars($row['email']); ?></td>
                     <td><?php echo ucfirst(htmlspecialchars($row['role'])); ?></td>
+                    <td><?php echo htmlspecialchars($row['location_name'] ?: 'All / Default'); ?></td>
                     <td>
                         <span style="color: <?php echo $row['is_active'] ? '#080' : '#c00'; ?>">
                             <?php echo $row['is_active'] ? 'Active' : 'Inactive'; ?>
@@ -58,7 +66,7 @@ $list = $db->fetchAll("SELECT * FROM users WHERE is_deleted = 0 $status_filter O
                 <?php endforeach; ?>
                 <?php if (empty($list)): ?>
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 20px; color: #999;">No users found.</td>
+                    <td colspan="8" style="text-align: center; padding: 20px; color: #999;">No users found.</td>
                 </tr>
                 <?php endif; ?>
             </tbody>

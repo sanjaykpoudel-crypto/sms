@@ -14,6 +14,11 @@ $_SESSION['last_activity'] = time();
 require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 
+// Auto-sync POS transactions to Items & Customer Invoices at 5-minute intervals
+if (isset($_SESSION['user_id']) && function_exists('auto_sync_pos_items_and_invoices')) {
+    auto_sync_pos_items_and_invoices(false);
+}
+
 $error = "";
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
     $username = $_POST['username'] ?? '';
@@ -28,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
             $_SESSION['username'] = $user['username'];
             $_SESSION['full_name'] = $user['full_name'];
             $_SESSION['role'] = $user['role'];
+            $_SESSION['location_id'] = !empty($user['location_id']) ? $user['location_id'] : get_user_default_location_id();
 
             // Update last login
             $db->execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = :id", ['id' => $user['id']]);
@@ -43,6 +49,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
 }
 
 $is_logged_in = isset($_SESSION['user_id']);
+if ($is_logged_in && empty($_SESSION['location_id'])) {
+    $_SESSION['location_id'] = get_user_default_location_id();
+}
 
 // Always fetch system branding (needed on both login + dashboard)
 if (!isset($db))
@@ -579,8 +588,10 @@ if ($is_logged_in) {
                 <div class="ns-dropdown">
                     <a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System
                         Information</a>
-                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Users &
-                        Roles</a>
+                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Employees &
+                        Users</a>
+                    <a href="?page=system/roles" class="ns-dropdown-item"><i class="fas fa-user-lock"></i> Role
+                        Permissions</a>
                     <a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i>
                         Accounting Periods / Closing</a>
                     <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i>
@@ -623,13 +634,27 @@ if ($is_logged_in) {
                         $module_name = $parts[$count - 2];
                         if ($module_name == 'users')
                             $module_name = 'user';
+                        if ($module_name == 'roles')
+                            $module_name = 'role';
                         $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_manage.php";
                     } elseif ($action == 'view' || $action == 'print') {
                         $page_path = "forms/modules/" . $dir_path . "/" . $action . ".php";
+                        if (!file_exists($page_path) && $count >= 2) {
+                            $module_name = $parts[$count - 2];
+                            if ($module_name == 'users') $module_name = 'user';
+                            if ($module_name == 'roles') $module_name = 'role';
+                            $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_" . $action . ".php";
+                        }
+                        if (!file_exists($page_path) && $count >= 3) {
+                            $parent_dir = implode('/', array_slice($parts, 0, $count - 2));
+                            $page_path = "forms/modules/" . $parent_dir . "/" . $action . ".php";
+                        }
                     } else {
                         $module_name = $action;
                         if ($module_name == 'users')
                             $module_name = 'user';
+                        if ($module_name == 'roles')
+                            $module_name = 'role';
 
                         // Primary path: forms/modules/{page}/{action}_list.php
                         $page_path = "forms/modules/" . $page . "/" . $module_name . "_list.php";

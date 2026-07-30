@@ -41,7 +41,7 @@ try {
     $ref_number = !empty($_POST['ref_number']) ? $_POST['ref_number'] : $txn_number;
     $memo = $_POST['memo'] ?? '';
     $discount_amount = (float)($_POST['discount_amount'] ?? 0);
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
     
     // Status preservation for edit mode
     if ($id) {

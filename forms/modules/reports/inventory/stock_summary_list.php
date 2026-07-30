@@ -24,17 +24,33 @@ $rows = $db->fetchAll("
 ");
 
 $cat_filter = $_GET['category'] ?? '';
+$status_filter = $_GET['status'] ?? '';
+
 $filtered_rows = [];
 foreach ($rows as $r) {
     if ($cat_filter && $r['category_id'] !== $cat_filter) {
         continue;
     }
+    
+    $stock_qty = (float)$r['stock_qty'];
+    $reorder = $r['reorder_level'] !== null ? (float)$r['reorder_level'] : null;
+
+    if ($status_filter === 'available' || $status_filter === 'in_stock') {
+        if ($stock_qty <= 0) continue;
+    } elseif ($status_filter === 'low_stock') {
+        if ($reorder === null || $stock_qty > $reorder || $stock_qty <= 0) continue;
+    } elseif ($status_filter === 'out_of_stock') {
+        if ($stock_qty > 0) continue;
+    } elseif ($status_filter === 'negative') {
+        if ($stock_qty >= 0) continue;
+    }
+
     $filtered_rows[] = $r;
 }
 
 $total_value = 0;
 foreach ($filtered_rows as $r) { $total_value += $r['stock_qty'] * $r['cost_price']; }
-$low_stock_count = count(array_filter($filtered_rows, fn($r) => $r['stock_qty'] <= $r['reorder_level']));
+$low_stock_count = count(array_filter($filtered_rows, fn($r) => $r['reorder_level'] !== null && $r['stock_qty'] <= $r['reorder_level']));
 ?>
 <style>
 .stock-low{background:#fff3cd;color:#664d03}
@@ -46,8 +62,17 @@ $catQuery = $db->fetchAll("SELECT id, name FROM reference_codes WHERE type = 'ca
 $catOptions = ['' => 'All Categories'];
 foreach($catQuery as $c) $catOptions[$c['id']] = $c['name'];
 
+$statusOptions = [
+    '' => 'All Statuses',
+    'available' => 'Available Only (Stock > 0)',
+    'low_stock' => 'Low Stock',
+    'out_of_stock' => 'Out of Stock',
+    'negative' => 'Negative Stock'
+];
+
 rpt_filter_bar('Stock Summary', [
     ['name'=>'category','label'=>'Category','type'=>'select','default'=>'','options'=>$catOptions],
+    ['name'=>'status','label'=>'Status','type'=>'select','default'=>'','options'=>$statusOptions],
     rpt_location_filter(),
 ], 'tbl-stock'); ?>
 

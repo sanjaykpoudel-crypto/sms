@@ -1,25 +1,23 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/reference_helper.php';
 $db = db();
 
-// Fetch active items with category names and dynamic calculated stock
+$pos_location_id = $_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '');
+
+// Fetch active items with category names, location-specific stock, cost, and selling price
 $items = $db->fetchAll("
-    SELECT i.id, i.sku, i.item_name, r.name as category_name, i.selling_price, i.cost_price, i.tax_rate, i.barcode,
-        COALESCE((
-            SELECT SUM(CASE 
-                WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-                WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
-                ELSE 0 
-            END)
-            FROM transaction_lines l
-            JOIN transaction_headers h ON l.header_id = h.id
-            WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-        ), 0) as current_stock
+    SELECT i.id, i.sku, i.item_name, r.name as category_name, 
+        CAST(COALESCE(ib.selling_price, i.selling_price) AS DECIMAL(12,2)) as selling_price, 
+        CAST(COALESCE(ib.average_cost, i.cost_price) AS DECIMAL(12,2)) as cost_price, 
+        i.tax_rate, i.barcode,
+        CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
+    LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = ?
     WHERE i.is_active = 1 AND i.is_deleted = 0
     ORDER BY i.item_name ASC
-");
+", [$pos_location_id]);
 
 // Fetch bank/cash accounts for payment
 $payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('Bank') AND is_active = 1 ORDER BY account_name ASC");
@@ -244,7 +242,8 @@ let payments = [];
 let activeCat = 'all';
 
 function refreshPosItems() {
-    fetch('api/get_pos_items.php')
+    const locId = document.getElementById('pos-location-id')?.value || '';
+    fetch('api/get_pos_items.php?location_id=' + encodeURIComponent(locId))
         .then(r => r.json())
         .then(res => {
             if (res.status === 'success' && Array.isArray(res.items)) {

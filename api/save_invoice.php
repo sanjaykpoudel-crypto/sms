@@ -55,7 +55,7 @@ try {
     }
     
     $discount_amount = (float)($_POST['discount_amount'] ?? 0);
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
     
     if (!$party_id) throw new Exception("Customer is required");
 

@@ -1,13 +1,15 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/reference_helper.php';
 $db = db();
 
 // Fetch all bank and cash accounts
 $accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('Bank') AND is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
 
-// Fetch existing opening balances transaction date if any
-$opening_txn = $db->fetchOne("SELECT txn_date FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
+// Fetch existing opening balances transaction date and location if any
+$opening_txn = $db->fetchOne("SELECT txn_date, location_id FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
 $opening_date = $opening_txn ? $opening_txn['txn_date'] : (date('Y') . '-01-01');
+$opening_location_id = (!empty($opening_txn) && !empty($opening_txn['location_id'])) ? $opening_txn['location_id'] : get_user_default_location_id();
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title">Bank Opening Balances</div>
@@ -25,11 +27,24 @@ $opening_date = $opening_txn ? $opening_txn['txn_date'] : (date('Y') . '-01-01')
             An offsetting entry will be automatically generated to the **Opening Balance** account (`open`) to ensure double-entry accounting is balanced.
         </p>
 
-        <div class="ns-form-row" style="margin-bottom: 20px;">
+        <div class="ns-form-row" style="margin-bottom: 20px; display: flex; gap: 20px;">
             <div style="flex: 0 0 250px;">
                 <div class="ns-form-group">
                     <label class="ns-label" for="opening_balance_date">Opening Balance Date *</label>
                     <input type="date" id="opening_balance_date" name="opening_balance_date" class="ns-input" required value="<?php echo htmlspecialchars($opening_date); ?>">
+                </div>
+            </div>
+            <div style="flex: 0 0 250px;">
+                <div class="ns-form-group">
+                    <label class="ns-label" for="location_id">Location</label>
+                    <select name="location_id" id="location_id" class="ns-select">
+                        <option value="">-- Select Location --</option>
+                        <?php foreach (get_active_locations() as $loc): ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($opening_location_id == $loc['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
         </div>

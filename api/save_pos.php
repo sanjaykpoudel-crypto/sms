@@ -143,12 +143,13 @@ try {
 
         $line_net  = round($line_amount - $line_disc + $line_tax, 2);
 
-        $item_info  = $db->fetchOne("SELECT cost_price, item_name, current_stock FROM items WHERE id = ?", [$item_id]);
-        $available = (float)($item_info['current_stock'] ?? 0);
+        $ib = $db->fetchOne("SELECT quantity_on_hand FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
+        $item_info  = $db->fetchOne("SELECT item_name FROM items WHERE id = ?", [$item_id]);
+        $available = (float)($ib['quantity_on_hand'] ?? 0);
 
-        // Stock Validation
+        // Stock Validation against user's location
         if ($available < $qty && !isset($data['force_save'])) {
-            throw new Exception("Stock Warning: Item '" . $item_info['item_name'] . "' has only " . number_format($available, 4) . " available.");
+            throw new Exception("Stock Warning: Item '" . $item_info['item_name'] . "' has only " . number_format($available, 2) . " available at this location.");
         }
 
         // pos_items
@@ -158,8 +159,8 @@ try {
             [generate_uuid(), $pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
         );
 
-        // Real-time Stock Deduction
-        $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
+        // Real-time Stock Sync per Location
+        sync_and_get_item_inventory_balances($db, $item_id);
     }
 
     // 5. Save Payments

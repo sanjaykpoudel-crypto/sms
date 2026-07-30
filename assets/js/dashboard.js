@@ -620,8 +620,8 @@
             bank_balance:    `?page=reports/financial/general_ledger&account_type=bank`,
             ar:              `?page=reports/sales/open_invoices`,
             ap:              `?page=reports/vendors/open_bills`,
-            inventory_value: `?page=reports/inventory/stock_summary`,
-            low_stock:       `?page=reports/inventory/low_stock`
+            inventory_value: `?page=reports/inventory/stock_summary&status=available`,
+            low_stock:       `?page=reports/inventory/stock_summary&status=low_stock`
         };
         return links[kpiKey] || '#';
     }

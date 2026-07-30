@@ -41,7 +41,7 @@ try {
     $expense_account_id = $_POST['expense_account_id'] ?? null;
     $paid_from_account_id = $_POST['paid_from_account_id'] ?? null;
     $expense_category = $_POST['expense_category'] ?? 'other';
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
 
     if (!$expense_account_id || !$paid_from_account_id || $net_amount <= 0) {
         throw new Exception("Account selection and positive amount are required.");

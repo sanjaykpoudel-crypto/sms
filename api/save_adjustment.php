@@ -77,6 +77,9 @@ try {
     if (empty($line_data_list)) {
         throw new Exception("Please add at least one valid adjustment line with non-zero quantity.");
     }
+    if (!$first_location_id) {
+        $first_location_id = get_user_default_location_id();
+    }
 
     if (!$id) {
         $id = generate_uuid();

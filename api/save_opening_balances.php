@@ -20,6 +20,7 @@ $pdo = $db->getConnection();
 
 $balances = $_POST['balances'] ?? [];
 $opening_date = $_POST['opening_balance_date'] ?? null;
+$location_id = $_POST['location_id'] ?? null;
 
 if (empty($opening_date)) {
     echo json_encode(['status' => 'error', 'message' => 'Opening balance date is required.']);
@@ -49,7 +50,7 @@ try {
     }
 
     // Synchronize the opening balances to a balanced journal entry
-    sync_opening_balance_journal_entries($pdo, $opening_date);
+    sync_opening_balance_journal_entries($pdo, $opening_date, $location_id);
 
     $pdo->commit();
     echo json_encode(['status' => 'success', 'message' => 'Opening balances updated and journal entry synchronized successfully.']);
