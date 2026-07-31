@@ -17,6 +17,7 @@ header('Content-Type: application/json');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 header('Pragma: no-cache');
 require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
 
 $db = db();
 
@@ -322,6 +323,9 @@ $bal_today = get_balances($db, $today);
 $bal_yest  = get_balances($db, $yesterday);
 
 // ── 1d. Inventory Value + Counts ──
+if (function_exists('auto_sync_pos_items_and_invoices')) {
+    auto_sync_pos_items_and_invoices(isset($_GET['nocache']));
+}
 global $selected_location_id;
 if (!empty($selected_location_id)) {
     $inv_stats = $db->fetchOne("

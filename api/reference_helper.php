@@ -166,7 +166,9 @@ function getNextTransactionNumber($type)
             'vendor' => 'VEND',
             'inventory_adjustment' => 'ADJ',
             'account_transfer' => 'XFER',
-            'inventory_transfer' => 'ITR'
+            'inventory_transfer' => 'ITR',
+            'credit_memo' => 'CM',
+            'vendor_credit' => 'VC'
         ];
         $prefix = $defaults[$type] ?? 'TXN';
     }
@@ -975,7 +977,7 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
 
     // 2. Sum active payment links applied to this document (child_id)
     $stmt_pay = $pdo->prepare("
-        SELECT COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as total_paid
+        SELECT COALESCE(SUM(ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))), 0.00) as total_paid
         FROM transaction_links tl
         JOIN transaction_headers ph ON tl.parent_id = ph.id
         WHERE tl.child_id = ? AND tl.link_type LIKE 'payment:%'
@@ -1041,6 +1043,54 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
 
             $pdo->prepare("UPDATE vendor_bills SET amount_paid = ?, balance_due = ?, payment_status = ? WHERE header_id = ?")
                 ->execute([$new_amount_paid, $new_balance_due, $pay_status, $doc_header_id]);
+            $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
+                ->execute([$hdr_status, $doc_header_id]);
+        }
+    } elseif ($txn_type === 'credit_memo') {
+        $stmt_cm = $pdo->prepare("SELECT total_amount FROM credit_memos WHERE header_id = ?");
+        $stmt_cm->execute([$doc_header_id]);
+        $cm = $stmt_cm->fetch(PDO::FETCH_ASSOC);
+        if ($cm) {
+            $total_amount = (float) $cm['total_amount'];
+            $new_applied = min($total_amount, $actual_paid);
+            $new_remaining = max(0.00, round($total_amount - $actual_paid, 2));
+
+            $cm_status = 'open';
+            $hdr_status = 'open';
+            if ($new_remaining <= 0.01) {
+                $cm_status = 'closed';
+                $hdr_status = 'closed';
+            } elseif ($new_applied > 0.01) {
+                $cm_status = 'partial';
+                $hdr_status = 'partial';
+            }
+
+            $pdo->prepare("UPDATE credit_memos SET remaining_credit = ?, status = ? WHERE header_id = ?")
+                ->execute([$new_remaining, $cm_status, $doc_header_id]);
+            $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
+                ->execute([$hdr_status, $doc_header_id]);
+        }
+    } elseif ($txn_type === 'vendor_credit') {
+        $stmt_vc = $pdo->prepare("SELECT total_amount FROM vendor_credits WHERE header_id = ?");
+        $stmt_vc->execute([$doc_header_id]);
+        $vc = $stmt_vc->fetch(PDO::FETCH_ASSOC);
+        if ($vc) {
+            $total_amount = (float) $vc['total_amount'];
+            $new_applied = min($total_amount, $actual_paid);
+            $new_remaining = max(0.00, round($total_amount - $actual_paid, 2));
+
+            $vc_status = 'open';
+            $hdr_status = 'open';
+            if ($new_remaining <= 0.01) {
+                $vc_status = 'closed';
+                $hdr_status = 'closed';
+            } elseif ($new_applied > 0.01) {
+                $vc_status = 'partial';
+                $hdr_status = 'partial';
+            }
+
+            $pdo->prepare("UPDATE vendor_credits SET remaining_credit = ?, status = ? WHERE header_id = ?")
+                ->execute([$new_remaining, $vc_status, $doc_header_id]);
             $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
                 ->execute([$hdr_status, $doc_header_id]);
         }
@@ -1122,6 +1172,20 @@ if (!function_exists('get_dropdown_options')) {
     }
 }
 
+if (!function_exists('render_dropdown_options')) {
+    function render_dropdown_options(array $options, $selected_val = ''): string
+    {
+        $html = '';
+        foreach ($options as $opt) {
+            $id = htmlspecialchars($opt['id'] ?? '');
+            $name = htmlspecialchars($opt['name'] ?? '');
+            $sel = (string)($opt['id'] ?? '') === (string)$selected_val ? ' selected' : '';
+            $html .= "<option value=\"{$id}\"{$sel}>{$name}</option>";
+        }
+        return $html;
+    }
+}
+
 if (!function_exists('get_user_default_location_id')) {
     function get_user_default_location_id(): string
     {
@@ -1174,15 +1238,15 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
             // 1. Calculate live stock on hand for this location (including inventory transfers)
             $hdr_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') AND h.location_id = ? THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') AND h.location_id = ? THEN -l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN -l.quantity 
                     WHEN h.txn_type = 'inventory_transfer' AND h.party_id = ? THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND h.location_id = ? THEN -l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN -l.quantity 
                     ELSE 0 END), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
                 WHERE l.item_id = ? 
-                  AND (h.location_id = ? OR (h.txn_type = 'inventory_transfer' AND h.party_id = ?))
+                  AND (COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? OR (h.txn_type = 'inventory_transfer' AND h.party_id = ?))
                   AND h.is_deleted = 0 
                   AND h.status NOT IN ('void', 'voided', 'draft')
             ", [$loc_id, $loc_id, $loc_id, $loc_id, $item_id, $loc_id, $loc_id])['qty'] ?? 0);
@@ -1201,7 +1265,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
                     SELECT 1 FROM transaction_headers th
                     JOIN transaction_lines tl ON tl.header_id = th.id
                     WHERE th.txn_type = 'customer_invoice'
-                      AND th.txn_number LIKE 'INV-POS%'
+                      AND (th.txn_number LIKE 'INV-POS%' OR th.txn_number LIKE 'POS-SUM%')
                       AND th.location_id = ?
                       AND DATE(th.txn_date) = DATE(pe.date_time)
                       AND tl.item_id = pi.item_id
@@ -1209,7 +1273,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
                 )
             ", [$item_id, $loc_id, $loc_id, $loc_id])['qty'] ?? 0);
 
-            $on_hand = max(0, $hdr_stock + $pos_stock);
+            $on_hand = $hdr_stock + $pos_stock;
 
             // 2. Committed Qty (open sales invoices / orders not completed)
             $committed = (float)($db->fetchOne("
@@ -1268,34 +1332,27 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
  * Auto-syncs POS transactions to Items & Customer Invoices every 5 minutes (300 seconds).
  */
 if (!function_exists('auto_sync_pos_items_and_invoices')) {
-    function auto_sync_pos_items_and_invoices(bool $force = false) {
+    function auto_sync_pos_items_and_invoices(bool $force = true) {
         try {
             $db = db();
-            $last_sync = 0;
-            $row = $db->fetchOne("SELECT value FROM system_info WHERE `key` = 'last_pos_sync_timestamp'");
-            if ($row) {
-                $last_sync = (int)$row['value'];
+            $today = date('Y-m-d');
+            sync_daily_pos_summary($today);
+
+            // Real-time sync of inventory balances for all active items across locations
+            $items = $db->fetchAll("SELECT id FROM items WHERE is_deleted = 0 AND is_active = 1");
+            foreach ($items as $it) {
+                sync_and_get_item_inventory_balances($db, $it['id']);
             }
 
+            // Save last sync timestamp
             $now = time();
-            if ($force || ($now - $last_sync) >= 300) { // 5 minutes interval
-                $today = date('Y-m-d');
-                sync_daily_pos_summary($today);
-
-                // Sync inventory balances for active items
-                $items = $db->fetchAll("SELECT id FROM items WHERE is_deleted = 0 AND is_active = 1");
-                foreach ($items as $it) {
-                    sync_and_get_item_inventory_balances($db, $it['id']);
-                }
-
-                // Save last sync timestamp
-                if ($row) {
-                    $db->execute("UPDATE system_info SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE `key` = 'last_pos_sync_timestamp'", [(string)$now]);
-                } else {
-                    $db->execute("INSERT INTO system_info (id, `key`, value) VALUES (?, 'last_pos_sync_timestamp', ?)", [generate_uuid(), (string)$now]);
-                }
+            $row = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'last_pos_sync_timestamp'");
+            if ($row) {
+                $db->execute("UPDATE system_info SET meta_value = ? WHERE meta_field = 'last_pos_sync_timestamp'", [(string)$now]);
+            } else {
+                $db->execute("INSERT INTO system_info (id, meta_field, meta_value) VALUES (?, 'last_pos_sync_timestamp', ?)", [generate_uuid(), (string)$now]);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // Silently ignore exception during auto sync
         }
     }

@@ -125,6 +125,7 @@ try {
 
         // Update item stock and cost price
         $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
+        sync_and_get_item_inventory_balances($db, $item_id);
 
         // Journal Entries impact for the item's inventory asset account
         $abs_amount = abs($line_total);

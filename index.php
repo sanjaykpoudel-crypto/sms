@@ -14,9 +14,9 @@ $_SESSION['last_activity'] = time();
 require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 
-// Auto-sync POS transactions to Items & Customer Invoices at 5-minute intervals
+// Auto-sync POS transactions to Items & Customer Invoices in real-time
 if (isset($_SESSION['user_id']) && function_exists('auto_sync_pos_items_and_invoices')) {
-    auto_sync_pos_items_and_invoices(false);
+    auto_sync_pos_items_and_invoices(true);
 }
 
 $error = "";
@@ -399,6 +399,22 @@ if ($is_logged_in) {
                         <div class="ns-sub-dropdown">
                             <a href="?page=transactions/invoice/manage" class="ns-sub-dropdown-item">New Invoice</a>
                             <a href="?page=transactions/invoice" class="ns-sub-dropdown-item">Invoice List</a>
+                        </div>
+                    </div>
+                    <div class="ns-dropdown-item">
+                        <i class="fas fa-undo-alt"></i> Credit Memo <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=transactions/credit_memo/manage" class="ns-sub-dropdown-item">New Credit Memo</a>
+                            <a href="?page=transactions/credit_memo" class="ns-sub-dropdown-item">Credit Memo List</a>
+                        </div>
+                    </div>
+                    <div class="ns-dropdown-item">
+                        <i class="fas fa-file-invoice-dollar" style="color: #e11d48;"></i> Vendor Credits <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=transactions/bill_credit/manage" class="ns-sub-dropdown-item">New Vendor Credit</a>
+                            <a href="?page=transactions/bill_credit" class="ns-sub-dropdown-item">Vendor Credit List</a>
                         </div>
                     </div>
                     <div class="ns-dropdown-item">

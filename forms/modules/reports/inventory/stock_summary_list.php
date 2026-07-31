@@ -1,27 +1,52 @@
 <?php
 require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
+require_once 'api/reference_helper.php';
 $db = db();
 
-$loc_sql = rpt_location_sql('h');
-$rows = $db->fetchAll("
-    SELECT 
-        i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
-        i.cost_price, i.selling_price, i.reorder_level, i.item_category as category_id,
-        COALESCE(SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
-            ELSE 0 
-        END), 0) AS stock_qty
-    FROM items i
-    LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
-    LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-    WHERE i.is_deleted = 0 AND i.is_active = 1
-    GROUP BY i.id
-    ORDER BY rc1.name, i.item_name
-");
+if (function_exists('auto_sync_pos_items_and_invoices')) {
+    auto_sync_pos_items_and_invoices(true);
+}
+
+$loc_id = $_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
+
+if (!empty($loc_id) && $loc_id !== 'all') {
+    $rows = $db->fetchAll("
+        SELECT 
+            i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+            i.cost_price, i.selling_price, i.reorder_level, i.item_category as category_id,
+            COALESCE(ib.quantity_on_hand, 0) AS stock_qty
+        FROM items i
+        LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = " . $db->getConnection()->quote($loc_id) . "
+        LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
+        LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
+        WHERE i.is_deleted = 0 AND i.is_active = 1
+          AND (COALESCE(ib.quantity_on_hand, 0) != 0 OR EXISTS (
+                SELECT 1 
+                FROM transaction_lines tl 
+                JOIN transaction_headers th ON tl.header_id = th.id 
+                WHERE tl.item_id = i.id 
+                  AND COALESCE(NULLIF(tl.location_id, ''), th.location_id) = " . $db->getConnection()->quote($loc_id) . " 
+                  AND th.is_deleted = 0 
+                  AND th.status NOT IN ('void', 'voided', 'draft')
+          ))
+        GROUP BY i.id
+        ORDER BY rc1.name, i.item_name
+    ");
+} else {
+    $rows = $db->fetchAll("
+        SELECT 
+            i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+            i.cost_price, i.selling_price, i.reorder_level, i.item_category as category_id,
+            COALESCE(i.current_stock, 0) AS stock_qty
+        FROM items i
+        LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
+        LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
+        WHERE i.is_deleted = 0 AND i.is_active = 1
+        GROUP BY i.id
+        ORDER BY rc1.name, i.item_name
+    ");
+}
 
 $cat_filter = $_GET['category'] ?? '';
 $status_filter = $_GET['status'] ?? '';

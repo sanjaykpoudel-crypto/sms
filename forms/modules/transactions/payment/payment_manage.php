@@ -497,6 +497,10 @@ function fetchOpenTransactions() {
                 typeBadge = '<span style="font-size:10px; background:#f0fdf4; color:#15803d; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">INVOICE</span>';
             } else if (row.txn_type === 'Bill') {
                 typeBadge = '<span style="font-size:10px; background:#fff7ed; color:#c2410c; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">BILL</span>';
+            } else if (row.txn_type === 'Credit Memo') {
+                typeBadge = '<span style="font-size:10px; background:#dcfce7; color:#15803d; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">CREDIT MEMO</span>';
+            } else if (row.txn_type === 'Vendor Credit') {
+                typeBadge = '<span style="font-size:10px; background:#ffe4e6; color:#be123c; padding:2px 6px; border-radius:4px; margin-left:6px; font-weight:700;">VENDOR CREDIT</span>';
             }
             const itemKey = row.line_id ? (row.id + ':' + row.line_id) : row.id;
             const isNegative = (parseFloat(row.balance_due) < 0);

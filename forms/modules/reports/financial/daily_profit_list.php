@@ -13,6 +13,7 @@ $date_to    = $_GET['date_to']   ?? $today;
 
 $loc_sql = rpt_location_sql('h');
 $loc_sql_th = rpt_location_sql('th');
+$loc_sql_pe = rpt_location_sql('pe');
 
 // ── 1. Daily Aggregates (Includes POS Sales + Invoices + Expenses + Journals) ──
 $pos_sales_rows = $db->fetchAll("
@@ -24,7 +25,7 @@ $pos_sales_rows = $db->fetchAll("
     FROM pos_items pi
     JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
     JOIN pos_entry pe ON pi.pos_id = pe.id
-    WHERE pe.is_deleted = 0 
+    WHERE pe.is_deleted = 0 {$loc_sql_pe}
       AND (pe.invoice_no NOT LIKE 'POS-SUM-%' OR pe.invoice_no IN (SELECT txn_number FROM transaction_headers th WHERE th.txn_type = 'customer_invoice' AND th.is_deleted = 0 {$loc_sql_th}))
       AND DATE(pe.date_time) BETWEEN ? AND ?
     GROUP BY DATE(pe.date_time)
@@ -132,7 +133,7 @@ $dt_inv_txns = $db->fetchAll("
     LEFT JOIN customers c ON ci.customer_id = c.id
     WHERE h.txn_type = 'customer_invoice'
       AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     GROUP BY h.id, h.txn_date, h.txn_number, c.full_name, h.memo, h.net_amount
 ", [$date_from, $date_to]);
 
@@ -153,7 +154,7 @@ $dt_exp_txns = $db->fetchAll("
     JOIN transaction_headers h ON e.header_id = h.id
     LEFT JOIN vendors v ON e.vendor_id = v.id
     WHERE h.txn_type = 'expense' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date BETWEEN ? AND ?
+      AND h.txn_date BETWEEN ? AND ? {$loc_sql}
     GROUP BY h.id, h.txn_date, h.txn_number, v.company_name, e.description, h.memo
 ", [$date_from, $date_to]);
 
@@ -176,7 +177,7 @@ $dt_jour_txns = $db->fetchAll("
     WHERE h.txn_type IN ('Journal', 'journal_entry')
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_date BETWEEN ? AND ?
-      AND a.is_deleted = 0
+      AND a.is_deleted = 0 {$loc_sql}
     GROUP BY h.id, h.txn_date, h.txn_number, h.memo, h.reference_number
     HAVING (sales != 0 OR cogs != 0 OR expense != 0)
 ", [$date_from, $date_to]);

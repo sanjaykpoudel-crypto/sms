@@ -7,7 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 require_once __DIR__ . '/../database/DBConnection.php';
 
-$party_id = $_GET['party_id'] ?? null;
+$party_id   = $_GET['party_id']   ?? null;
 $party_type = $_GET['party_type'] ?? 'customer';
 $payment_id = $_GET['payment_id'] ?? '';
 
@@ -86,7 +86,21 @@ if ($party_type === 'customer') {
         ORDER BY h.txn_date ASC
     ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id]);
 
-    $results = array_merge($invoices, $journals);
+    // 3. Open Credit Memos for Customer
+    $credit_memos = $db->fetchAll("
+        SELECT 'Credit Memo' as txn_type, h.txn_number, h.txn_date,
+               (-1 * cm.total_amount) as total_amount,
+               (-1 * (cm.remaining_credit + COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), 0))) as balance_due,
+               cm.header_id as id,
+               COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), 0) as applied_amount
+        FROM credit_memos cm
+        JOIN transaction_headers h ON cm.header_id = h.id
+        LEFT JOIN transaction_links tl ON tl.child_id = cm.header_id AND tl.parent_id = ?
+        WHERE cm.customer_id = ? AND (cm.remaining_credit > 0.01 OR tl.id IS NOT NULL) AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        ORDER BY h.txn_date ASC
+    ", [$payment_id, $party_id]);
+
+    $results = array_merge($invoices, $journals, $credit_memos);
 } else {
     $where = $payment_id ? "(tl.id IS NOT NULL OR vb.balance_due > 0.01)" : "vb.balance_due > 0.01";
     
@@ -155,7 +169,20 @@ if ($party_type === 'customer') {
         ORDER BY h.txn_date ASC
     ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id]);
 
-    $results = array_merge($bills, $journals);
+    // 3. Open Vendor Credits for Vendor
+    $vendor_credits = $db->fetchAll("
+        SELECT 'Vendor Credit' as txn_type, h.txn_number, h.txn_date,
+               (-1 * vc.total_amount) as total_amount,
+               (-1 * (vc.remaining_credit + COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), 0))) as balance_due,
+               vc.header_id as id,
+               COALESCE(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)), 0) as applied_amount
+        FROM vendor_credits vc
+        JOIN transaction_headers h ON vc.header_id = h.id
+        LEFT JOIN transaction_links tl ON tl.child_id = vc.header_id AND tl.parent_id = ?
+        WHERE vc.vendor_id = ? AND (vc.remaining_credit > 0.01 OR tl.id IS NOT NULL) AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        ORDER BY h.txn_date ASC
+    ", [$payment_id, $party_id]);
+
+    $results = array_merge($bills, $journals, $vendor_credits);
 }
 echo json_encode(array_values($results));
-

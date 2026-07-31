@@ -1036,14 +1036,18 @@
     };
 
     // === MAIN REFRESH ===
-    function refreshDashboard() {
+    function refreshDashboard(forceNocache = true) {
         const loader = el('dv4-loader');
         if (loader) loader.classList.add('active');
-        let url = CONFIG.API;
+        let params = [];
         const locSel = el('dv4-location-select');
         if (locSel && locSel.value) {
-            url += '?location_id=' + encodeURIComponent(locSel.value) + '&nocache=1';
+            params.push('location_id=' + encodeURIComponent(locSel.value));
         }
+        if (forceNocache) {
+            params.push('nocache=1');
+        }
+        let url = CONFIG.API + (params.length ? '?' + params.join('&') : '');
         fetch(url)
             .then(r => r.json())
             .then(data => {
@@ -1083,9 +1087,9 @@
         console.log('[DV4] Dashboard V4 initializing...');
         initTheme(); initCharts(); initFAB(); initBankAccountSelect();
         const refreshBtn = el('dv4-refresh-btn');
-        if (refreshBtn) refreshBtn.addEventListener('click', refreshDashboard);
+        if (refreshBtn) refreshBtn.addEventListener('click', function() { refreshDashboard(true); });
         const locSel = el('dv4-location-select');
-        if (locSel) locSel.addEventListener('change', refreshDashboard);
+        if (locSel) locSel.addEventListener('change', function() { refreshDashboard(true); });
         const rangeSel = $('chart-sales-range');
         if (rangeSel) rangeSel.addEventListener('change', window.refreshSalesChart);
         refreshDashboard();

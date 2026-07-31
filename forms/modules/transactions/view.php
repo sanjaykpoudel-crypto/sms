@@ -227,19 +227,36 @@ if (count($payments) > 0) {
 }
 
 // Determine Status and Formatting
-$statusStr = $details['payment_status'] ?? $header['status'];
-if (strtolower($statusStr) === 'paid') {
-    $statusStr = 'Paid in Full';
+$rawStatus = strtolower($details['payment_status'] ?? ($details['status'] ?? $header['status']));
+$remCredit = (float)($details['remaining_credit'] ?? 0);
+$totAmount = (float)($details['total_amount'] ?? ($header['net_amount'] ?? 0));
+
+if (in_array($txn_type, ['credit_memo', 'vendor_credit', 'bill_credit'])) {
+    if (in_array($rawStatus, ['closed', 'paid', 'fully applied']) || ($remCredit <= 0.01 && $totAmount > 0)) {
+        $statusStr = 'Fully Applied';
+        $statusColor = '#10b981';
+    } elseif (in_array($rawStatus, ['partial', 'partially applied'])) {
+        $statusStr = 'Partially Applied';
+        $statusColor = '#f59e0b';
+    } else {
+        $statusStr = 'Open';
+        $statusColor = '#0284c7';
+    }
+} elseif (in_array($txn_type, ['customer_invoice', 'vendor_bill'])) {
+    if (in_array($rawStatus, ['paid', 'closed', 'paid in full'])) {
+        $statusStr = 'Paid in Full';
+        $statusColor = '#10b981';
+    } elseif (in_array($rawStatus, ['partial', 'partially paid'])) {
+        $statusStr = 'Partially Paid';
+        $statusColor = '#f59e0b';
+    } else {
+        $statusStr = 'Open';
+        $statusColor = '#ef4444';
+    }
 } else {
-    $statusStr = ucwords($statusStr);
+    $statusStr = ucwords($rawStatus ?: 'Posted');
+    $statusColor = in_array(strtolower($statusStr), ['approved', 'posted', 'paid', 'closed', 'fully applied']) ? '#10b981' : '#64748b';
 }
-$statusColor = '#666';
-if (in_array(strtolower($statusStr), ['approved', 'posted', 'paid', 'paid in full']))
-    $statusColor = '#2ecc71';
-if (in_array(strtolower($statusStr), ['voided', 'unpaid']))
-    $statusColor = '#e74c3c';
-if (in_array(strtolower($statusStr), ['partial']))
-    $statusColor = '#f39c12';
 
 $net_amount = $details['total_amount'] ?? $header['net_amount'] ?? 0;
 $displayType = ucwords(str_replace('_', ' ', $txn_type));
@@ -270,6 +287,12 @@ if ($txn_type == 'vendor_bill') {
 } elseif ($txn_type == 'account_transfer') {
     $edit_url = "?page=transactions/transfer/manage&id=" . $id;
     $list_url = "?page=transactions/transfer";
+} elseif ($txn_type == 'credit_memo') {
+    $edit_url = "?page=transactions/credit_memo/manage&id=" . $id;
+    $list_url = "?page=transactions/credit_memo";
+} elseif (in_array($txn_type, ['vendor_credit', 'bill_credit'])) {
+    $edit_url = "?page=transactions/bill_credit/manage&id=" . $id;
+    $list_url = "?page=transactions/bill_credit";
 }
 ?>
 <style>
@@ -472,6 +495,20 @@ if ($txn_type == 'vendor_bill') {
                 <a href="?page=transactions/payment/manage&party_type=<?php echo $partyType; ?>&party_id=<?php echo $partyId; ?>"
                     class="ns-btn" style="background: #28a745; color: white; border-color: #28a745;"><i
                         class="fas fa-money-bill-wave"></i> Make Payment</a>
+            <?php endif; ?>
+
+            <?php if ($txn_type == 'customer_invoice'): ?>
+                <a href="?page=transactions/credit_memo/manage&invoice_id=<?php echo $id; ?>&customer_id=<?php echo $details['customer_id'] ?? ''; ?>"
+                   class="ns-btn" style="background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; font-weight: 600;">
+                   <i class="fas fa-undo-alt"></i> Credit
+                </a>
+            <?php endif; ?>
+
+            <?php if ($txn_type == 'vendor_bill'): ?>
+                <a href="?page=transactions/bill_credit/manage&bill_id=<?php echo $id; ?>&vendor_id=<?php echo $details['vendor_id'] ?? ''; ?>"
+                   class="ns-btn" style="background: #fff1f2; color: #e11d48; border-color: #fecdd3; font-weight: 600;">
+                   <i class="fas fa-undo-alt"></i> Credit
+                </a>
             <?php endif; ?>
 
             <?php if (!$is_locked): ?>

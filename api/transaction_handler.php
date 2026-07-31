@@ -474,6 +474,9 @@ function handleTransaction($json, $pdo, $db)
 
         $pdo->commit();
         clear_dashboard_cache();
+        if (function_exists('auto_sync_pos_items_and_invoices')) {
+            auto_sync_pos_items_and_invoices(true);
+        }
 
         if (isset($sync_date_to_run) && $sync_date_to_run) {
             sync_daily_pos_summary($sync_date_to_run);

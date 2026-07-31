@@ -216,6 +216,10 @@ try {
     }
 
     $pdo->commit();
+    require_once __DIR__ . '/reference_helper.php';
+    if (function_exists('auto_sync_pos_items_and_invoices')) {
+        auto_sync_pos_items_and_invoices(true);
+    }
     clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Vendor Bill has been saved successfully.', 'id' => $id]);
