@@ -16,8 +16,16 @@ $role = strtolower($_SESSION['role'] ?? $_SESSION['userdata']['role'] ?? 'admin'
 header('Content-Type: application/json');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 header('Pragma: no-cache');
+
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
+// Load tiered cache (safe to include multiple times)
+if (!function_exists('sysinfo_get')) {
+    require_once __DIR__ . '/system_cache.php';
+}
+// Pre-fetch ALL system_info in one query for this request
+sysinfo_prefetch();
+
 
 $db = db();
 
@@ -323,8 +331,15 @@ $bal_today = get_balances($db, $today);
 $bal_yest  = get_balances($db, $yesterday);
 
 // ── 1d. Inventory Value + Counts ──
-if (function_exists('auto_sync_pos_items_and_invoices')) {
-    auto_sync_pos_items_and_invoices(isset($_GET['nocache']));
+// Auto-sync POS: only once per 5 minutes per session to avoid expensive re-sync every load
+$_last_sync = (int)($_SESSION['_pos_sync_ts'] ?? 0);
+$_sync_needed = (time() - $_last_sync) > 300; // 5-minute cooldown
+if (isset($_GET['nocache']) || isset($_GET['sync'])) {
+    $_sync_needed = true; // Force sync if ?nocache=1 or ?sync=1
+}
+if ($_sync_needed && function_exists('auto_sync_pos_items_and_invoices')) {
+    auto_sync_pos_items_and_invoices(true);
+    $_SESSION['_pos_sync_ts'] = time();
 }
 global $selected_location_id;
 if (!empty($selected_location_id)) {
@@ -1175,9 +1190,7 @@ $prefs = $db->fetchOne(
     [$user_id]
 );
 
-// ══════════════════════════════════════════════════════════════════
-// BANK ACCOUNT DETAILS (for individual bank account tile)
-// ══════════════════════════════════════════════════════════════════
+// ── BANK ACCOUNT DETAILS: Single aggregated query replaces N+1 loop ──
 $bank_accounts_list = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype
     FROM accounts a
@@ -1185,64 +1198,42 @@ $bank_accounts_list = $db->fetchAll("
     ORDER BY a.account_subtype ASC, a.account_name ASC
 ");
 
+// Get all-time money-in, money-out, today-in, today-out for ALL bank accounts in ONE query
+$bank_acct_ids = array_column($bank_accounts_list, 'id');
+$bank_agg_rows = [];
+if (!empty($bank_acct_ids)) {
+    $ba_ph = implode(',', array_fill(0, count($bank_acct_ids), '?'));
+    $ba_params = array_merge($bank_acct_ids, $bank_acct_ids, [$today, $today]);
+    $bank_agg_raw = $db->fetchAll("
+        SELECT
+            je.account_id,
+            COALESCE(SUM(CASE WHEN je.entry_type = 'debit'  AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS money_in,
+            COALESCE(SUM(CASE WHEN je.entry_type = 'credit' AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS money_out,
+            COALESCE(SUM(CASE WHEN je.entry_type = 'debit'  AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS today_in,
+            COALESCE(SUM(CASE WHEN je.entry_type = 'credit' AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS today_out
+        FROM journal_entries je
+        JOIN transaction_headers h ON je.header_id = h.id
+        WHERE je.account_id IN ({$ba_ph})
+        GROUP BY je.account_id
+    ", array_merge([$today, $today], $bank_acct_ids));
+    foreach ($bank_agg_raw as $bar) {
+        $bank_agg_rows[$bar['account_id']] = $bar;
+    }
+}
+
 $bank_account_details = [];
-$loc_sql_h = dash_loc_sql('h');
-$loc_sql_th = dash_loc_sql('th');
-$loc_sql_pe = dash_loc_sql('pe');
-
 foreach ($bank_accounts_list as $ba) {
-    // Money In (debits to this bank account, all time)
-    $money_in = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(je.amount), 0) as total
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id = ? AND je.entry_type = 'debit'
-          AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-    ", [$ba['id']])['total'] ?? 0);
-
-    // Money Out (credits to this bank account, all time)
-    $money_out = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(je.amount), 0) as total
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id = ? AND je.entry_type = 'credit'
-          AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-    ", [$ba['id']])['total'] ?? 0);
-
-    // Current Balance
-    $balance = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END), 0) as bal
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-    ", [$ba['id']])['bal'] ?? 0);
-
-    // Today's transactions
-    $today_in = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(je.amount), 0) as total
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id = ? AND je.entry_type = 'debit'
-          AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-    ", [$ba['id'], $today])['total'] ?? 0);
-
-    $today_out = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(je.amount), 0) as total
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id = ? AND je.entry_type = 'credit'
-          AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-    ", [$ba['id'], $today])['total'] ?? 0);
-
+    $agg = $bank_agg_rows[$ba['id']] ?? ['money_in' => 0, 'money_out' => 0, 'today_in' => 0, 'today_out' => 0];
+    $balance = (float)$agg['money_in'] - (float)$agg['money_out'];
     $bank_account_details[] = [
         'id'           => $ba['id'],
-        'account_code' => $ba['account_code'] ?? null,
+        'account_code' => null,
         'account_name' => $ba['account_name'],
-        'money_in'     => $money_in,
-        'money_out'    => $money_out,
+        'money_in'     => (float)$agg['money_in'],
+        'money_out'    => (float)$agg['money_out'],
         'balance'      => $balance,
-        'today_in'     => $today_in,
-        'today_out'    => $today_out,
+        'today_in'     => (float)$agg['today_in'],
+        'today_out'    => (float)$agg['today_out'],
     ];
 }
 
@@ -1462,7 +1453,7 @@ try {
 }
 
 // ─── Cache Response ─────────────────────────────────────────
-cache_set($cache_key, $response, 30);
+cache_set($cache_key, $response, 120); // 2-minute cache (up from 30s)
 
 if (ob_get_length()) ob_clean();
 echo json_encode($response);

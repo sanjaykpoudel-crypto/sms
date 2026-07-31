@@ -10,20 +10,58 @@ class DBConnection
     private $password = '';
     private $database = 'sms_db';
     private $conn;
-    private static $instance = null;
-    private static $initialized = false;
+    private static $instance       = null;
+    private static $initialized    = false;  // AccountTypeMaster seed guard
+    private static $schema_boot_done = false; // Process-level boot guard
 
     private function __construct()
     {
         try {
-            $this->conn = new PDO("mysql:host={$this->host};dbname={$this->database}", $this->username, $this->password);
-            $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            $this->conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-            $this->initAccountTypeMaster();
-            $this->initLocationMaster();
-            $this->initPaymentStatusMaster();
+            $this->conn = new PDO(
+                "mysql:host={$this->host};dbname={$this->database};charset=utf8mb4",
+                $this->username,
+                $this->password,
+                [
+                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES   => false,   // use native prepares
+                    PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => true,
+                    // Keep connection alive for the request lifetime
+                    PDO::ATTR_PERSISTENT         => false,
+                ]
+            );
+            // Set session-level optimizations
+            $this->conn->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO';");
         } catch (PDOException $e) {
             die("Connection failed: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Run expensive schema boot tasks ONCE per PHP process.
+     * Skipped on every subsequent request within the same process (e.g. FPM worker).
+     * Also skipped if the session flag tells us we already ran this session.
+     */
+    private function bootSchema(): void
+    {
+        // Process-level guard (zero cost after first run in FPM worker)
+        if (self::$schema_boot_done) {
+            return;
+        }
+        self::$schema_boot_done = true;
+
+        // Session-level guard: skip entirely if already verified this session
+        if (isset($_SESSION['_erp_schema_ok'])) {
+            return;
+        }
+
+        $this->initAccountTypeMaster();
+        $this->initLocationMaster();
+        $this->initPaymentStatusMaster();
+
+        // Mark session so subsequent requests skip the boot entirely
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION['_erp_schema_ok'] = true;
         }
     }
 
@@ -250,6 +288,7 @@ class DBConnection
     {
         if (!self::$instance) {
             self::$instance = new DBConnection();
+            self::$instance->bootSchema();
         }
         return self::$instance;
     }

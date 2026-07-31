@@ -10,6 +10,12 @@ if (!isset($_SESSION['user_id'])) {
 }
 require_once '../database/DBConnection.php';
 require_once 'reference_helper.php';
+// Load system cache (provides sysinfo_get_batch, account_cache_get/set)
+if (!function_exists('sysinfo_get')) {
+    require_once __DIR__ . '/system_cache.php';
+}
+// Pre-fetch ALL system_info into memory in one query
+sysinfo_prefetch();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ob_end_clean();
@@ -96,12 +102,47 @@ try {
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
     }
 
-    $item_ids = $_POST['item_id'] ?? [];
-    $qtys = $_POST['qty'] ?? [];
-    $rates = $_POST['rate'] ?? [];
-    $amounts = $_POST['amount'] ?? [];
-    $tax_rates = $_POST['tax_pct'] ?? [];
-    
+    $item_ids   = $_POST['item_id']  ?? [];
+    $qtys       = $_POST['qty']      ?? [];
+    $rates      = $_POST['rate']     ?? [];
+    $amounts    = $_POST['amount']   ?? [];
+    $tax_rates  = $_POST['tax_pct']  ?? [];
+
+    // ── Batch-fetch ALL item data in ONE query (eliminates N per-line DB hits) ──
+    $unique_item_ids = array_values(array_unique(array_filter($item_ids)));
+    $item_data_map   = [];  // keyed by item id
+    if (!empty($unique_item_ids)) {
+        $ph = implode(',', array_fill(0, count($unique_item_ids), '?'));
+        $batch_items = $db->fetchAll(
+            "SELECT id, sku, cost_price, current_stock, item_name,
+                    income_account_id, cogs_account_id, inventory_account_id
+             FROM items WHERE id IN ({$ph}) AND is_deleted = 0",
+            $unique_item_ids
+        );
+        foreach ($batch_items as $bi) {
+            $item_data_map[$bi['id']] = $bi;
+        }
+    }
+
+    // ── Pre-fetch accounting preferences in ONE batch query ──
+    $acct_prefs = sysinfo_get_batch([
+        'default_income_account', 'default_cogs_account',
+        'default_asset_account',  'default_ar_account',
+        'default_tax_account',    'default_discount_account',
+    ]);
+    $acct_defaults = [
+        'income'    => $acct_prefs['default_income_account']  ?? 'acc-4100',
+        'cogs'      => $acct_prefs['default_cogs_account']    ?? 'acc-5100',
+        'inventory' => $acct_prefs['default_asset_account']   ?? 'acc-1200',
+        'tax'       => $acct_prefs['default_tax_account']     ?? 'acc-2200',
+        'discount'  => $acct_prefs['default_discount_account']?? 'acc-6160',
+        'ar'        => $acct_prefs['default_ar_account']      ?? 'acc-1100',
+    ];
+
+    // ── Resolve AR account (customer-specific or system default) ──
+    $ar_account = (!empty($party_id) ? ($db->fetchOne("SELECT receivable_account_id FROM customers WHERE id = ?", [$party_id])['receivable_account_id'] ?? null) : null)
+                  ?? $acct_defaults['ar'];
+
     $subtotal = 0;
     $tax_total = 0;
     $total_cogs = 0;
@@ -109,26 +150,29 @@ try {
 
     foreach ($item_ids as $idx => $item_id) {
         if (empty($item_id)) continue;
-        $qty = (float)$qtys[$idx];
-        $rate = (float)$rates[$idx];
+        $qty      = (float)$qtys[$idx];
+        $rate     = (float)$rates[$idx];
         $tax_rate = (float)$tax_rates[$idx];
-        
+
         $post_amount = isset($amounts[$idx]) && is_numeric($amounts[$idx]) ? (float)$amounts[$idx] : null;
         $line_amount = $post_amount !== null ? round($post_amount, 2) : round($qty * $rate, 2);
-        $tax_amount = round($line_amount * ($tax_rate / 100), 2);
-        $line_total = round($line_amount + $tax_amount, 2);
+        $tax_amount  = round($line_amount * ($tax_rate / 100), 2);
+        $line_total  = round($line_amount + $tax_amount, 2);
 
-        $subtotal += $line_amount;
+        $subtotal  += $line_amount;
         $tax_total += $tax_amount;
 
-        // Fetch current cost price and stock for validation
-        $item_info = $db->fetchOne("SELECT sku, cost_price, current_stock, item_name FROM items WHERE id = ?", [$item_id]);
-        
+        // ── Use pre-fetched item data (no per-line DB query) ──
+        $item_info = $item_data_map[$item_id] ?? null;
+        if (!$item_info) {
+            // Fallback: fetch individually if somehow not in batch (shouldn't happen)
+            $item_info = $db->fetchOne("SELECT id, sku, cost_price, current_stock, item_name, income_account_id, cogs_account_id, inventory_account_id FROM items WHERE id = ?", [$item_id]);
+        }
+
         // Stock Validation
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $available = (float)($item_info['current_stock'] ?? 0);
             if ($available < $qty && !isset($_POST['force_save'])) {
-                // Rollback before early exit so partial edits are not persisted
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 ob_end_clean();
                 $msg = "Item: " . $item_info['item_name'] . ". Available: " . number_format($available, 4) . ". Do you want to save anyway?";
@@ -138,30 +182,41 @@ try {
         }
 
         $cost_price = ($item_info['sku'] ?? '') === 'I-00013' ? 0.00 : (float)($item_info['cost_price'] ?? 0);
-        $line_cogs = $cost_price * $qty;
-        $total_cogs += $line_cogs;
+        $line_cogs    = $cost_price * $qty;
+        $total_cogs  += $line_cogs;
         $gross_profit = $line_amount - $line_cogs;
 
-        $line_account_id = !empty($_POST['account_id'][$idx] ?? null) ? $_POST['account_id'][$idx] : get_effective_account($item_id, 'income');
+        // ── Resolve line accounts using pre-fetched data + cache ──
+        $sales_acc = !empty($item_info['income_account_id'])    ? $item_info['income_account_id']    : $acct_defaults['income'];
+        $cogs_acc  = !empty($item_info['cogs_account_id'])      ? $item_info['cogs_account_id']      : $acct_defaults['cogs'];
+        $inv_acc   = !empty($item_info['inventory_account_id']) ? $item_info['inventory_account_id'] : $acct_defaults['inventory'];
+
+        // Override with explicitly posted account if provided
+        $line_account_id = !empty($_POST['account_id'][$idx] ?? null) ? $_POST['account_id'][$idx] : $sales_acc;
 
         $unit = $_POST['unit'][$idx] ?? '';
-        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit
-        ]);
-        
+        $db->execute(
+            "INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit]
+        );
+
         // Deduct new stock
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
+            // Also update local batch map so subsequent validation in same request is accurate
+            if (isset($item_data_map[$item_id])) {
+                $item_data_map[$item_id]['current_stock'] -= $qty;
+            }
         }
 
         $gl_items[] = [
-            'item_id' => $item_id,
-            'sales_acc' => get_effective_account($item_id, 'income') ?: 'acc-4100',
+            'item_id'      => $item_id,
+            'sales_acc'    => $sales_acc,
             'sales_amount' => $line_amount,
-            'cogs_acc' => get_effective_account($item_id, 'cogs') ?: 'acc-5100',
-            'cogs_amount' => $line_cogs,
-            'inv_acc' => get_effective_account($item_id, 'inventory') ?: 'acc-1200'
+            'cogs_acc'     => $cogs_acc,
+            'cogs_amount'  => $line_cogs,
+            'inv_acc'      => $inv_acc,
         ];
     }
 
@@ -332,11 +387,11 @@ try {
 
     // GL Impact
     if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-        $ar_account = get_effective_account($party_id, 'receivable');
-        $tax_account = get_accounting_preference('default_tax_account') ?: 'acc-2200';
-        $discount_account = get_accounting_preference('default_discount_account') ?: 'acc-6160';
-        $cogs_account = get_accounting_preference('default_cogs_account') ?: 'acc-5100';
-        $inventory_account = get_accounting_preference('default_asset_account') ?: 'acc-1200';
+        // Use pre-fetched account IDs
+        $tax_account      = $acct_defaults['tax'];
+        $discount_account = $acct_defaults['discount'];
+        $cogs_account     = $acct_defaults['cogs'];
+        $inventory_account= $acct_defaults['inventory'];
 
         // Dr Accounts Receivable
         if ($grand_total > 0) {
@@ -378,10 +433,15 @@ try {
     }
 
     $pdo->commit();
-    require_once __DIR__ . '/reference_helper.php';
-    if (function_exists('auto_sync_pos_items_and_invoices')) {
-        auto_sync_pos_items_and_invoices(true);
-    }
+    // Move expensive auto-sync to run AFTER response is sent (non-blocking)
+    register_shutdown_function(function() {
+        try {
+            require_once __DIR__ . '/reference_helper.php';
+            if (function_exists('auto_sync_pos_items_and_invoices')) {
+                auto_sync_pos_items_and_invoices(true);
+            }
+        } catch (Throwable $e) { /* silent */ }
+    });
     clear_dashboard_cache();
     ob_end_clean();
     echo json_encode(['status' => 'success', 'message' => 'Invoice has been saved successfully.', 'id' => $id]);

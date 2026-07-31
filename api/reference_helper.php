@@ -10,6 +10,10 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'reference_helper.php') {
         exit;
     }
 }
+// Load tiered cache layer (safe to include multiple times)
+if (!function_exists('sysinfo_get')) {
+    require_once __DIR__ . '/system_cache.php';
+}
 /**
  * Helper functions for auto-generated transaction numbering and payment QR codes
  */
@@ -148,36 +152,48 @@ function getNextTransactionNumber($type)
 {
     $db = db();
 
-    // Fetch settings from system_info
-    $prefix = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'ref_{$type}_prefix'")['meta_value'] ?? null;
+    // Default prefixes
+    $defaults = [
+        'customer_invoice'    => 'INV',
+        'vendor_bill'         => 'BILL',
+        'customer_payment'    => 'CPAY',
+        'vendor_payment'      => 'VPAY',
+        'journal_entry'       => 'JE',
+        'expense'             => 'EXP',
+        'purchase_order'      => 'PO',
+        'item'                => 'ITM',
+        'customer'            => 'CUS',
+        'vendor'              => 'VEND',
+        'inventory_adjustment'=> 'ADJ',
+        'account_transfer'    => 'XFER',
+        'inventory_transfer'  => 'ITR',
+        'credit_memo'         => 'CM',
+        'vendor_credit'       => 'VC',
+    ];
 
-    // Default prefixes if not set
-    if ($prefix === null) {
-        $defaults = [
-            'customer_invoice' => 'INV',
-            'vendor_bill' => 'BILL',
-            'customer_payment' => 'CPAY',
-            'vendor_payment' => 'VPAY',
-            'journal_entry' => 'JE',
-            'expense' => 'EXP',
-            'purchase_order' => 'PO',
-            'item' => 'ITM',
-            'customer' => 'CUS',
-            'vendor' => 'VEND',
-            'inventory_adjustment' => 'ADJ',
-            'account_transfer' => 'XFER',
-            'inventory_transfer' => 'ITR',
-            'credit_memo' => 'CM',
-            'vendor_credit' => 'VC'
-        ];
-        $prefix = $defaults[$type] ?? 'TXN';
+    // Batch-fetch all 4 ref settings in ONE query
+    $keys = [
+        "ref_{$type}_prefix",
+        "ref_{$type}_sep",
+        "ref_{$type}_next",
+        "ref_{$type}_pad",
+    ];
+    $ph   = implode(',', array_fill(0, count($keys), '?'));
+    $rows = $db->fetchAll(
+        "SELECT meta_field, meta_value FROM system_info WHERE meta_field IN ({$ph})",
+        $keys
+    );
+    $settings = [];
+    foreach ($rows as $r) {
+        $settings[$r['meta_field']] = $r['meta_value'];
     }
 
-    $sep = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'ref_{$type}_sep'")['meta_value'] ?? '-';
-    $next = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'ref_{$type}_next'")['meta_value'] ?? '1';
-    $pad = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'ref_{$type}_pad'")['meta_value'] ?? '4';
+    $prefix = $settings["ref_{$type}_prefix"] ?? ($defaults[$type] ?? 'TXN');
+    $sep    = $settings["ref_{$type}_sep"]    ?? '-';
+    $next   = $settings["ref_{$type}_next"]   ?? '1';
+    $pad    = $settings["ref_{$type}_pad"]    ?? '4';
 
-    return $prefix . $sep . str_pad($next, (int) $pad, '0', STR_PAD_LEFT);
+    return $prefix . $sep . str_pad($next, (int)$pad, '0', STR_PAD_LEFT);
 }
 
 /**
@@ -200,62 +216,100 @@ function incrementTransactionNumber($type)
 }
 
 /**
- * Gets a preference value from system_info
+ * Gets a preference value from system_info — with static per-request cache.
  */
 function get_accounting_preference($key)
 {
-    $db = db();
-    $row = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = ?", [$key]);
-    return $row['meta_value'] ?? null;
+    // Static per-request cache — avoids repeated DB hits within the same request
+    static $cache = [];
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    // Try tiered cache (APCu/session) first
+    if (function_exists('sysinfo_get')) {
+        $val = sysinfo_get($key);
+        $cache[$key] = $val;
+        return $val;
+    }
+    // Fallback: direct DB lookup
+    try {
+        $db  = db();
+        $row = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = ?", [$key]);
+        $val = $row['meta_value'] ?? null;
+    } catch (Exception $e) {
+        $val = null;
+    }
+    $cache[$key] = $val;
+    return $val;
 }
 
 /**
  * Resolves the effective account for a given master record and preference type.
  * Priority: Master Record -> System Preference
  * 
+ * Uses per-request + APCu caching to avoid repeated DB hits for the same
+ * item/customer/vendor on multi-line invoices.
+ *
  * $type can be: 'income', 'cogs', 'inventory', 'receivable', 'payable'
  */
 function get_effective_account($master_id, $type)
 {
-    $db = db();
-    $pref_key = "default_{$type}_account";
-
-    // Map internal types to column names and tables
-    $mapping = [
-        'income' => ['table' => 'items', 'col' => 'income_account_id'],
-        'cogs' => ['table' => 'items', 'col' => 'cogs_account_id'],
-        'inventory' => ['table' => 'items', 'col' => 'inventory_account_id'],
-        'receivable' => ['table' => 'customers', 'col' => 'receivable_account_id'],
-        'payable' => ['table' => 'vendors', 'col' => 'payable_account_id'],
-    ];
-
-    if (!empty($master_id) && isset($mapping[$type])) {
-        $m = $mapping[$type];
-        $col = $m['col'];
-        $table = $m['table'];
-
-        $master_acc = $db->fetchOne("SELECT $col FROM $table WHERE id = ?", [$master_id]);
-        if ($master_acc && !empty($master_acc[$col])) {
-            return $master_acc[$col];
+    // Check per-request/APCu cache first
+    if (!empty($master_id) && function_exists('account_cache_get')) {
+        $cached = account_cache_get($master_id, $type);
+        if ($cached !== null) {
+            return $cached;
         }
     }
 
-    // Fallback to system preference
-    // Handle special naming if necessary (e.g. default_ar_account instead of default_receivable_account)
-    $special_prefs = [
-        'receivable' => 'default_ar_account',
-        'payable' => 'default_ap_account',
-        'inventory' => 'default_asset_account' // existing naming in code
+    $db = db();
+
+    // Map internal types to column names and tables
+    $mapping = [
+        'income'     => ['table' => 'items',     'col' => 'income_account_id'],
+        'cogs'       => ['table' => 'items',     'col' => 'cogs_account_id'],
+        'inventory'  => ['table' => 'items',     'col' => 'inventory_account_id'],
+        'receivable' => ['table' => 'customers', 'col' => 'receivable_account_id'],
+        'payable'    => ['table' => 'vendors',   'col' => 'payable_account_id'],
     ];
 
-    $final_pref_key = $special_prefs[$type] ?? $pref_key;
-    $pref = get_accounting_preference($final_pref_key);
+    $resolved = null;
 
-    if (!empty($pref)) {
-        return $pref;
+    if (!empty($master_id) && isset($mapping[$type])) {
+        $m   = $mapping[$type];
+        $col = $m['col'];
+        $tbl = $m['table'];
+
+        $row = $db->fetchOne("SELECT `{$col}` FROM `{$tbl}` WHERE id = ?", [$master_id]);
+        if ($row && !empty($row[$col])) {
+            $resolved = $row[$col];
+        }
     }
 
-    throw new Exception("Account of type '$type' is not configured for record '$master_id', and default system preference '$final_pref_key' is missing.");
+    if ($resolved === null) {
+        // Fallback to system preference
+        $special_prefs = [
+            'receivable' => 'default_ar_account',
+            'payable'    => 'default_ap_account',
+            'inventory'  => 'default_asset_account',
+        ];
+        $pref_key = $special_prefs[$type] ?? "default_{$type}_account";
+        $pref = get_accounting_preference($pref_key);
+        if (!empty($pref)) {
+            $resolved = $pref;
+        }
+    }
+
+    if ($resolved === null) {
+        throw new Exception("Account of type '{$type}' is not configured for record '{$master_id}', and the default system preference is missing.");
+    }
+
+    // Store in cache for subsequent calls within this request
+    if (!empty($master_id) && function_exists('account_cache_set')) {
+        account_cache_set($master_id, $type, $resolved);
+    }
+
+    return $resolved;
 }
 
 /**
@@ -1128,17 +1182,27 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
 }
 
 /**
- * Clears dashboard KPI cache so that dashboard data updates in real-time
- * whenever any transaction is created, updated, or deleted.
+/**
+ * Clears all dashboard KPI caches so that data updates after any transaction.
+ * Clears DB cache table + APCu cache if available.
  */
 if (!function_exists('clear_dashboard_cache')) {
     function clear_dashboard_cache()
     {
+        // Clear DB-based KPI cache table
         try {
             $db = db();
             $db->execute("DELETE FROM dashboard_kpi_cache");
         } catch (Exception $e) {
             // Silently ignore if table doesn't exist
+        }
+        // Clear APCu dashboard cache if available
+        if (function_exists('dash_apcu_clear')) {
+            dash_apcu_clear();
+        }
+        // Also invalidate system info cache (preferences may have changed)
+        if (function_exists('sysinfo_invalidate')) {
+            sysinfo_invalidate();
         }
     }
 }

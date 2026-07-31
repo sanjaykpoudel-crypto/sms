@@ -14,9 +14,12 @@ $_SESSION['last_activity'] = time();
 require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 
-// Auto-sync POS transactions to Items & Customer Invoices in real-time
-if (isset($_SESSION['user_id']) && function_exists('auto_sync_pos_items_and_invoices')) {
+// Auto-sync POS transactions: run at most once per 5 minutes per session to avoid
+// blocking every page load with an expensive full inventory recalculation.
+$_idx_last_sync = (int)($_SESSION['_pos_sync_ts'] ?? 0);
+if (isset($_SESSION['user_id']) && (time() - $_idx_last_sync) > 300 && function_exists('auto_sync_pos_items_and_invoices')) {
     auto_sync_pos_items_and_invoices(true);
+    $_SESSION['_pos_sync_ts'] = time();
 }
 
 $error = "";
