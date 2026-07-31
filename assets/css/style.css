@@ -592,6 +592,58 @@ table.dataTable thead th.sorting_desc,
     color: #ff8a8a;
 }
 
+.alert-success {
+    background: rgba(40, 167, 69, 0.2);
+    border: 1px solid rgba(40, 167, 69, 0.5);
+    color: #75b798;
+}
+
+.alert-info {
+    background: rgba(13, 202, 240, 0.2);
+    border: 1px solid rgba(13, 202, 240, 0.5);
+    color: #6edff6;
+}
+
+.forgot-password-link {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: color 0.2s ease;
+    float: right;
+}
+
+.forgot-password-link:hover {
+    color: var(--ns-accent, #ff9900);
+    text-decoration: underline;
+}
+
+.auth-back-link {
+    display: inline-block;
+    margin-top: 15px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.auth-back-link:hover {
+    color: #fff;
+    text-decoration: underline;
+}
+
+.otp-code-box {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+    margin: 15px 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: var(--ns-accent, #ff9900);
+}
+
 .ns-total-box {
     float: right;
     width: 350px;

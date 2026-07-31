@@ -240,50 +240,358 @@ if ($is_logged_in) {
                     <?php echo htmlspecialchars($sys_name); ?></div>
             </div>
             <div class="glass-card">
-                <div class="auth-header">
-                    <h1>Welcome Back</h1>
-                    <p>Enter your credentials to access your account</p>
+                <!-- Login View -->
+                <div id="login-view">
+                    <div class="auth-header">
+                        <h1>Welcome Back</h1>
+                        <p>Enter your credentials to access your account</p>
+                    </div>
+
+                    <?php if ($error): ?>
+                        <div class="alert alert-danger">
+                            <?php echo $error; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <form method="POST" action="">
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" name="username" class="form-input" placeholder="Enter username"
+                                required autofocus>
+                        </div>
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label for="password" style="margin-bottom: 0;">Password</label>
+                                <a href="javascript:void(0)" id="showForgotPassword" class="forgot-password-link">Forgot Password?</a>
+                            </div>
+                            <div class="password-wrapper">
+                                <input type="password" id="password" name="password" class="form-input" placeholder="••••••••"
+                                    required>
+                                <button type="button" id="togglePassword" class="toggle-password">
+                                    <i class="fas fa-eye" id="eyeIcon"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-primary">Sign In</button>
+                    </form>
                 </div>
 
-                <?php if ($error): ?>
-                    <div class="alert alert-danger">
-                        <?php echo $error; ?>
+                <!-- Forgot / Reset Password View -->
+                <div id="forgot-view" style="display: none;">
+                    <div class="auth-header">
+                        <h1 id="forgot-title">Reset Password</h1>
+                        <p id="forgot-subtitle">Recover access to your account</p>
                     </div>
-                <?php endif; ?>
 
-                <form method="POST" action="">
-                    <div class="form-group">
-                        <label for="username">Username</label>
-                        <input type="text" id="username" name="username" class="form-input" placeholder="Enter username"
-                            required autofocus>
-                    </div>
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <div class="password-wrapper">
-                            <input type="password" id="password" name="password" class="form-input" placeholder="••••••••"
-                                required>
-                            <button type="button" id="togglePassword" class="toggle-password">
-                                <i class="fas fa-eye" id="eyeIcon"></i>
+                    <div id="forgot-alert" class="alert" style="display: none;"></div>
+
+                    <!-- Step 1: Request Verification Code -->
+                    <div id="forgot-step-1">
+                        <form id="formRequestReset" onsubmit="return false;">
+                            <div class="form-group">
+                                <label for="reset_identifier">Username or Email</label>
+                                <input type="text" id="reset_identifier" name="identifier" class="form-input" placeholder="Enter your username or email" required>
+                            </div>
+                            <button type="button" id="btnSendResetCode" class="btn-primary">
+                                <i class="fas fa-paper-plane" style="margin-right: 6px;"></i> Send Verification Code
                             </button>
+                        </form>
+                        <div style="text-align: center; margin-top: 15px;">
+                            <a href="javascript:void(0)" class="auth-back-link showLoginBtn">
+                                <i class="fas fa-arrow-left" style="margin-right: 5px;"></i> Back to Sign In
+                            </a>
                         </div>
                     </div>
-                    <button type="submit" class="btn-primary">Sign In</button>
-                </form>
+
+                    <!-- Step 2: Verification & New Password -->
+                    <div id="forgot-step-2" style="display: none;">
+                        <form id="formResetPassword" onsubmit="return false;">
+                            <input type="hidden" id="reset_token" name="token" value="">
+                            
+                            <div id="demo-otp-container" style="display: none;">
+                                <div style="font-size: 12px; opacity: 0.8; text-align: center;">Verification Code (Local Setup):</div>
+                                <div id="demo-otp-code" class="otp-code-box">------</div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="otp_code">6-Digit Verification Code</label>
+                                <input type="text" id="otp_code" name="otp_code" class="form-input" placeholder="123456" maxlength="6" style="letter-spacing: 2px; text-align: center; font-weight: 600;">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new_password">New Password</label>
+                                <div class="password-wrapper">
+                                    <input type="password" id="new_password" name="new_password" class="form-input" placeholder="At least 6 characters" required>
+                                    <button type="button" id="toggleNewPassword" class="toggle-password">
+                                        <i class="fas fa-eye" id="eyeIconNew"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="confirm_password">Confirm New Password</label>
+                                <div class="password-wrapper">
+                                    <input type="password" id="confirm_password" name="confirm_password" class="form-input" placeholder="Re-enter new password" required>
+                                    <button type="button" id="toggleConfirmPassword" class="toggle-password">
+                                        <i class="fas fa-eye" id="eyeIconConfirm"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button type="button" id="btnSubmitNewPassword" class="btn-primary">
+                                <i class="fas fa-key" style="margin-right: 6px;"></i> Reset Password
+                            </button>
+                        </form>
+                        <div style="text-align: center; margin-top: 15px;">
+                            <a href="javascript:void(0)" class="auth-back-link showLoginBtn">
+                                <i class="fas fa-arrow-left" style="margin-right: 5px;"></i> Back to Sign In
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Reset Success -->
+                    <div id="forgot-step-3" style="display: none; text-align: center;">
+                        <div style="font-size: 48px; color: #2ecc71; margin-bottom: 15px;">
+                            <i class="fas fa-check-circle"></i>
+                        </div>
+                        <p style="font-size: 14px; margin-bottom: 20px; opacity: 0.9;">Your password has been reset successfully! You can now log in with your new credentials.</p>
+                        <button type="button" class="btn-primary showLoginBtn">
+                            <i class="fas fa-sign-in-alt" style="margin-right: 6px;"></i> Proceed to Sign In
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
         <script>
             document.addEventListener('DOMContentLoaded', function () {
-                const togglePassword = document.querySelector('#togglePassword');
-                const password = document.querySelector('#password');
-                const eyeIcon = document.querySelector('#eyeIcon');
+                // Password visibility toggles
+                function setupPasswordToggle(btnId, inputId, iconId) {
+                    const toggleBtn = document.querySelector('#' + btnId);
+                    const pwdInput = document.querySelector('#' + inputId);
+                    const iconEl = document.querySelector('#' + iconId);
 
-                if (togglePassword) {
-                    togglePassword.addEventListener('click', function (e) {
-                        const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
-                        password.setAttribute('type', type);
-                        eyeIcon.classList.toggle('fa-eye');
-                        eyeIcon.classList.toggle('fa-eye-slash');
+                    if (toggleBtn && pwdInput && iconEl) {
+                        toggleBtn.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            const type = pwdInput.getAttribute('type') === 'password' ? 'text' : 'password';
+                            pwdInput.setAttribute('type', type);
+                            iconEl.classList.toggle('fa-eye');
+                            iconEl.classList.toggle('fa-eye-slash');
+                        });
+                    }
+                }
+
+                setupPasswordToggle('togglePassword', 'password', 'eyeIcon');
+                setupPasswordToggle('toggleNewPassword', 'new_password', 'eyeIconNew');
+                setupPasswordToggle('toggleConfirmPassword', 'confirm_password', 'eyeIconConfirm');
+
+                // View switching elements
+                const loginView = document.getElementById('login-view');
+                const forgotView = document.getElementById('forgot-view');
+                const showForgotBtn = document.getElementById('showForgotPassword');
+                const showLoginBtns = document.querySelectorAll('.showLoginBtn');
+
+                const forgotStep1 = document.getElementById('forgot-step-1');
+                const forgotStep2 = document.getElementById('forgot-step-2');
+                const forgotStep3 = document.getElementById('forgot-step-3');
+                const forgotAlert = document.getElementById('forgot-alert');
+                const forgotTitle = document.getElementById('forgot-title');
+                const forgotSubtitle = document.getElementById('forgot-subtitle');
+
+                function showAlert(msg, type = 'danger') {
+                    forgotAlert.className = 'alert alert-' + type;
+                    forgotAlert.innerHTML = msg;
+                    forgotAlert.style.display = 'block';
+                }
+
+                function hideAlert() {
+                    forgotAlert.style.display = 'none';
+                    forgotAlert.innerHTML = '';
+                }
+
+                function switchToLogin() {
+                    forgotView.style.display = 'none';
+                    loginView.style.display = 'block';
+                    hideAlert();
+                }
+
+                function switchToForgot() {
+                    loginView.style.display = 'none';
+                    forgotView.style.display = 'block';
+                    forgotStep1.style.display = 'block';
+                    forgotStep2.style.display = 'none';
+                    forgotStep3.style.display = 'none';
+                    forgotTitle.textContent = 'Reset Password';
+                    forgotSubtitle.textContent = 'Recover access to your account';
+                    hideAlert();
+                }
+
+                if (showForgotBtn) {
+                    showForgotBtn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        switchToForgot();
+                    });
+                }
+
+                showLoginBtns.forEach(btn => {
+                    btn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        switchToLogin();
+                    });
+                });
+
+                // Auto-detect reset_token in URL query param
+                const urlParams = new URLSearchParams(window.location.search);
+                const tokenParam = urlParams.get('reset_token');
+                if (tokenParam) {
+                    switchToForgot();
+                    document.getElementById('reset_token').value = tokenParam;
+                    forgotStep1.style.display = 'none';
+                    forgotStep2.style.display = 'block';
+                    forgotTitle.textContent = 'Set New Password';
+                    forgotSubtitle.textContent = 'Enter your new password below';
+                    showAlert('Please choose a new password for your account.', 'info');
+                }
+
+                // Step 1: Request Reset Code
+                const btnSendResetCode = document.getElementById('btnSendResetCode');
+                const resetIdentifier = document.getElementById('reset_identifier');
+
+                if (btnSendResetCode) {
+                    btnSendResetCode.addEventListener('click', function() {
+                        const identifier = resetIdentifier.value.trim();
+                        if (!identifier) {
+                            showAlert('Please enter your username or email address.', 'danger');
+                            return;
+                        }
+
+                        btnSendResetCode.disabled = true;
+                        btnSendResetCode.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+                        hideAlert();
+
+                        const formData = new FormData();
+                        formData.append('action', 'request_reset');
+                        formData.append('identifier', identifier);
+
+                        fetch('api/forgot_password.php', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            btnSendResetCode.disabled = false;
+                            btnSendResetCode.innerHTML = '<i class="fas fa-paper-plane" style="margin-right: 6px;"></i> Send Verification Code';
+
+                            if (data.status === 'success') {
+                                document.getElementById('reset_token').value = data.token || '';
+                                if (data.otp_code) {
+                                    document.getElementById('demo-otp-code').textContent = data.otp_code;
+                                    document.getElementById('demo-otp-container').style.display = 'block';
+                                    document.getElementById('otp_code').value = data.otp_code;
+                                }
+
+                                forgotStep1.style.display = 'none';
+                                forgotStep2.style.display = 'block';
+                                forgotTitle.textContent = 'Enter Code & New Password';
+                                forgotSubtitle.textContent = 'Verification code sent for ' + (data.username || identifier);
+                                showAlert(data.message, 'success');
+                            } else {
+                                showAlert(data.message || 'An error occurred.', 'danger');
+                            }
+                        })
+                        .catch(err => {
+                            btnSendResetCode.disabled = false;
+                            btnSendResetCode.innerHTML = '<i class="fas fa-paper-plane" style="margin-right: 6px;"></i> Send Verification Code';
+                            showAlert('Server connection error. Please try again.', 'danger');
+                        });
+                    });
+                }
+
+                // Step 2: Submit New Password
+                const btnSubmitNewPassword = document.getElementById('btnSubmitNewPassword');
+
+                if (btnSubmitNewPassword) {
+                    btnSubmitNewPassword.addEventListener('click', function() {
+                        const token = document.getElementById('reset_token').value;
+                        const otpCode = document.getElementById('otp_code').value.trim();
+                        const newPassword = document.getElementById('new_password').value;
+                        const confirmPassword = document.getElementById('confirm_password').value;
+
+                        if (!otpCode && !token) {
+                            showAlert('Please enter the 6-digit verification code.', 'danger');
+                            return;
+                        }
+
+                        if (!newPassword) {
+                            showAlert('Please enter a new password.', 'danger');
+                            return;
+                        }
+
+                        if (newPassword.length < 6) {
+                            showAlert('Password must be at least 6 characters long.', 'danger');
+                            return;
+                        }
+
+                        if (newPassword !== confirmPassword) {
+                            showAlert('Passwords do not match.', 'danger');
+                            return;
+                        }
+
+                        btnSubmitNewPassword.disabled = true;
+                        btnSubmitNewPassword.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
+                        hideAlert();
+
+                        // First verify OTP if needed
+                        const formVerify = new FormData();
+                        formVerify.append('action', 'verify_otp');
+                        formVerify.append('token', token);
+                        formVerify.append('otp_code', otpCode);
+
+                        fetch('api/forgot_password.php', {
+                            method: 'POST',
+                            body: formVerify
+                        })
+                        .then(res => res.json())
+                        .then(vData => {
+                            if (vData.status === 'success') {
+                                const validToken = vData.token || token;
+                                const formReset = new FormData();
+                                formReset.append('action', 'reset_password');
+                                formReset.append('token', validToken);
+                                formReset.append('new_password', newPassword);
+                                formReset.append('confirm_password', confirmPassword);
+
+                                return fetch('api/forgot_password.php', {
+                                    method: 'POST',
+                                    body: formReset
+                                }).then(res => res.json());
+                            } else {
+                                throw new Error(vData.message || 'Invalid verification code');
+                            }
+                        })
+                        .then(rData => {
+                            btnSubmitNewPassword.disabled = false;
+                            btnSubmitNewPassword.innerHTML = '<i class="fas fa-key" style="margin-right: 6px;"></i> Reset Password';
+
+                            if (rData && rData.status === 'success') {
+                                forgotStep2.style.display = 'none';
+                                forgotStep3.style.display = 'block';
+                                forgotTitle.textContent = 'Password Reset Complete';
+                                forgotSubtitle.textContent = 'Your password was successfully updated';
+                                if (rData.username) {
+                                    document.getElementById('username').value = rData.username;
+                                }
+                                hideAlert();
+                            } else if (rData) {
+                                showAlert(rData.message || 'Failed to reset password.', 'danger');
+                            }
+                        })
+                        .catch(err => {
+                            btnSubmitNewPassword.disabled = false;
+                            btnSubmitNewPassword.innerHTML = '<i class="fas fa-key" style="margin-right: 6px;"></i> Reset Password';
+                            showAlert(err.message || 'An error occurred during password reset.', 'danger');
+                        });
                     });
                 }
             });

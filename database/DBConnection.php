@@ -58,6 +58,7 @@ class DBConnection
         $this->initAccountTypeMaster();
         $this->initLocationMaster();
         $this->initPaymentStatusMaster();
+        $this->initPasswordResetsTable();
 
         // Mark session so subsequent requests skip the boot entirely
         if (session_status() === PHP_SESSION_ACTIVE) {
@@ -281,6 +282,30 @@ class DBConnection
             }
         } catch (Exception $e) {
             error_log("initPaymentStatusMaster error: " . $e->getMessage());
+        }
+    }
+
+    public function initPasswordResetsTable()
+    {
+        try {
+            $sqlCreateTable = "CREATE TABLE IF NOT EXISTS `password_resets` (
+              `id` INT AUTO_INCREMENT PRIMARY KEY,
+              `user_id` VARCHAR(36) NOT NULL,
+              `username` VARCHAR(50) NOT NULL,
+              `email` VARCHAR(150) NOT NULL,
+              `token` VARCHAR(255) NOT NULL,
+              `otp_code` VARCHAR(6) NOT NULL,
+              `expires_at` DATETIME NOT NULL,
+              `is_used` TINYINT(1) DEFAULT 0,
+              `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              KEY `idx_token` (`token`),
+              KEY `idx_user_id` (`user_id`),
+              KEY `idx_otp` (`otp_code`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+
+            $this->conn->exec($sqlCreateTable);
+        } catch (Exception $e) {
+            error_log("initPasswordResetsTable error: " . $e->getMessage());
         }
     }
 
