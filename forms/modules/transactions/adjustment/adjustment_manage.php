@@ -56,7 +56,7 @@ $default_loc_id = get_user_default_location_id();
                 <div class="ns-form-group">
                     <label class="ns-label">Adjustment Account <span class="ns-required">*</span></label>
                     <select name="adjustment_account_id" class="ns-select" required>
-                        <option value="">Select Account</option>
+                        <option value="" disabled <?php echo empty($data['party_id']) ? 'selected' : ''; ?> hidden>Select Account</option>
                         <?php foreach ($expense_accounts as $acc): ?>
                             <option value="<?php echo $acc['id']; ?>" <?php echo ($data['party_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($acc['account_name']); ?>

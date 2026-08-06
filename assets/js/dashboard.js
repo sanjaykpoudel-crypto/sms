@@ -165,6 +165,7 @@
             { id: 'kpi-profit-val', sub: 'kpi-profit-sub', k: 'today_profit', suffix: 'vs yesterday', cls: 'kpi-profit' },
             { id: 'kpi-cash-val', sub: 'kpi-cash-sub', k: 'cash_on_hand', suffix: 'vs yesterday', cls: 'kpi-cash' },
             { id: 'kpi-bank-val', sub: 'kpi-bank-sub', k: 'bank_balance', suffix: 'vs yesterday', cls: 'kpi-bank' },
+            { id: 'kpi-fd-val', sub: 'kpi-fd-sub', k: 'fixed_deposit', suffix: 'current balance', cls: 'kpi-fd' },
             { id: 'kpi-ar-val', sub: 'kpi-ar-sub', k: 'accounts_receivable', suffix: 'vs yesterday', cls: 'kpi-ar' },
             { id: 'kpi-ap-val', sub: 'kpi-ap-sub', k: 'accounts_payable', suffix: 'vs yesterday', cls: 'kpi-ap' },
             { id: 'kpi-inv-val', sub: 'kpi-inv-sub', k: 'inventory_value', suffix: 'current value', cls: 'kpi-inv' },
@@ -715,6 +716,7 @@
             { id: 'kpi-net-profit-val',   sub: 'kpi-net-profit-sub',   k: 'today_net_profit',   suffix: 'vs yesterday', tile: 'kpi-tile-net-profit' },
             { id: 'kpi-cash-val',         sub: 'kpi-cash-sub',         k: 'cash_on_hand',       suffix: 'vs yesterday', tile: 'kpi-tile-cash' },
             { id: 'kpi-bank-val',         sub: 'kpi-bank-sub',         k: 'bank_balance',       suffix: 'vs yesterday', tile: 'kpi-tile-bank' },
+            { id: 'kpi-fd-val',           sub: 'kpi-fd-sub',           k: 'fixed_deposit',      suffix: 'current balance', tile: 'kpi-tile-fd' },
             { id: 'kpi-ar-val',           sub: 'kpi-ar-sub',           k: 'ar',                 suffix: 'outstanding',  tile: 'kpi-tile-ar' },
             { id: 'kpi-ap-val',           sub: 'kpi-ap-sub',           k: 'ap',                 suffix: 'outstanding',  tile: 'kpi-tile-ap' },
             { id: 'kpi-inv-val',          sub: 'kpi-inv-sub',          k: 'inventory_value',    suffix: 'current value',tile: 'kpi-tile-inv' },
@@ -790,7 +792,7 @@
             if (!body) return;
             const items = inv.top_selling || [];
             if (items.length) {
-                body.innerHTML = items.map((item, i) => `<tr><td style="padding-left:14px;"><span style="font-weight:700;color:var(--dv4-text-muted);margin-right:5px;">${i+1}</span><span style="font-weight:600;">${item.item_name}</span><span style="font-size:9px;color:var(--dv4-text-muted);margin-left:4px;">${item.sku}</span></td><td style="text-align:right;font-weight:600;">${fmtInt(item.total_qty)}</td><td style="text-align:right;padding-right:14px;font-weight:700;color:#10b981;">${fmt(item.total_amount)}</td></tr>`).join('');
+                body.innerHTML = items.map((item, i) => `<tr><td style="padding-left:14px;"><span style="font-weight:700;color:var(--dv4-text-muted);margin-right:5px;">${i+1}</span><span style="font-weight:600;">${item.item_name}</span></td><td style="text-align:right;font-weight:600;">${fmtInt(item.total_qty)}</td><td style="text-align:right;padding-right:14px;font-weight:700;color:#10b981;">${fmt(item.total_amount)}</td></tr>`).join('');
             } else {
                 body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--dv4-text-muted);">No sales this month</td></tr>';
             }
@@ -803,7 +805,7 @@
                 body.innerHTML = items.slice(0, 10).map(item => {
                     const days = parseInt(item.days_inactive);
                     const pill = days > 90 ? 'dv4-pill-red' : (days > 60 ? 'dv4-pill-amber' : 'dv4-pill-blue');
-                    return `<tr><td style="padding-left:14px;"><span style="font-weight:600;">${item.item_name}</span><span style="font-size:9px;color:var(--dv4-text-muted);margin-left:4px;">${item.sku}</span></td><td style="text-align:right;">${parseFloat(item.current_stock).toFixed(0)}</td><td style="text-align:right;padding-right:14px;"><span class="dv4-pill ${pill}">${days}d</span></td></tr>`;
+                    return `<tr><td style="padding-left:14px;"><span style="font-weight:600;">${item.item_name}</span></td><td style="text-align:right;">${parseFloat(item.current_stock).toFixed(0)}</td><td style="text-align:right;padding-right:14px;"><span class="dv4-pill ${pill}">${days}d</span></td></tr>`;
                 }).join('');
             } else {
                 body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:#10b981;"><i class="fas fa-check-circle"></i> All items moving well</td></tr>';
@@ -895,7 +897,7 @@
             if (bills.length) {
                 body.innerHTML = bills.map(b => `<div class="dv4-entity-item" onclick="window.location='?page=transactions/bill/view&id=${b.id}'"><div class="dv4-entity-info"><div><div class="dv4-entity-name">${b.company_name}</div><div class="dv4-entity-meta">${b.vendor_invoice_number} · Due ${b.due_date}</div></div></div><div class="dv4-entity-amount" style="color:#f59e0b;">${fmt(b.balance_due)}</div></div>`).join('');
             } else {
-                body.innerHTML = '<div class="dv4-empty"><i class="fas fa-check-circle" style="color:#10b981;"></i><div class="dv4-empty-text" style="color:#10b981;">No bills due this week</div></div>';
+                body.innerHTML = '<div class="dv4-empty"><i class="fas fa-check-circle" style="color:#10b981;"></i><div class="dv4-empty-text" style="color:#10b981;">No bills due</div></div>';
             }
         });
     }
@@ -921,11 +923,11 @@
         safe(() => {
             const container = el('activities-container');
             if (!container) return;
-            if (!activities.length) { container.innerHTML = '<div class="dv4-empty"><i class="fas fa-clock"></i><div class="dv4-empty-text">No transactions today</div></div>'; return; }
-            const typeColors = { 'POS Sale': '#10b981', 'Invoice': '#3b82f6', 'Purchase': '#f59e0b', 'Payment In': '#8b5cf6', 'Payment Out': '#ec4899', 'Journal': '#6366f1' };
+            if (!activities.length) { container.innerHTML = '<div class="dv4-empty"><i class="fas fa-clock"></i><div class="dv4-empty-text">No recent transactions</div></div>'; return; }
+            const typeColors = { 'POS Sale': '#10b981', 'Invoice': '#3b82f6', 'Purchase': '#f59e0b', 'Payment In': '#8b5cf6', 'Payment Out': '#ec4899', 'Journal': '#6366f1', 'Expense': '#ef4444', 'Transfer': '#06b6d4', 'Credit Memo': '#f43f5e', 'Stock Transfer': '#64748b', 'Cash Count': '#f59e0b' };
             container.innerHTML = activities.map(a => {
                 const color = typeColors[a.type] || '#64748b';
-                const isNeg = a.type === 'Purchase' || a.type === 'Payment Out';
+                const isNeg = a.type === 'Purchase' || a.type === 'Payment Out' || a.type === 'Expense';
                 return `<div class="dv4-timeline-item" onclick="window.location='${a.link || '#'}'"><div class="dv4-timeline-dot" style="background:${color}"></div><div class="dv4-timeline-content"><div class="dv4-timeline-header"><div><span class="dv4-timeline-title">${a.ref || ''}</span><span class="dv4-pill dv4-pill-gray" style="margin-left:6px;">${a.type}</span></div><div class="dv4-timeline-amount" style="color:${isNeg ? '#ef4444' : '#10b981'}">${isNeg ? '-' : '+'}${fmt(a.amount)}</div></div><div class="dv4-timeline-meta"><span>${a.party || ''}</span><span>${a.time || ''}</span>${a.status ? statusDot(a.status) + a.status : ''}</div></div></div>`;
             }).join('');
         });

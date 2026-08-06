@@ -30,37 +30,73 @@ $params = [];
 
 switch ($type) {
     case 'items':
-        $columns = ['sku', 'item_name', 'item_category', 'brand', 'bottle_size_ml', 'unit_type', 'units_per_case', 'cost_price', 'selling_price', 'tax_rate', 'reorder_level', 'reorder_qty', 'cogs_account_code', 'income_account_code', 'inventory_account_code'];
+        $columns = [
+            'id', 'sku', 'item_name', 'item_category', 'brand', 'bottle_size_ml', 'unit_type', 'units_per_case', 
+            'location_name', 'location_stock', 'location_cost_price', 'location_selling_price', 'location_mrp',
+            'global_cost_price', 'global_selling_price', 'global_mrp', 'global_stock', 
+            'tax_rate', 'reorder_level', 'reorder_qty', 'cogs_account_code', 'income_account_code', 'inventory_account_code'
+        ];
         if (!$isTemplate) {
-            $query = "SELECT i.sku, i.item_name, rc1.name as item_category, i.brand, i.bottle_size_ml, rc2.name as unit_type, i.units_per_case, i.cost_price, i.selling_price, i.tax_rate, i.reorder_level, i.reorder_qty, a1.account_code as cogs_account_code, a2.account_code as income_account_code, a3.account_code as inventory_account_code 
+            $location_filter = $_GET['location_id'] ?? '';
+            $loc_where = "";
+            if (!empty($location_filter)) {
+                $loc_where = " AND ib.location_id = " . $pdo->quote($location_filter) . " ";
+            }
+            $query = "SELECT 
+                        i.id, 
+                        i.sku, 
+                        i.item_name, 
+                        rc1.name as item_category, 
+                        i.brand, 
+                        i.bottle_size_ml, 
+                        rc2.name as unit_type, 
+                        i.units_per_case, 
+                        COALESCE(loc.name, 'Default Location') as location_name,
+                        COALESCE(ib.quantity_on_hand, i.current_stock, 0) as location_stock,
+                        COALESCE(ib.cost_price, ib.average_cost, i.cost_price, 0) as location_cost_price,
+                        COALESCE(ib.selling_price, i.selling_price, 0) as location_selling_price,
+                        COALESCE(ib.mrp, i.mrp, 0) as location_mrp,
+                        COALESCE(i.cost_price, 0) as global_cost_price, 
+                        COALESCE(i.selling_price, 0) as global_selling_price, 
+                        COALESCE(i.mrp, 0) as global_mrp, 
+                        COALESCE(i.current_stock, 0) as global_stock, 
+                        i.tax_rate, 
+                        i.reorder_level, 
+                        i.reorder_qty, 
+                        REPLACE(COALESCE(a1.id, ''), 'acc-', '') as cogs_account_code, 
+                        REPLACE(COALESCE(a2.id, ''), 'acc-', '') as income_account_code, 
+                        REPLACE(COALESCE(a3.id, ''), 'acc-', '') as inventory_account_code 
                       FROM items i
+                      LEFT JOIN inventory_balances ib ON i.id = ib.item_id {$loc_where}
+                      LEFT JOIN locations loc ON ib.location_id = loc.id AND loc.is_deleted = 0
                       LEFT JOIN accounts a1 ON i.cogs_account_id = a1.id
                       LEFT JOIN accounts a2 ON i.income_account_id = a2.id
                       LEFT JOIN accounts a3 ON i.inventory_account_id = a3.id
                       LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
                       LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-                      WHERE i.is_deleted = 0";
+                      WHERE i.is_deleted = 0
+                      ORDER BY i.item_name ASC, loc.name ASC";
         }
         break;
 
     case 'customers':
-        $columns = ['customer_code', 'full_name', 'customer_type', 'phone', 'email', 'pan_number', 'credit_limit', 'payment_terms_days'];
+        $columns = ['id', 'customer_code', 'full_name', 'customer_type', 'phone', 'email', 'pan_number', 'credit_limit', 'payment_terms_days'];
         if (!$isTemplate) {
-            $query = "SELECT " . implode(', ', $columns) . " FROM customers WHERE is_deleted = 0";
+            $query = "SELECT id, customer_code, full_name, customer_type, phone, email, pan_number, credit_limit, payment_terms_days FROM customers WHERE is_deleted = 0 ORDER BY full_name ASC";
         }
         break;
 
     case 'vendors':
-        $columns = ['vendor_code', 'company_name', 'contact_name', 'phone', 'email', 'address', 'pan_number', 'vat_number', 'payment_terms_days', 'credit_limit'];
+        $columns = ['id', 'vendor_code', 'company_name', 'contact_name', 'phone', 'email', 'address', 'pan_number', 'vat_number', 'payment_terms_days', 'credit_limit'];
         if (!$isTemplate) {
-            $query = "SELECT " . implode(', ', $columns) . " FROM vendors WHERE is_deleted = 0";
+            $query = "SELECT id, vendor_code, company_name, contact_name, phone, email, address, pan_number, vat_number, payment_terms_days, credit_limit FROM vendors WHERE is_deleted = 0 ORDER BY company_name ASC";
         }
         break;
 
     case 'accounts':
-        $columns = ['account_code', 'account_name', 'account_type', 'account_subtype', 'normal_balance', 'currency'];
+        $columns = ['id', 'account_code', 'account_name', 'account_type', 'account_subtype', 'normal_balance', 'currency'];
         if (!$isTemplate) {
-            $query = "SELECT " . implode(', ', $columns) . " FROM accounts WHERE is_deleted = 0";
+            $query = "SELECT id, REPLACE(id, 'acc-', '') as account_code, account_name, account_type, account_subtype, normal_balance, currency FROM accounts WHERE is_deleted = 0 ORDER BY account_code ASC";
         }
         break;
 
@@ -97,7 +133,7 @@ switch ($type) {
     case 'journal_entries':
         $columns = ['txn_number', 'txn_date', 'memo', 'account_code', 'entry_type', 'amount', 'entry_memo'];
         if (!$isTemplate) {
-            $query = "SELECT h.txn_number, h.txn_date, h.memo, a.account_code, j.entry_type, j.amount, j.memo as entry_memo 
+            $query = "SELECT h.txn_number, h.txn_date, h.memo, REPLACE(a.id, 'acc-', '') as account_code, j.entry_type, j.amount, j.memo as entry_memo 
                       FROM transaction_headers h 
                       JOIN journal_entries j ON h.id = j.header_id 
                       JOIN accounts a ON j.account_id = a.id 
@@ -110,7 +146,7 @@ switch ($type) {
     case 'expenses':
         $columns = ['txn_number', 'expense_date', 'expense_account_code', 'paid_from_account_code', 'vendor_code', 'description', 'amount', 'tax_amount', 'expense_category'];
         if (!$isTemplate) {
-            $query = "SELECT h.txn_number, e.expense_date, a1.account_code as expense_account_code, a2.account_code as paid_from_account_code, v.vendor_code, e.description, e.amount, e.tax_amount, e.expense_category 
+            $query = "SELECT h.txn_number, e.expense_date, REPLACE(a1.id, 'acc-', '') as expense_account_code, REPLACE(a2.id, 'acc-', '') as paid_from_account_code, v.vendor_code, e.description, e.amount, e.tax_amount, e.expense_category 
                       FROM transaction_headers h 
                       JOIN expenses e ON h.id = e.header_id 
                       JOIN accounts a1 ON e.expense_account_id = a1.id 

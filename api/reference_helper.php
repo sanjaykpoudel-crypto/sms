@@ -148,21 +148,21 @@ function emvco_crc16_calc($str)
     return $crc;
 }
 
-function getNextTransactionNumber($type)
+function getNextTransactionNumber($type, $location_id = null)
 {
     $db = db();
 
     // Default prefixes
     $defaults = [
-        'customer_invoice'    => 'INV',
-        'vendor_bill'         => 'BILL',
+        'customer_invoice'    => 'SI',
+        'vendor_bill'         => 'VI',
         'customer_payment'    => 'CPAY',
         'vendor_payment'      => 'VPAY',
-        'journal_entry'       => 'JE',
+        'journal_entry'       => 'JV',
         'expense'             => 'EXP',
         'purchase_order'      => 'PO',
         'item'                => 'ITM',
-        'customer'            => 'CUS',
+        'customer'            => 'CUST',
         'vendor'              => 'VEND',
         'inventory_adjustment'=> 'ADJ',
         'account_transfer'    => 'XFER',
@@ -171,12 +171,13 @@ function getNextTransactionNumber($type)
         'vendor_credit'       => 'VC',
     ];
 
-    // Batch-fetch all 4 ref settings in ONE query
     $keys = [
         "ref_{$type}_prefix",
+        "ref_{$type}_loc",
         "ref_{$type}_sep",
         "ref_{$type}_next",
         "ref_{$type}_pad",
+        "ref_{$type}_suffix"
     ];
     $ph   = implode(',', array_fill(0, count($keys), '?'));
     $rows = $db->fetchAll(
@@ -188,12 +189,42 @@ function getNextTransactionNumber($type)
         $settings[$r['meta_field']] = $r['meta_value'];
     }
 
-    $prefix = $settings["ref_{$type}_prefix"] ?? ($defaults[$type] ?? 'TXN');
-    $sep    = $settings["ref_{$type}_sep"]    ?? '-';
-    $next   = $settings["ref_{$type}_next"]   ?? '1';
-    $pad    = $settings["ref_{$type}_pad"]    ?? '4';
+    $prefix  = $settings["ref_{$type}_prefix"] ?? ($defaults[$type] ?? 'TXN');
+    $locMode = $settings["ref_{$type}_loc"]    ?? 'none';
+    $sep     = $settings["ref_{$type}_sep"]    ?? '-';
+    $next    = $settings["ref_{$type}_next"]   ?? '1';
+    $pad     = $settings["ref_{$type}_pad"]    ?? '5';
+    $suffix  = $settings["ref_{$type}_suffix"] ?? '';
 
-    return $prefix . $sep . str_pad($next, (int)$pad, '0', STR_PAD_LEFT);
+    // Location short code lookup
+    $locCode = '';
+    if ($locMode !== 'none' || strpos($suffix, '{LOC}') !== false) {
+        if (!$location_id && function_exists('get_user_default_location_id')) {
+            $location_id = get_user_default_location_id();
+        }
+        if ($location_id) {
+            $loc = $db->fetchOne("SELECT code, name FROM locations WHERE id = ?", [$location_id]);
+            if ($loc) {
+                $locCode = !empty($loc['code']) ? strtoupper(trim($loc['code'])) : strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $loc['name']), 0, 4));
+            }
+        }
+    }
+
+    $parts = [];
+    if ($locMode === 'prefix' && !empty($locCode)) $parts[] = $locCode;
+    if (!empty($prefix))                           $parts[] = strtoupper($prefix);
+    if ($locMode === 'mid' && !empty($locCode))    $parts[] = $locCode;
+
+    $numStr = str_pad($next, (int)$pad, '0', STR_PAD_LEFT);
+    $parts[] = $numStr;
+
+    if (!empty($suffix)) {
+        $cleanSuffix = strtoupper(trim(str_replace('{LOC}', $locCode, $suffix)));
+        if (!empty($cleanSuffix)) $parts[] = $cleanSuffix;
+    }
+    if ($locMode === 'suffix' && !empty($locCode)) $parts[] = $locCode;
+
+    return implode($sep, array_filter($parts, function($v) { return $v !== ''; }));
 }
 
 /**
@@ -620,8 +651,8 @@ function sync_opening_balance_journal_entries($pdo, $date = null, $location_id =
             $offset_id = 'acc-open';
             $stmt = $pdo->prepare("
                 INSERT INTO accounts 
-                (id, account_code, account_name, account_type, account_subtype, normal_balance, parent_account_id, currency, is_active) 
-                VALUES ('acc-open', 'open', 'Opening Balance', 'equity', 'other', 'credit', NULL, 'NPR', 1)
+                (id, account_name, account_type, account_subtype, normal_balance, parent_account_id, currency, is_active) 
+                VALUES ('acc-open', 'Opening Balance', 'equity', 'other', 'credit', NULL, 'NPR', 1)
             ");
             $stmt->execute();
         }
@@ -671,6 +702,24 @@ function sync_opening_balance_journal_entries($pdo, $date = null, $location_id =
 }
 
 /**
+ * Returns a fallback default POS customer ID (e.g. Walk IN / Cash Customer)
+ */
+function get_default_pos_customer_id()
+{
+    $db = db();
+    $cust = $db->fetchOne("SELECT id FROM customers WHERE (LOWER(full_name) LIKE '%walk%' OR LOWER(full_name) LIKE '%cash%') AND is_deleted = 0 LIMIT 1");
+    if (!$cust) {
+        $cust = $db->fetchOne("SELECT id FROM customers WHERE is_deleted = 0 ORDER BY created_at ASC LIMIT 1");
+    }
+    if (!$cust) {
+        $id = generate_uuid();
+        $db->execute("INSERT INTO customers (id, customer_code, full_name, customer_type, is_active, is_deleted) VALUES (?, 'CUST-WALKIN', 'Walk IN', 'retail', 1, 0)", [$id]);
+        return $id;
+    }
+    return $cust['id'];
+}
+
+/**
  * Regenerates the daily POS summary invoice and payment for a given date
  */
 function sync_daily_pos_summary($date)
@@ -711,20 +760,34 @@ function sync_daily_pos_summary($date)
     }
 
     $user_id = $_SESSION['user_id'] ?? 'usr-admin-001';
-
     $def_location_id = get_user_default_location_id();
+
+    // Resolve non-null customer_id
+    $customer_id = null;
+    foreach ($pos_entries as $pe) {
+        if (!empty($pe['customer_id'])) {
+            $customer_id = $pe['customer_id'];
+            break;
+        }
+    }
+    if (empty($customer_id)) {
+        $customer_id = get_default_pos_customer_id();
+    }
 
     // Resolve daily summary IDs
     if ($existing_inv) {
         $invoice_header_id = $existing_inv['id'];
+        $inv_hdr = $db->fetchOne("SELECT source FROM transaction_headers WHERE id = ?", [$invoice_header_id]);
+        if ($inv_hdr && $inv_hdr['source'] === 'manual') {
+            // User has manually edited and saved this invoice — preserve manual edits
+            return;
+        }
         $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = '')")->execute([$def_location_id, $invoice_header_id]);
     } else {
         $invoice_header_id = generate_uuid();
-        $customer_id = $pos_entries[0]['customer_id'];
-
         $pdo->prepare("
-            INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, party_type, location_id)
-            VALUES (?, ?, 'customer_invoice', ?, ?, ?, ?, 'paid', ?, ?, 'customer', ?)
+            INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, party_type, location_id, source)
+            VALUES (?, ?, 'customer_invoice', ?, ?, ?, ?, 'paid', ?, ?, 'customer', ?, 'pos_sync')
         ")->execute([$invoice_header_id, $summary_invoice_no, $date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $user_id, $customer_id, $def_location_id]);
     }
 
@@ -733,8 +796,6 @@ function sync_daily_pos_summary($date)
         $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = '')")->execute([$def_location_id, $payment_header_id]);
     } else {
         $payment_header_id = generate_uuid();
-        $customer_id = $pos_entries[0]['customer_id'];
-
         $pdo->prepare("
             INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, party_type, location_id)
             VALUES (?, ?, 'customer_payment', ?, ?, ?, ?, 'posted', ?, ?, 'customer', ?)
@@ -814,7 +875,9 @@ function sync_daily_pos_summary($date)
     }
 
     // Write customer_invoices record
-    $customer_id = $pos_entries[0]['customer_id'];
+    if (empty($customer_id)) {
+        $customer_id = get_default_pos_customer_id();
+    }
     $pdo->prepare("
         INSERT INTO customer_invoices (id, header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'paid', 'cash')
@@ -912,6 +975,22 @@ function sync_daily_pos_summary($date)
         ->execute([$summary_total, $customer_id, $invoice_header_id]);
     $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ? WHERE id = ?")
         ->execute([$summary_total, $customer_id, $payment_header_id]);
+
+    // 6. Record audit logs for daily POS rollup invoice & payment headers
+    $log_inv_info = json_encode(['txn_number' => $summary_invoice_no, 'amount' => $summary_total, 'type' => 'daily_pos_rollup']);
+    $log_pay_info = json_encode(['txn_number' => $summary_payment_no, 'amount' => $summary_total, 'type' => 'daily_pos_rollup']);
+
+    $inv_has_log = $db->fetchOne("SELECT id FROM audit_logs WHERE record_id = ?", [$invoice_header_id]);
+    if (!$inv_has_log) {
+        $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'create', ?, NULL, ?, ?)")
+            ->execute([$invoice_header_id, $log_inv_info, $user_id]);
+    }
+
+    $pay_has_log = $db->fetchOne("SELECT id FROM audit_logs WHERE record_id = ?", [$payment_header_id]);
+    if (!$pay_has_log) {
+        $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'create', ?, NULL, ?, ?)")
+            ->execute([$payment_header_id, $log_pay_info, $user_id]);
+    }
 }
 
 /**
@@ -924,18 +1003,286 @@ function check_fiscal_year_lock($date)
         return;
     $db = db();
     try {
+        ensure_period_closing_schema();
+        
+        // 1. Check accounting_periods
+        $p = $db->fetchOne("
+            SELECT period_name, status FROM accounting_periods 
+            WHERE ? BETWEEN start_date AND end_date 
+              AND status IN ('soft_closed', 'closed', 'locked', 'archived')
+            LIMIT 1
+        ", [$date]);
+        
+        if ($p) {
+            $st = strtoupper($p['status']);
+            throw new Exception("Transaction blocked: Date '{$date}' falls within the Accounting Period '{$p['period_name']}' which is {$st}.");
+        }
+
+        // 2. Check fiscal_years
         $fy = $db->fetchOne("
-            SELECT name FROM fiscal_years 
-            WHERE :date BETWEEN start_date AND end_date 
-              AND status = 'closed'
-        ", ['date' => $date]);
+            SELECT name, status FROM fiscal_years 
+            WHERE ? BETWEEN start_date AND end_date 
+              AND status IN ('closed', 'locked', 'soft_closed')
+            LIMIT 1
+        ", [$date]);
 
         if ($fy) {
-            throw new Exception("The date '{$date}' falls within the closed Fiscal Year '{$fy['name']}'. Modification of transactions in closed fiscal years is strictly prohibited.");
+            $st = strtoupper($fy['status']);
+            throw new Exception("Transaction blocked: Date '{$date}' falls within the Fiscal Year '{$fy['name']}' which is {$st}.");
         }
     } catch (PDOException $e) {
-        // If the fiscal_years table doesn't exist yet (e.g. during early initialization/testing), ignore
+        // If tables do not exist, ignore
     }
+}
+
+/**
+ * Role Permission Engine Functions
+ */
+function get_user_role_permissions()
+{
+    static $cached_role_data = null;
+    static $cached_role_code = null;
+
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+
+    $role_code = $_SESSION['role'] ?? '';
+    if ($cached_role_data !== null && $cached_role_code === $role_code) {
+        return $cached_role_data;
+    }
+    $cached_role_code = $role_code;
+    if (empty($role_code)) {
+        $cached_role_data = [
+            'access_level' => 'hide',
+            'permissions' => []
+        ];
+        return $cached_role_data;
+    }
+
+    if ($role_code === 'admin') {
+        $cached_role_data = [
+            'access_level' => 'full',
+            'permissions' => []
+        ];
+        return $cached_role_data;
+    }
+
+    try {
+        $db = db();
+        $row = $db->fetchOne("SELECT access_level, permissions FROM roles WHERE role_code = ? AND is_active = 1", [$role_code]);
+        if ($row) {
+            $perms = [];
+            if (!empty($row['permissions'])) {
+                $perms = json_decode($row['permissions'], true) ?: [];
+            }
+            $cached_role_data = [
+                'access_level' => strtolower($row['access_level'] ?? 'custom'),
+                'permissions' => $perms
+            ];
+        } else {
+            $cached_role_data = [
+                'access_level' => 'custom',
+                'permissions' => []
+            ];
+        }
+    } catch (Exception $e) {
+        $cached_role_data = [
+            'access_level' => 'custom',
+            'permissions' => []
+        ];
+    }
+
+    return $cached_role_data;
+}
+
+function get_feature_permission($item_key)
+{
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $role = $_SESSION['role'] ?? '';
+    if ($role === 'admin') {
+        return 'allow';
+    }
+
+    $role_data = get_user_role_permissions();
+    $access_level = $role_data['access_level'];
+
+    if ($access_level === 'full') {
+        return 'allow';
+    }
+    if ($access_level === 'readonly') {
+        return 'readonly';
+    }
+
+    $perms = $role_data['permissions'];
+    if (isset($perms[$item_key])) {
+        return $perms[$item_key];
+    }
+
+    return 'allow';
+}
+
+function can_access_feature($item_key)
+{
+    return get_feature_permission($item_key) !== 'hide';
+}
+
+function can_edit_feature($item_key)
+{
+    return get_feature_permission($item_key) === 'allow';
+}
+
+function resolve_page_permission_key($page)
+{
+    $p = strtolower(trim($page, '/'));
+    $parts = explode('/', $p);
+
+    $is_edit = false;
+    $last = end($parts);
+    if ($last === 'manage' || $last === 'edit' || strpos($p, '/manage') !== false) {
+        $is_edit = true;
+    }
+
+    $key = '';
+
+    if (strpos($p, 'transactions/pos') !== false) {
+        $key = 'pos';
+    } elseif (strpos($p, 'transactions/invoice') !== false) {
+        $key = 'invoice';
+    } elseif (strpos($p, 'transactions/credit_memo') !== false) {
+        $key = 'credit_memo';
+    } elseif (strpos($p, 'transactions/bill_credit') !== false) {
+        $key = 'bill_credit';
+    } elseif (strpos($p, 'transactions/bill') !== false) {
+        $key = 'bill';
+    } elseif (strpos($p, 'transactions/payment') !== false) {
+        $key = 'payment';
+    } elseif (strpos($p, 'transactions/expense') !== false) {
+        $key = 'expense';
+    } elseif (strpos($p, 'transactions/journal') !== false) {
+        $key = 'journal';
+    } elseif (strpos($p, 'transactions/cash_denom') !== false) {
+        $key = 'cash_denom';
+    } elseif (strpos($p, 'transactions/adjustment') !== false) {
+        $key = 'adjustment';
+    } elseif (strpos($p, 'transactions/transfer') !== false) {
+        $key = 'transfer';
+    } elseif (strpos($p, 'transactions/inventory_transfer') !== false) {
+        $key = 'inventory_transfer';
+    } elseif ($p === 'transactions/transactions_list' || $p === 'transactions') {
+        $key = 'any_transaction';
+    } elseif (strpos($p, 'activity') === 0 || strpos($p, 'activity/') !== false) {
+        $key = 'activity';
+    } elseif (strpos($p, 'master/account/opening_balance') !== false) {
+        $key = 'opening_balances';
+    } elseif (strpos($p, 'master/account') !== false) {
+        $key = 'accounts';
+    } elseif (strpos($p, 'master/customer') !== false) {
+        $key = 'customers';
+    } elseif (strpos($p, 'master/vendor') !== false) {
+        $key = 'vendors';
+    } elseif (strpos($p, 'master/item') !== false) {
+        $key = 'items';
+    } elseif (strpos($p, 'system/users') !== false || strpos($p, 'system/user') !== false) {
+        $key = 'users';
+    } elseif ($p === 'master/master_list' || $p === 'master') {
+        $key = 'any_master';
+    } elseif (strpos($p, 'system/settings/location') !== false || strpos($p, 'settings/location') !== false) {
+        $key = 'locations';
+    } elseif (strpos($p, 'reports/pos_summary') !== false) {
+        $key = 'rep_pos';
+    } elseif (strpos($p, 'reports/financial/break_even_payback') !== false) {
+        $key = 'rep_insights';
+    } elseif (strpos($p, 'reports/financial') !== false) {
+        $key = 'rep_financial';
+    } elseif (strpos($p, 'reports/sales') !== false) {
+        $key = 'rep_sales';
+    } elseif (strpos($p, 'reports/purchases') !== false) {
+        $key = 'rep_purchases';
+    } elseif (strpos($p, 'reports/vendors') !== false) {
+        $key = 'rep_vendors';
+    } elseif (strpos($p, 'reports/inventory') !== false) {
+        $key = 'rep_inventory';
+    } elseif (strpos($p, 'reports/vat') !== false) {
+        $key = 'rep_vat';
+    } elseif (strpos($p, 'reports/customers') !== false) {
+        $key = 'rep_customers';
+    } elseif ($p === 'reports/reports_list' || $p === 'reports') {
+        $key = 'any_report';
+    } elseif (strpos($p, 'system/company') !== false) {
+        $key = 'company_info';
+    } elseif (strpos($p, 'system/roles') !== false || strpos($p, 'system/role') !== false) {
+        $key = 'roles_perm';
+    } elseif (strpos($p, 'system/fiscal_years') !== false) {
+        $key = 'fiscal_years';
+    } elseif (strpos($p, 'system/settings') !== false) {
+        if (strpos($p, 'whatsapp') !== false) {
+            $key = 'whatsapp';
+        } else {
+            $key = 'accounting_prefs';
+        }
+    } elseif (strpos($p, 'system/ref_codes') !== false) {
+        $key = 'ref_codes';
+    } elseif (strpos($p, 'system/import_export') !== false) {
+        $key = 'import_export';
+    } elseif (strpos($p, 'system/backup') !== false) {
+        $key = 'backup_restore';
+    }
+
+    return [$key, $is_edit];
+}
+
+function check_page_access($page)
+{
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $role = $_SESSION['role'] ?? '';
+    if ($role === 'admin' || $page === 'home' || $page === 'home-v3') {
+        return true;
+    }
+
+    list($key, $is_edit) = resolve_page_permission_key($page);
+    if (empty($key)) {
+        return true;
+    }
+
+    if ($key === 'any_transaction') {
+        $txn_keys = ['pos', 'bill', 'bill_credit', 'invoice', 'credit_memo', 'payment', 'expense', 'journal', 'cash_denom', 'adjustment', 'transfer', 'inventory_transfer'];
+        foreach ($txn_keys as $tk) {
+            if (can_access_feature($tk)) return true;
+        }
+        return false;
+    }
+
+    if ($key === 'any_master') {
+        $mst_keys = ['accounts', 'customers', 'vendors', 'items', 'users'];
+        foreach ($mst_keys as $mk) {
+            if (can_access_feature($mk)) return true;
+        }
+        return false;
+    }
+
+    if ($key === 'any_report') {
+        $rpt_keys = ['rep_financial', 'rep_sales', 'rep_purchases', 'rep_vendors', 'rep_inventory', 'rep_vat', 'rep_customers', 'rep_pos', 'rep_insights'];
+        foreach ($rpt_keys as $rk) {
+            if (can_access_feature($rk)) return true;
+        }
+        return false;
+    }
+
+    $perm = get_feature_permission($key);
+    if ($perm === 'hide') {
+        return false;
+    }
+
+    if ($is_edit && $perm === 'readonly') {
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -952,6 +1299,11 @@ function has_permission($permission)
         return false;
     if ($role === 'admin')
         return true;
+
+    // Direct feature key check
+    if (can_access_feature($permission)) {
+        return true;
+    }
 
     switch ($permission) {
         case 'view_fiscal_year':
@@ -1034,7 +1386,7 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
         SELECT COALESCE(SUM(ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))), 0.00) as total_paid
         FROM transaction_links tl
         JOIN transaction_headers ph ON tl.parent_id = ph.id
-        WHERE tl.child_id = ? AND tl.link_type LIKE 'payment:%'
+        WHERE tl.child_id = ? AND (tl.link_type LIKE 'payment:%' OR tl.link_type LIKE 'credit_memo_apply:%' OR tl.link_type LIKE 'bill_credit_apply:%' OR tl.link_type LIKE 'vendor_credit_apply:%')
           AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
     ");
     $stmt_pay->execute([$doc_header_id]);
@@ -1051,6 +1403,17 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
     $total_paid2 = (float) ($stmt_pay2->fetch(PDO::FETCH_ASSOC)['total_paid2'] ?? 0.00);
 
     $actual_paid = max($total_paid, $total_paid2);
+
+    // Sum credit applications where THIS document is the credit source (parent_id)
+    $stmt_credit_out = $pdo->prepare("
+        SELECT COALESCE(SUM(ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))), 0.00) as total_applied_out
+        FROM transaction_links tl
+        JOIN transaction_headers ch ON tl.child_id = ch.id
+        WHERE tl.parent_id = ? AND (tl.link_type LIKE 'credit_memo_apply:%' OR tl.link_type LIKE 'bill_credit_apply:%' OR tl.link_type LIKE 'vendor_credit_apply:%')
+          AND ch.is_deleted = 0 AND ch.status NOT IN ('void', 'voided', 'draft')
+    ");
+    $stmt_credit_out->execute([$doc_header_id]);
+    $total_applied_out = (float) ($stmt_credit_out->fetch(PDO::FETCH_ASSOC)['total_applied_out'] ?? 0.00);
 
     if ($txn_type === 'customer_invoice') {
         $stmt_inv = $pdo->prepare("SELECT total_amount FROM customer_invoices WHERE header_id = ?");
@@ -1106,8 +1469,9 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
         $cm = $stmt_cm->fetch(PDO::FETCH_ASSOC);
         if ($cm) {
             $total_amount = (float) $cm['total_amount'];
-            $new_applied = min($total_amount, $actual_paid);
-            $new_remaining = max(0.00, round($total_amount - $actual_paid, 2));
+            $total_credit_used = $total_applied_out + $actual_paid;
+            $new_applied = min($total_amount, $total_credit_used);
+            $new_remaining = max(0.00, round($total_amount - $total_credit_used, 2));
 
             $cm_status = 'open';
             $hdr_status = 'open';
@@ -1124,14 +1488,21 @@ function recalculate_document_payment_status($doc_header_id, $pdo = null)
             $pdo->prepare("UPDATE transaction_headers SET status = ? WHERE id = ?")
                 ->execute([$hdr_status, $doc_header_id]);
         }
-    } elseif ($txn_type === 'vendor_credit') {
+    } elseif ($txn_type === 'vendor_credit' || $txn_type === 'bill_credit') {
         $stmt_vc = $pdo->prepare("SELECT total_amount FROM vendor_credits WHERE header_id = ?");
         $stmt_vc->execute([$doc_header_id]);
         $vc = $stmt_vc->fetch(PDO::FETCH_ASSOC);
+        if (!$vc) {
+            // Also check vendor_bills for bill_credit if table differs
+            $stmt_vc = $pdo->prepare("SELECT total_amount FROM vendor_bills WHERE header_id = ?");
+            $stmt_vc->execute([$doc_header_id]);
+            $vc = $stmt_vc->fetch(PDO::FETCH_ASSOC);
+        }
         if ($vc) {
             $total_amount = (float) $vc['total_amount'];
-            $new_applied = min($total_amount, $actual_paid);
-            $new_remaining = max(0.00, round($total_amount - $actual_paid, 2));
+            $total_credit_used = $total_applied_out + $actual_paid;
+            $new_applied = min($total_amount, $total_credit_used);
+            $new_remaining = max(0.00, round($total_amount - $total_credit_used, 2));
 
             $vc_status = 'open';
             $hdr_status = 'open';
@@ -1229,7 +1600,7 @@ if (!function_exists('get_dropdown_options')) {
             case 'vendors':
                 return $db->fetchAll("SELECT id, company_name as name, phone FROM vendors WHERE is_deleted = 0 AND is_active = 1 ORDER BY company_name ASC");
             case 'accounts':
-                return $db->fetchAll("SELECT id, account_code, account_name as name, account_type, account_subtype, normal_balance FROM accounts WHERE is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
+                return $db->fetchAll("SELECT id, REPLACE(id, 'acc-', '') as account_code, account_name as name, account_type, account_subtype, normal_balance FROM accounts WHERE is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
             default:
                 return [];
         }
@@ -1418,6 +1789,132 @@ if (!function_exists('auto_sync_pos_items_and_invoices')) {
             }
         } catch (Throwable $e) {
             // Silently ignore exception during auto sync
+        }
+    }
+}
+
+/**
+ * Ensures Period Close database tables exist.
+ */
+if (!function_exists('ensure_period_closing_schema')) {
+    function ensure_period_closing_schema() {
+        static $done = false;
+        if ($done) return;
+        try {
+            $db = db();
+            $pdo = $db->getConnection();
+            if ($pdo->inTransaction()) {
+                // Skip DDL schema modifications inside active transactions to avoid MySQL implicit transaction commits
+                return;
+            }
+            $done = true;
+            // 1. Expand status column in fiscal_years & fiscal_year_audit_logs to VARCHAR(50) to prevent ENUM truncation errors
+            try {
+                $db->execute("ALTER TABLE `fiscal_years` MODIFY COLUMN `status` VARCHAR(50) NOT NULL DEFAULT 'open'");
+            } catch (Throwable $e) {}
+            try {
+                $db->execute("ALTER TABLE `fiscal_year_audit_logs` MODIFY COLUMN `previous_status` VARCHAR(50) DEFAULT NULL");
+            } catch (Throwable $e) {}
+            try {
+                $db->execute("ALTER TABLE `fiscal_year_audit_logs` MODIFY COLUMN `new_status` VARCHAR(50) DEFAULT NULL");
+            } catch (Throwable $e) {}
+
+            // 2. Clean up any legacy artificial OPEN-FY opening balance journal entries so GL contains ONLY real transactions
+            $db->execute("UPDATE transaction_headers SET is_deleted = 1 WHERE (source = 'Fiscal Year Opening' OR txn_number LIKE 'OPEN-FY%') AND is_deleted = 0");
+
+            $db->execute("
+                CREATE TABLE IF NOT EXISTS `accounting_periods` (
+                  `id` varchar(64) NOT NULL,
+                  `fiscal_year_id` varchar(64) NOT NULL,
+                  `period_name` varchar(100) NOT NULL,
+                  `start_date` date NOT NULL,
+                  `end_date` date NOT NULL,
+                  `status` enum('open','soft_closed','closed','locked','archived') NOT NULL DEFAULT 'open',
+                  `closed_by` varchar(64) DEFAULT NULL,
+                  `closed_at` datetime DEFAULT NULL,
+                  `locked_by` varchar(64) DEFAULT NULL,
+                  `locked_at` datetime DEFAULT NULL,
+                  `reopened_by` varchar(64) DEFAULT NULL,
+                  `reopened_at` datetime DEFAULT NULL,
+                  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_fy_id` (`fiscal_year_id`),
+                  KEY `idx_dates` (`start_date`,`end_date`),
+                  KEY `idx_status` (`status`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            ");
+            $db->execute("
+                CREATE TABLE IF NOT EXISTS `period_audit_logs` (
+                  `id` varchar(64) NOT NULL,
+                  `period_id` varchar(64) NOT NULL,
+                  `user_id` varchar(64) DEFAULT NULL,
+                  `action` varchar(100) NOT NULL,
+                  `before_status` varchar(50) DEFAULT NULL,
+                  `after_status` varchar(50) DEFAULT NULL,
+                  `reason` text DEFAULT NULL,
+                  `ip_address` varchar(45) DEFAULT NULL,
+                  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_period` (`period_id`),
+                  KEY `idx_user` (`user_id`),
+                  KEY `idx_action` (`action`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            ");
+            $db->execute("
+                CREATE TABLE IF NOT EXISTS `period_report_snapshots` (
+                  `id` varchar(64) NOT NULL,
+                  `period_id` varchar(64) NOT NULL,
+                  `report_type` varchar(100) NOT NULL,
+                  `report_name` varchar(255) NOT NULL,
+                  `snapshot_data` longtext NOT NULL,
+                  `created_by` varchar(64) DEFAULT NULL,
+                  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_period_report` (`period_id`,`report_type`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            ");
+            $done = true;
+        } catch (Throwable $e) {
+            // Ignore if already created
+        }
+    }
+}
+
+/**
+ * Checks if a transaction date falls into a Soft Closed, Closed, or Locked period.
+ * Throws Exception if locked.
+ */
+if (!function_exists('check_period_lock')) {
+    function check_period_lock($txn_date) {
+        ensure_period_closing_schema();
+        if (empty($txn_date)) return;
+        $db = db();
+        
+        // 1. Check accounting_periods
+        $p = $db->fetchOne("
+            SELECT * FROM accounting_periods 
+            WHERE ? BETWEEN start_date AND end_date 
+              AND status IN ('soft_closed', 'closed', 'locked', 'archived')
+            LIMIT 1
+        ", [$txn_date]);
+        
+        if ($p) {
+            $st = strtoupper($p['status']);
+            throw new Exception("Transaction blocked: Date {$txn_date} falls in an Accounting Period '{$p['period_name']}' which is {$st}.");
+        }
+
+        // 2. Check fiscal_years
+        $fy = $db->fetchOne("
+            SELECT * FROM fiscal_years 
+            WHERE ? BETWEEN start_date AND end_date 
+              AND status IN ('closed', 'locked', 'soft_closed')
+            LIMIT 1
+        ", [$txn_date]);
+
+        if ($fy) {
+            $st = strtoupper($fy['status']);
+            throw new Exception("Transaction blocked: Date {$txn_date} falls in Fiscal Year '{$fy['name']}' which is {$st}.");
         }
     }
 }

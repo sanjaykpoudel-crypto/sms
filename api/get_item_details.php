@@ -27,8 +27,8 @@ if (!$item) {
 $stock_query = "
     SELECT 
         SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN l.quantity 
+            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -l.quantity 
             ELSE 0 
         END) as current_stock
     FROM transaction_lines l
@@ -51,6 +51,26 @@ $item['unit_name'] = $unit_rec ? $unit_rec['name'] : ($item['unit_type'] ?? '');
 if (!empty($item['tax_id'])) {
     $tax_rec = $db->fetchOne("SELECT value FROM reference_codes WHERE id = ? AND type = 'tax_code'", [$item['tax_id']]);
     if ($tax_rec) $item['tax_rate'] = $tax_rec['value'];
+}
+
+// Resolve location-specific pricing & stock if location_id provided
+$location_id = trim($_GET['location_id'] ?? '');
+if (!empty($location_id)) {
+    $loc_bal = $db->fetchOne("SELECT cost_price, selling_price, mrp, average_cost, quantity_on_hand FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$id, $location_id]);
+    if ($loc_bal) {
+        if ($loc_bal['selling_price'] !== null && (float)$loc_bal['selling_price'] > 0) {
+            $item['selling_price'] = (float)$loc_bal['selling_price'];
+        }
+        if ($loc_bal['cost_price'] !== null && (float)$loc_bal['cost_price'] > 0) {
+            $item['cost_price'] = (float)$loc_bal['cost_price'];
+        } else if ($loc_bal['average_cost'] !== null && (float)$loc_bal['average_cost'] > 0) {
+            $item['location_avg_cost'] = (float)$loc_bal['average_cost'];
+        }
+        if ($loc_bal['mrp'] !== null && (float)$loc_bal['mrp'] > 0) {
+            $item['mrp'] = (float)$loc_bal['mrp'];
+        }
+        $item['location_stock'] = (float)($loc_bal['quantity_on_hand'] ?? 0);
+    }
 }
 
 // Resolve effective accounts

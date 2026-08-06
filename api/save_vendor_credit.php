@@ -74,7 +74,8 @@ try {
     $pdo->beginTransaction();
 
     if (empty($txn_number)) {
-        $txn_number = getNextTransactionNumber('vendor_credit');
+        $txn_number = getNextTransactionNumber('vendor_credit', $location_id);
+        incrementTransactionNumber('vendor_credit');
     }
 
     // Process & validate line items
@@ -214,6 +215,8 @@ try {
     }
 
     $pdo->commit();
+
+    recalculate_document_payment_status($id, $pdo);
 
     // Real-time stock & dashboard sync
     auto_sync_pos_items_and_invoices(true);

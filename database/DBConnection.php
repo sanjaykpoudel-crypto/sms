@@ -59,6 +59,9 @@ class DBConnection
         $this->initLocationMaster();
         $this->initPaymentStatusMaster();
         $this->initPasswordResetsTable();
+        $this->initItemMrpColumn();
+        $this->initLocationPricingColumns();
+        $this->initExpensesTableFix();
 
         // Mark session so subsequent requests skip the boot entirely
         if (session_status() === PHP_SESSION_ACTIVE) {
@@ -244,6 +247,24 @@ class DBConnection
                 $this->conn->exec("ALTER TABLE `users` ADD COLUMN `location_id` VARCHAR(36) NULL AFTER `role`");
             }
 
+            // Ensure employee information columns exist in users table
+            $colsToAdd = [
+                'phone'             => "VARCHAR(30) NULL AFTER `email`",
+                'designation'       => "VARCHAR(100) NULL AFTER `phone`",
+                'department'        => "VARCHAR(100) NULL AFTER `designation`",
+                'joining_date'      => "DATE NULL AFTER `department`",
+                'address'           => "VARCHAR(255) NULL AFTER `joining_date`",
+                'emergency_contact' => "VARCHAR(100) NULL AFTER `address`",
+                'citizenship_front' => "VARCHAR(255) NULL AFTER `emergency_contact`",
+                'citizenship_back'  => "VARCHAR(255) NULL AFTER `citizenship_front`"
+            ];
+            foreach ($colsToAdd as $col => $definition) {
+                $colCheck = $this->conn->query("SHOW COLUMNS FROM `users` LIKE '{$col}'")->fetch();
+                if (!$colCheck) {
+                    $this->conn->exec("ALTER TABLE `users` ADD COLUMN `{$col}` {$definition}");
+                }
+            }
+
             // Ensure location_id column exists in transaction_headers table
             $hdrLocCheck = $this->conn->query("SHOW COLUMNS FROM `transaction_headers` LIKE 'location_id'")->fetch();
             if (!$hdrLocCheck) {
@@ -306,6 +327,45 @@ class DBConnection
             $this->conn->exec($sqlCreateTable);
         } catch (Exception $e) {
             error_log("initPasswordResetsTable error: " . $e->getMessage());
+        }
+    }
+
+    public function initItemMrpColumn()
+    {
+        try {
+            $colCheck = $this->conn->query("SHOW COLUMNS FROM `items` LIKE 'mrp'")->fetch();
+            if (!$colCheck) {
+                $this->conn->exec("ALTER TABLE `items` ADD COLUMN `mrp` DECIMAL(12,2) DEFAULT 0.00 AFTER `selling_price`");
+            }
+        } catch (Exception $e) {
+            error_log("initItemMrpColumn error: " . $e->getMessage());
+        }
+    }
+
+    public function initLocationPricingColumns()
+    {
+        try {
+            $cols = $this->conn->query("SHOW COLUMNS FROM `inventory_balances`")->fetchAll(PDO::FETCH_COLUMN);
+            if (!in_array('cost_price', $cols)) {
+                $this->conn->exec("ALTER TABLE `inventory_balances` ADD COLUMN `cost_price` DECIMAL(12,2) DEFAULT NULL AFTER `average_cost`");
+            }
+            if (!in_array('selling_price', $cols)) {
+                $this->conn->exec("ALTER TABLE `inventory_balances` ADD COLUMN `selling_price` DECIMAL(12,2) DEFAULT NULL AFTER `cost_price`");
+            }
+            if (!in_array('mrp', $cols)) {
+                $this->conn->exec("ALTER TABLE `inventory_balances` ADD COLUMN `mrp` DECIMAL(12,2) DEFAULT NULL AFTER `selling_price`");
+            }
+        } catch (Exception $e) {
+            error_log("initLocationPricingColumns error: " . $e->getMessage());
+        }
+    }
+
+    public function initExpensesTableFix()
+    {
+        try {
+            $this->conn->exec("ALTER TABLE `expenses` MODIFY COLUMN `tax_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00");
+        } catch (Exception $e) {
+            error_log("initExpensesTableFix error: " . $e->getMessage());
         }
     }
 
@@ -411,7 +471,7 @@ function get_active_locations(): array
     if ($loc_list === null) {
         try {
             $db = db();
-            $loc_list = $db->fetchAll("SELECT id, name, type, is_default FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY is_default DESC, name ASC");
+            $loc_list = $db->fetchAll("SELECT id, name, code, type, is_default FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY is_default DESC, name ASC");
         } catch (Exception $e) {
             $loc_list = [];
         }

@@ -21,12 +21,11 @@ try {
     $pdo->beginTransaction();
 
     $id = $_POST['id'] ?? null;
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
+    $id = $_POST['id'] ?? null;
     $txn_number = $_POST['txn_number'] ?? '';
-    if ($id) {
-        $db_txn = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id]);
-        if ($db_txn) {
-            $txn_number = $db_txn['txn_number'];
-        }
+    if (empty($txn_number)) {
+        $txn_number = getNextTransactionNumber('journal_entry', $location_id);
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
     $memo = $_POST['memo'] ?? '';
@@ -86,6 +85,10 @@ try {
         if ($amount == 0)
             continue;
 
+        $raw_ptype = !empty($line_party_types[$idx]) ? trim($line_party_types[$idx]) : null;
+        $ptype = in_array($raw_ptype, ['customer', 'vendor', 'user'], true) ? $raw_ptype : null;
+        $pid = !empty($line_party_ids[$idx]) ? trim($line_party_ids[$idx]) : null;
+
         $db->execute(
             "INSERT INTO journal_entries
                 (id, header_id, account_id, entry_type, amount, memo, party_type, party_id, entry_date, fiscal_period, fiscal_year, created_by)
@@ -97,8 +100,8 @@ try {
                 $type,
                 $amount,
                 $line_memos[$idx] ?? $memo,
-                $line_party_types[$idx] ?? null,
-                $line_party_ids[$idx] ?? null,
+                $ptype,
+                $pid,
                 $txn_date,
                 $fiscal['period'],
                 $fiscal['year'],
@@ -144,11 +147,13 @@ try {
 
     $pdo->commit();
     clear_dashboard_cache();
-    echo json_encode(['status' => 'success', 'message' => 'Journal Entry saved successfully.', 'id' => $id]);
+    http_response_code(200);
+    echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Journal Entry saved successfully.', 'id' => $id]);
     exit;
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction())
         $pdo->rollBack();
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;
 }

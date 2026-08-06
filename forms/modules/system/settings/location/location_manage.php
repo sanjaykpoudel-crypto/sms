@@ -36,12 +36,20 @@ $location_types = [
 
         <div class="ns-section-title">Primary Information</div>
         <div class="ns-form-row">
-            <div style="flex: 1;">
+            <div style="flex: 2;">
                 <div class="ns-form-group">
                     <label class="ns-label">Location Name *</label>
                     <input type="text" name="name" class="ns-input"
                         value="<?php echo htmlspecialchars($data['name'] ?? ''); ?>"
                         placeholder="e.g. Main Warehouse, Retail Store A" required>
+                </div>
+            </div>
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Short Code / Code</label>
+                    <input type="text" name="code" class="ns-input"
+                        value="<?php echo htmlspecialchars($data['code'] ?? ''); ?>"
+                        placeholder="e.g. GOK, HOUS, WH01">
                 </div>
             </div>
             <div style="flex: 1;">

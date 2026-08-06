@@ -8,6 +8,14 @@ if ($id) {
     $data = $db->fetchOne("SELECT * FROM items WHERE id = ?", [$id]);
 }
 $accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$locations = $db->fetchAll("SELECT * FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY name ASC");
+$loc_prices = [];
+if ($id) {
+    $rows = $db->fetchAll("SELECT location_id, cost_price, selling_price, mrp FROM inventory_balances WHERE item_id = ?", [$id]);
+    foreach ($rows as $r) {
+        $loc_prices[$r['location_id']] = $r;
+    }
+}
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'New'; ?> Item</div>
@@ -115,6 +123,15 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM account
                     </div>
                 </div>
                 <div class="ns-form-group">
+                    <label class="ns-label">MRP (Max Retail Price)</label>
+                    <div style="position: relative;">
+                        <span style="position: absolute; left: 10px; top: 10px; color: #999;">Rs</span>
+                        <input type="number" step="0.01" name="mrp" class="ns-input"
+                            style="padding-left: 35px;" value="<?php echo $data['mrp'] ?? '0.00'; ?>"
+                            placeholder="0.00">
+                    </div>
+                </div>
+                <div class="ns-form-group">
                     <label class="ns-label">Tax Code <span class="ns-required">*</span></label>
                     <div style="display: flex; gap: 8px;">
                         <select name="tax_id" id="item-tax-select" class="ns-select" style="flex: 1;"
@@ -156,6 +173,45 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM account
                         style="height: 105px;"><?php echo htmlspecialchars($data['description'] ?? ''); ?></textarea>
                 </div>
             </div>
+        </div>
+
+        <div class="ns-section-title" style="margin-top: 25px;">Location-Specific Pricing & Costing (Optional Overrides)</div>
+        <p style="font-size: 12px; color: #64748b; margin-top: -10px; margin-bottom: 12px;">Leave empty to automatically use the default global base prices set above for that location.</p>
+        <div style="margin-bottom: 25px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #fff;">
+            <table class="ns-form-table" style="margin: 0; width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                        <th style="padding: 10px 15px; text-align: left; font-size: 12px; font-weight: 700; color: #475569; width: 30%;">LOCATION</th>
+                        <th style="padding: 10px 15px; text-align: right; font-size: 12px; font-weight: 700; color: #475569; width: 23%;">COST PRICE (RS)</th>
+                        <th style="padding: 10px 15px; text-align: right; font-size: 12px; font-weight: 700; color: #475569; width: 23%;">SELLING PRICE (RS)</th>
+                        <th style="padding: 10px 15px; text-align: right; font-size: 12px; font-weight: 700; color: #475569; width: 24%;">MRP (RS)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($locations as $loc): 
+                        $lp = $loc_prices[$loc['id']] ?? [];
+                        $c_val = isset($lp['cost_price']) && $lp['cost_price'] !== null ? number_format((float)$lp['cost_price'], 2, '.', '') : '';
+                        $s_val = isset($lp['selling_price']) && $lp['selling_price'] !== null ? number_format((float)$lp['selling_price'], 2, '.', '') : '';
+                        $m_val = isset($lp['mrp']) && $lp['mrp'] !== null ? number_format((float)$lp['mrp'], 2, '.', '') : '';
+                    ?>
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 10px 15px; vertical-align: middle;">
+                            <strong style="color: #1e293b; font-size: 13px;"><?php echo htmlspecialchars($loc['name']); ?></strong>
+                            <span style="font-size: 11px; color: #64748b; display: block;"><?php echo htmlspecialchars($loc['type'] ?? 'Location'); ?></span>
+                        </td>
+                        <td style="padding: 8px 15px;">
+                            <input type="number" step="0.01" name="loc_cost_price[<?php echo $loc['id']; ?>]" class="ns-input" style="text-align: right; width: 100%;" value="<?php echo $c_val; ?>" placeholder="Global Base">
+                        </td>
+                        <td style="padding: 8px 15px;">
+                            <input type="number" step="0.01" name="loc_selling_price[<?php echo $loc['id']; ?>]" class="ns-input" style="text-align: right; width: 100%;" value="<?php echo $s_val; ?>" placeholder="Global Base">
+                        </td>
+                        <td style="padding: 8px 15px;">
+                            <input type="number" step="0.01" name="loc_mrp[<?php echo $loc['id']; ?>]" class="ns-input" style="text-align: right; width: 100%;" value="<?php echo $m_val; ?>" placeholder="Global Base">
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
 
         <div class="ns-section-title">Accounting Configuration</div>
@@ -323,31 +379,20 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM account
         e.preventDefault();
         const form = this;
         const submitBtn = document.querySelector('button[form="item-form"]');
-        const originalText = submitBtn.innerHTML;
+        const originalText = submitBtn ? submitBtn.innerHTML : '';
 
-        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-        submitBtn.disabled = true;
+        if (submitBtn) {
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            submitBtn.disabled = true;
+        }
 
         const formData = new FormData(form);
-        const data = {};
-        formData.forEach((value, key) => {
-            data[key] = value;
-        });
-        data['is_active'] = form.querySelector('[name="is_inactive"]').checked ? 0 : 1;
-        delete data['is_inactive'];
+        const inactiveCheck = form.querySelector('[name="is_inactive"]');
+        formData.set('is_active', (inactiveCheck && inactiveCheck.checked) ? 0 : 1);
 
-        const payload = {
-            action: data.id ? 'update' : 'save',
-            table: 'items',
-            primary_key: 'id',
-            primary_value: data.id || null,
-            data: data
-        };
-
-        fetch('api/transaction_handler.php', {
+        fetch('api/save_item.php', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: formData
         })
             .then(r => r.json())
             .then(data => {
@@ -355,17 +400,21 @@ $accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM account
                     nsNotify(data.message);
                     setTimeout(() => {
                         window.location.href = '?page=master/item/view&id=' + data.id;
-                    }, 1500);
+                    }, 1000);
                 } else {
                     nsNotify(data.message || 'Error occurred while saving.', 'error');
-                    submitBtn.innerHTML = originalText;
-                    submitBtn.disabled = false;
+                    if (submitBtn) {
+                        submitBtn.innerHTML = originalText;
+                        submitBtn.disabled = false;
+                    }
                 }
             })
             .catch(err => {
                 nsNotify('Network error or server failed.', 'error');
-                submitBtn.innerHTML = originalText;
-                submitBtn.disabled = false;
+                if (submitBtn) {
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
             });
     });
 </script>

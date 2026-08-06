@@ -9,7 +9,7 @@ if($_settings->chk_flashdata('success')): ?>
 		<h3 class="card-title">Manage All Transaction Reference Codes</h3>
 		<div class="card-tools">
 			<button class="btn btn-flat btn-primary btn-sm" form="manage-all-ref-codes"><span class="fas fa-save"></span> Save All Changes</button>
-			<a href="./?page=system/settings/ref_codes" class="btn btn-flat btn-default btn-sm"><span class="fas fa-angle-left"></span> Back to List</a>
+			<a href="./?page=system/ref_codes/manage" class="btn btn-flat btn-default btn-sm"><span class="fas fa-angle-left"></span> Back to List</a>
 		</div>
 	</div>
 	<div class="card-body">
@@ -79,7 +79,7 @@ if($_settings->chk_flashdata('success')): ?>
 				},
 				success:function(resp){
 					if(typeof resp== 'object' && resp.status == 'success'){
-						location.href = "./?page=system/settings/ref_codes";
+						location.href = "./?page=system/ref_codes/manage";
 					}else{
 						alert_toast("An error occured.",'error');
 						end_loader();

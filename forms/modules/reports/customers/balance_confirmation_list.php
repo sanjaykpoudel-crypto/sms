@@ -502,7 +502,7 @@ if ($party_id && !$is_bulk) {
         <div>
             <label class="ns-label" style="font-weight: 700; font-size: 11px; text-transform: uppercase;"><?php echo $confirmation_type === 'customer' ? 'Select Customer *' : 'Select Supplier *'; ?></label>
             <select name="party_id" class="ns-select" required style="width: 100%;">
-                <option value="">-- Select Party --</option>
+                <option value="" disabled <?php echo empty($party_id) ? 'selected' : ''; ?> hidden>-- Select Party --</option>
                 <?php foreach ($parties as $p): ?>
                     <option value="<?php echo htmlspecialchars($p['id']); ?>" <?php echo $party_id === $p['id'] ? 'selected' : ''; ?>>
                         <?php echo htmlspecialchars($p['name'] . ($p['code'] ? ' (' . $p['code'] . ')' : '')); ?>

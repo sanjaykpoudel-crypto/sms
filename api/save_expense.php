@@ -51,7 +51,7 @@ try {
 
     if (empty($id)) {
         $id = generate_uuid();
-        $txn_number = getNextTransactionNumber('expense');
+        $txn_number = getNextTransactionNumber('expense', $location_id);
         
         $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, party_id, party_type, net_amount, created_by, location_id) 
                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
@@ -73,9 +73,9 @@ try {
     }
 
     // Insert into expenses table
-    $db->execute("INSERT INTO expenses (id, header_id, expense_account_id, paid_from_account_id, description, amount, expense_category, expense_date) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
-        generate_uuid(), $id, $expense_account_id, $paid_from_account_id, $memo, $net_amount, $expense_category, $txn_date
+    $db->execute("INSERT INTO expenses (id, header_id, expense_account_id, paid_from_account_id, description, amount, tax_amount, expense_category, expense_date) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        generate_uuid(), $id, $expense_account_id, $paid_from_account_id, $memo, $net_amount, 0.00, $expense_category, $txn_date
     ]);
 
     // GL Entries
@@ -92,13 +92,15 @@ try {
     $pdo->commit();
     clear_dashboard_cache();
     ob_end_clean();
+    http_response_code(200);
     header('Content-Type: application/json');
-    echo json_encode(['status' => 'success', 'message' => 'Expense has been recorded successfully.', 'id' => $id]);
+    echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Expense has been recorded successfully.', 'id' => $id]);
     exit;
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     ob_end_clean();
+    http_response_code(400);
     header('Content-Type: application/json');
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;
 }

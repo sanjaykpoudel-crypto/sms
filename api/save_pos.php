@@ -54,7 +54,7 @@ try {
     
     $items           = $data['items']    ?? [];
     $payments        = $data['payments'] ?? [];
-    $customer_id     = $data['customer_id'] ?? null;
+    $customer_id     = !empty($data['customer_id']) ? $data['customer_id'] : get_default_pos_customer_id();
 
     $fiscal = calculate_fiscal_info($txn_date);
 
@@ -82,33 +82,27 @@ try {
         $pos_id = generate_uuid();
     }
 
+    $user_id = $_SESSION['user_id'] ?? '';
+    $user_info = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$user_id]);
+    $is_admin = ($user_info && strtolower($user_info['role'] ?? '') === 'admin');
+
+    $location_id = $data['location_id'] ?? ($_POST['location_id'] ?? '');
+    if (!$is_admin || empty($location_id)) {
+        $user_loc = $user_info['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '');
+        if (!empty($user_loc)) {
+            $location_id = $user_loc;
+        }
+    }
+    if (empty($location_id)) {
+        $location_id = get_user_default_location_id();
+    }
+
     // Generate unique POS invoice number for individual POS log
     if ($is_update && $old_invoice_no) {
         $txn_number = $old_invoice_no;
     } else {
-        $txn_number = 'POS-' . date('Ymd', strtotime($txn_date)) . '-' . mt_rand(1000, 9999);
-    }
-
-    // 2. Resolve Customer (Walk-in fallback)
-    if (!$customer_id) {
-        $default_customer = get_accounting_preference('default_customer_id');
-        if ($default_customer) {
-            $check = $db->fetchOne("SELECT id FROM customers WHERE id = ?", [$default_customer]);
-            if ($check) $customer_id = $default_customer;
-        }
-        if (!$customer_id) {
-            $first = $db->fetchOne("SELECT id FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY created_at ASC LIMIT 1");
-            if ($first) $customer_id = $first['id'];
-        }
-    }
-
-    if (!$customer_id) {
-        throw new Exception("No active customer found. Please create a 'Walk-in Customer' first.");
-    }
-
-    $location_id = $_POST['location_id'] ?? ($data['location_id'] ?? '');
-    if (empty($location_id)) {
-        $location_id = get_user_default_location_id();
+        $txn_number = getNextTransactionNumber('pos_entry', $location_id);
+        incrementTransactionNumber('pos_entry');
     }
 
     // 3. Save or Update pos_entry
@@ -159,7 +153,27 @@ try {
             [generate_uuid(), $pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
         );
 
-        // Real-time Stock Sync per Location
+        // Directly deduct stock from inventory_balances for this specific location
+        $bal_row = $db->fetchOne("SELECT id, quantity_on_hand, available_qty FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
+        if ($bal_row) {
+            $new_qty = max(0, (float)$bal_row['quantity_on_hand'] - $qty);
+            $new_avail = max(0, (float)$bal_row['available_qty'] - $qty);
+            $db->execute(
+                "UPDATE inventory_balances SET quantity_on_hand = ?, available_qty = ?, last_updated = NOW() WHERE id = ?",
+                [$new_qty, $new_avail, $bal_row['id']]
+            );
+        } else {
+            // Create a balance row for this location (negative stock — records the deduction)
+            $db->execute(
+                "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, NOW())",
+                [generate_uuid(), $item_id, $location_id, -$qty, -$qty]
+            );
+        }
+
+        // Also update items.current_stock (global)
+        $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
+
+        // Real-time Stock Sync per Location (recomputes all-location figures from transaction history)
         sync_and_get_item_inventory_balances($db, $item_id);
     }
 
@@ -219,17 +233,24 @@ try {
     $summary_header = $db->fetchOne("SELECT id FROM transaction_headers WHERE txn_number = ? AND txn_type = 'customer_invoice'", [$summary_invoice_no]);
     $summary_header_id = $summary_header ? $summary_header['id'] : null;
 
+    http_response_code(200);
     header('Content-Type: application/json');
     echo json_encode([
         'status' => 'success',
+        'code' => 200,
         'message' => 'POS Transaction saved successfully.',
         'txn_number' => $txn_number,
         'pos_id' => $pos_id,
-        'invoice_id' => $summary_header_id // Return the daily summary invoice header ID
+        'invoice_id' => $summary_header_id
     ]);
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
+    http_response_code(400);
     header('Content-Type: application/json');
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+    echo json_encode([
+        'status' => 'error',
+        'code' => 400,
+        'message' => $e->getMessage()
+    ]);
 }

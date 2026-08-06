@@ -88,6 +88,7 @@
     <div class="mst-categories">
 
         <!-- Parties & Relationships -->
+        <?php if (can_access_feature('customers') || can_access_feature('vendors') || can_access_feature('users')): ?>
         <div class="mst-category-card">
             <div class="mst-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #ef4444, #dc2626);">
@@ -99,6 +100,7 @@
                 </div>
             </div>
             <div class="mst-links-list">
+                <?php if (can_access_feature('customers')): ?>
                 <a href="?page=master/customer" class="mst-link-item">
                     <span class="mst-dot" style="background:#ef4444;"></span>
                     <span>
@@ -107,6 +109,8 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('vendors')): ?>
                 <a href="?page=master/vendor" class="mst-link-item">
                     <span class="mst-dot" style="background:#8b5cf6;"></span>
                     <span>
@@ -115,6 +119,8 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('users')): ?>
                 <a href="?page=system/users" class="mst-link-item">
                     <span class="mst-dot" style="background:#3b82f6;"></span>
                     <span>
@@ -123,10 +129,13 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
             </div>
         </div>
+        <?php endif; ?>
 
         <!-- Inventory & Products -->
+        <?php if (can_access_feature('items')): ?>
         <div class="mst-category-card">
             <div class="mst-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
@@ -148,8 +157,10 @@
                 </a>
             </div>
         </div>
+        <?php endif; ?>
 
         <!-- Accounting & Finance -->
+        <?php if (can_access_feature('accounts') || can_access_feature('opening_balances')): ?>
         <div class="mst-category-card">
             <div class="mst-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #10b981, #059669);">
@@ -161,6 +172,7 @@
                 </div>
             </div>
             <div class="mst-links-list">
+                <?php if (can_access_feature('accounts')): ?>
                 <a href="?page=master/account" class="mst-link-item">
                     <span class="mst-dot" style="background:#10b981;"></span>
                     <span>
@@ -169,6 +181,8 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('opening_balances')): ?>
                 <a href="?page=master/account/opening_balance" class="mst-link-item">
                     <span class="mst-dot" style="background:#059669;"></span>
                     <span>
@@ -177,10 +191,13 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
             </div>
         </div>
+        <?php endif; ?>
 
         <!-- System & Configuration -->
+        <?php if (can_access_feature('company_info') || can_access_feature('fiscal_years') || can_access_feature('ref_codes')): ?>
         <div class="mst-category-card">
             <div class="mst-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #64748b, #475569);">
@@ -192,6 +209,7 @@
                 </div>
             </div>
             <div class="mst-links-list">
+                <?php if (can_access_feature('company_info')): ?>
                 <a href="?page=system/company/manage" class="mst-link-item">
                     <span class="mst-dot" style="background:#64748b;"></span>
                     <span>
@@ -200,6 +218,8 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('fiscal_years')): ?>
                 <a href="?page=system/fiscal_years" class="mst-link-item">
                     <span class="mst-dot" style="background:#475569;"></span>
                     <span>
@@ -208,6 +228,8 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('ref_codes')): ?>
                 <a href="?page=system/ref_codes/manage" class="mst-link-item">
                     <span class="mst-dot" style="background:#0284c7;"></span>
                     <span>
@@ -216,8 +238,10 @@
                     </span>
                     <i class="fas fa-arrow-right mst-arrow"></i>
                 </a>
+                <?php endif; ?>
             </div>
         </div>
+        <?php endif; ?>
 
     </div>
 </div>

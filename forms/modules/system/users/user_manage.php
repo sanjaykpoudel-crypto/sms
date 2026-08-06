@@ -25,7 +25,7 @@ if ($id) {
 <?php endif; ?>
 
 <div class="ns-form-container">
-    <form id="user-form" method="POST" action="api/save_user.php">
+    <form id="user-form" method="POST" action="api/save_user.php" enctype="multipart/form-data">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
         
         <div class="ns-section-title">User Information</div>
@@ -43,7 +43,7 @@ if ($id) {
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Email *</label>
-                    <input type="email" name="email" class="ns-input" value="<?php echo htmlspecialchars($data['email'] ?? ''); ?>" required>
+                    <input type="email" name="email" class="ns-input" value="<?php echo htmlspecialchars($data['email'] ?? ''); ?>" required placeholder="e.g. user@domain.com" pattern="[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" title="Please enter a valid email address (e.g. name@domain.com)">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Password <?php echo $id ? '' : '*'; ?></label>
@@ -55,13 +55,87 @@ if ($id) {
             </div>
         </div>
 
+        <div class="ns-section-title">Employee Details</div>
+        <div class="ns-form-row">
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Phone Number</label>
+                    <input type="tel" name="phone" class="ns-input" value="<?php echo htmlspecialchars($data['phone'] ?? ''); ?>" placeholder="e.g. +977 9801234567" pattern="^[0-9+\-\s()]{7,20}$" title="Please enter a valid phone number (e.g. +977 9801234567 or 9801234567)">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Designation / Title</label>
+                    <input type="text" name="designation" class="ns-input" value="<?php echo htmlspecialchars($data['designation'] ?? ''); ?>" placeholder="e.g. Senior Store Manager">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Department</label>
+                    <input type="text" name="department" class="ns-input" value="<?php echo htmlspecialchars($data['department'] ?? ''); ?>" placeholder="e.g. Inventory & Sales">
+                </div>
+            </div>
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Date of Joining</label>
+                    <input type="date" name="joining_date" class="ns-input" value="<?php echo htmlspecialchars($data['joining_date'] ?? ''); ?>">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Emergency Contact</label>
+                    <input type="text" name="emergency_contact" class="ns-input" value="<?php echo htmlspecialchars($data['emergency_contact'] ?? ''); ?>" placeholder="e.g. Relative / Phone (+977 98...)">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Address</label>
+                    <input type="text" name="address" class="ns-input" value="<?php echo htmlspecialchars($data['address'] ?? ''); ?>" placeholder="e.g. Kathmandu, Nepal">
+                </div>
+            </div>
+        </div>
+
+        <div class="ns-section-title">Photograph & Citizenship Documents</div>
+        <div class="ns-form-row">
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Employee Photograph (Avatar)</label>
+                    <input type="file" name="avatar" class="ns-input" accept="image/*">
+                    <?php if (!empty($data['avatar']) && file_exists(__DIR__ . '/../../../../' . $data['avatar'])): ?>
+                        <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
+                            <img src="<?php echo htmlspecialchars($data['avatar']); ?>" alt="Photo" style="width: 50px; height: 50px; object-fit: cover; border-radius: 50%; border: 2px solid #cbd5e1;">
+                            <span style="font-size: 12px; color: #16a34a;"><i class="fas fa-check-circle"></i> Photo Uploaded</span>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Citizenship Card (Front)</label>
+                    <input type="file" name="citizenship_front" class="ns-input" accept="image/*,.pdf">
+                    <?php if (!empty($data['citizenship_front']) && file_exists(__DIR__ . '/../../../../' . $data['citizenship_front'])): ?>
+                        <div style="margin-top: 8px;">
+                            <a href="<?php echo htmlspecialchars($data['citizenship_front']); ?>" target="_blank" style="font-size: 12px; color: var(--ns-primary); text-decoration: none; font-weight: 600;">
+                                <i class="fas fa-file-image"></i> View Front Document
+                            </a>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div style="flex: 1;">
+                <div class="ns-form-group">
+                    <label class="ns-label">Citizenship Card (Back)</label>
+                    <input type="file" name="citizenship_back" class="ns-input" accept="image/*,.pdf">
+                    <?php if (!empty($data['citizenship_back']) && file_exists(__DIR__ . '/../../../../' . $data['citizenship_back'])): ?>
+                        <div style="margin-top: 8px;">
+                            <a href="<?php echo htmlspecialchars($data['citizenship_back']); ?>" target="_blank" style="font-size: 12px; color: var(--ns-primary); text-decoration: none; font-weight: 600;">
+                                <i class="fas fa-file-image"></i> View Back Document
+                            </a>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
         <div class="ns-section-title">Role, Location & Status</div>
         <div class="ns-form-row">
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">User Role *</label>
-                    <select name="role" class="ns-select" required>
-                        <option value="">-- Select Role --</option>
+                    <select name="role" id="user_role_select" class="ns-select" required>
+                        <option value="" disabled <?php echo empty($data['role']) ? 'selected' : 'hidden'; ?>>-- Select Role --</option>
                         <?php 
                         $roles_list = $db->fetchAll("SELECT role_code, role_name FROM roles WHERE is_active = 1 ORDER BY role_name ASC");
                         if (empty($roles_list)) {
@@ -79,6 +153,16 @@ if ($id) {
                             </option>
                         <?php endforeach; ?>
                     </select>
+                    <script>
+                        document.getElementById('user_role_select')?.addEventListener('focus', function() {
+                            const opt = this.querySelector('option[value=""]');
+                            if (opt) opt.remove();
+                        });
+                        document.getElementById('user_role_select')?.addEventListener('click', function() {
+                            const opt = this.querySelector('option[value=""]');
+                            if (opt && this.value !== "") opt.remove();
+                        });
+                    </script>
                 </div>
             </div>
             <div style="flex: 1;">

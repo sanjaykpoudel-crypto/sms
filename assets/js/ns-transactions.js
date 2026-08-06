@@ -163,10 +163,13 @@ function nsDeleteTransaction(id, redirectUrl) {
         .then(r => r.json())
         .then(data => {
             if (data.status === 'success') {
-                nsNotify('Transaction deleted successfully.');
+                const msg = data.message || 'Transaction deleted successfully.';
+                sessionStorage.setItem('ns_flash_msg', msg);
+                sessionStorage.setItem('ns_flash_type', 'success');
+                nsNotify(msg, 'success');
                 setTimeout(() => { 
                     window.location.href = redirectUrl || '?page=transactions'; 
-                }, 1500);
+                }, 400);
             } else {
                 nsNotify(data.message || 'Delete failed', 'error');
             }

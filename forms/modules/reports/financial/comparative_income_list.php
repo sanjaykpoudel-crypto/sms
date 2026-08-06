@@ -53,7 +53,7 @@ $this_bal_rows = $db->fetchAll("
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE h.txn_date BETWEEN ? AND ?
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL {$loc_sql}
+      AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     GROUP BY j.account_id
 ", [$date_from_this, $date_to_this]);
 
@@ -72,7 +72,7 @@ if ($prev_fy) {
         JOIN transaction_headers h ON j.header_id = h.id
         WHERE h.txn_date BETWEEN ? AND ?
           AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.source IS NULL {$loc_sql}
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
         GROUP BY j.account_id
     ", [$date_from_prev, $date_to_prev]);
 

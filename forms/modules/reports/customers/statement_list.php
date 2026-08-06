@@ -1,8 +1,9 @@
 <?php
 require_once __DIR__ . '/../rpt_helpers.php';
+$fy          = rpt_get_current_fiscal_year_dates();
 $customer_id = $_GET['customer_id'] ?? '';
-$from_date = $_GET['from_date'] ?? date('Y-m-01');
-$to_date = $_GET['to_date'] ?? date('Y-m-d');
+$from_date   = $_GET['from_date']   ?? $fy['start_date'];
+$to_date     = $_GET['to_date']     ?? $fy['end_date'];
 
 $customers_list = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $customer_options = ['' => '-- Select Customer --'];
@@ -25,11 +26,40 @@ if ($customer_id) {
                                  WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
                                    AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
 
-    $pay_before = $db->fetchOne("SELECT SUM(p.amount) as total FROM payments p
-                                JOIN transaction_headers th ON p.header_id = th.id
-                                WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
+    $pay_before = $db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total 
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0
+          AND th.id NOT IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $from_date])['total'] ?? 0;
     
-    $opening_balance = ($inv_before + $jour_before) - $pay_before;
+    $refund_before = $db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total 
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0
+          AND th.id IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $from_date])['total'] ?? 0;
+
+    $cm_before = $db->fetchOne("SELECT SUM(COALESCE(cm.total_amount, th.net_amount)) as total 
+                                FROM transaction_headers th
+                                LEFT JOIN credit_memos cm ON cm.header_id = th.id 
+                                WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                  AND th.txn_type IN ('credit_memo', 'Credit Memo')
+                                  AND th.txn_date < ? 
+                                  AND th.status NOT IN ('void', 'voided', 'draft') 
+                                  AND th.is_deleted = 0", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+
+    $opening_balance = ($inv_before + $jour_before + $refund_before) - $pay_before - $cm_before;
 
     // 2. Get Invoices in range
     $invoices = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Invoice' as type, ci.total_amount as debit, 0 as credit, th.memo
@@ -48,14 +78,59 @@ if ($customer_id) {
                                  AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
                                GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $customer_id, $from_date, $to_date]);
 
-    // 3. Get Payments in range
-    $payments = $db->fetchAll("SELECT p.payment_date as date, th.txn_number as number, 'Payment' as type, 0 as debit, SUM(p.amount) as credit, th.memo
-                               FROM payments p
-                               JOIN transaction_headers th ON p.header_id = th.id
-                               WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0
-                               GROUP BY p.header_id", [$customer_id, $from_date, $to_date]);
+    // 3. Get Payments in range (Money IN from customer)
+    $payments = $db->fetchAll("
+        SELECT p.payment_date as date, th.txn_number as number, 'Payment' as type, 
+               0 as debit, p.amount as credit, th.memo, '' as applied_to_ref
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0
+          AND th.id NOT IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $from_date, $to_date]);
 
-    $statement_data = array_merge($invoices, $journals, $payments);
+    // 3b. Get Cash Refunds / Returns in range (Money OUT to customer for Credit Memo)
+    $refund_payments = $db->fetchAll("
+        SELECT p.payment_date as date, th.txn_number as number, 'Customer Refund' as type, 
+               p.amount as debit, 0 as credit, th.memo,
+               (
+                   SELECT GROUP_CONCAT(DISTINCT app_th.txn_number SEPARATOR ', ')
+                   FROM transaction_links app_tl
+                   JOIN transaction_headers app_th ON app_tl.child_id = app_th.id
+                   WHERE app_tl.parent_id = th.id
+               ) as applied_to_ref
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0
+          AND th.id IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $from_date, $to_date]);
+
+    // 3c. Get Credit Memos in range
+    $credit_memos = $db->fetchAll("SELECT th.id as header_id, th.txn_date as date, th.txn_number as number, 'Credit Memo' as type, 
+                                          0 as debit, COALESCE(cm.total_amount, th.net_amount) as credit, th.memo,
+                                          th.status, COALESCE(cm.remaining_credit, 0) as remaining_credit,
+                                          (
+                                              SELECT GROUP_CONCAT(DISTINCT app_th.txn_number SEPARATOR ', ')
+                                              FROM transaction_links tl
+                                              JOIN transaction_headers app_th ON tl.child_id = app_th.id
+                                              WHERE tl.parent_id = th.id AND tl.link_type LIKE 'credit_memo_apply:%'
+                                          ) as applied_to_ref
+                                   FROM transaction_headers th
+                                   LEFT JOIN credit_memos cm ON cm.header_id = th.id
+                                   WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                     AND th.txn_type IN ('credit_memo', 'Credit Memo')
+                                     AND th.txn_date BETWEEN ? AND ? 
+                                     AND th.status NOT IN ('void', 'voided', 'draft') 
+                                     AND th.is_deleted = 0", [$customer_id, $customer_id, $from_date, $to_date]);
+
+    $statement_data = array_merge($invoices, $journals, $payments, $refund_payments, $credit_memos);
     usort($statement_data, function($a, $b) {
         return strtotime($a['date']) - strtotime($b['date']);
     });
@@ -91,7 +166,7 @@ if ($customer_id) {
 
 $wa_btn = '';
 if ($customer_id) {
-    $wa_btn = '<button type="button" class="ns-btn" style="background: #25D366; color: white; border: none; font-weight: 600; padding: 5px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;" onclick="openWaModal()"><i class="fab fa-whatsapp" style="font-size: 14px;"></i> Send via WhatsApp</button>';
+    $wa_btn = '<button type="button" class="ns-btn" style="background: #25D366; color: white; border: none; padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.15s ease;" title="Send via WhatsApp" onclick="openWaModal()"><i class="fab fa-whatsapp" style="font-size: 18px;"></i></button>';
 }
 
 rpt_filter_bar('Customer Statement', [
@@ -230,8 +305,29 @@ rpt_filter_bar('Customer Statement', [
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($row['date'])); ?></td>
                         <td style="font-family: monospace;"><?php echo $row['number']; ?></td>
-                        <td><span class="ns-badge <?php echo $row['type'] == 'Invoice' ? 'ns-badge-primary' : 'ns-badge-success'; ?>"><?php echo $row['type']; ?></span></td>
-                        <td style="font-size: 12px; color: #666;"><?php echo htmlspecialchars($row['memo'] ?? ''); ?></td>
+                        <td>
+                            <?php
+                            $badgeClass = 'ns-badge-secondary';
+                            if ($row['type'] == 'Invoice') {
+                                $badgeClass = 'ns-badge-primary';
+                            } elseif ($row['type'] == 'Payment') {
+                                $badgeClass = 'ns-badge-success';
+                            } elseif ($row['type'] == 'Credit Memo') {
+                                $badgeClass = 'ns-badge-warning';
+                            } elseif ($row['type'] == 'Customer Refund' || $row['type'] == 'Refund') {
+                                $badgeClass = 'ns-badge-danger';
+                            }
+                            ?>
+                            <span class="ns-badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($row['type']); ?></span>
+                        </td>
+                        <td style="font-size: 12px; color: #666;">
+                            <?php 
+                            echo htmlspecialchars($row['memo'] ?? '');
+                            if (!empty($row['applied_to_ref'])) {
+                                echo ($row['memo'] ? ' | ' : '') . '<span style="color: #0369a1; font-weight: 600;">Applied To: ' . htmlspecialchars($row['applied_to_ref']) . '</span>';
+                            }
+                            ?>
+                        </td>
                         <td style="text-align: right;"><?php echo $row['debit'] > 0 ? number_format($row['debit'], 2) : '-'; ?></td>
                         <td style="text-align: right; color: #27ae60;"><?php echo $row['credit'] > 0 ? number_format($row['credit'], 2) : '-'; ?></td>
                         <td style="text-align: right; font-weight: 600;"><?php echo number_format($running_balance, 2); ?></td>

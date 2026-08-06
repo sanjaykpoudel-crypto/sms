@@ -19,8 +19,8 @@ $rows = $db->fetchAll("
         i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
         i.cost_price, i.selling_price, i.item_category as category_id,
         COALESCE(SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale') THEN -l.quantity 
+            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN l.quantity 
+            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -l.quantity 
             ELSE 0 
         END), 0) AS stock_qty
     FROM items i

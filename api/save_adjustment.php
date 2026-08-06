@@ -84,7 +84,7 @@ try {
     if (!$id) {
         $id = generate_uuid();
         $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, location_id, created_by) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'account', ?, ?, ?)", [
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)", [
             $id, $txn_number, 'inventory_adjustment', $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
             $status, $txn_number, $memo, $net_amount, $adjustment_account_id, $first_location_id, $_SESSION['user_id']
@@ -123,8 +123,26 @@ try {
             generate_uuid(), $id, $item_id, $inventory_account_id, $line_loc, $idx + 1, $qty, $rate, $line_total, $rate
         ]);
 
-        // Update item stock and cost price
+        // Update item stock and cost price on items master
         $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
+
+        // Update cost_price in inventory_balances for the specific adjustment location
+        if ($line_loc && $rate > 0) {
+            $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $line_loc]);
+            if ($bal_exists) {
+                $db->execute(
+                    "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
+                    [$rate, $rate, $item_id, $line_loc]
+                );
+            } else {
+                $db->execute(
+                    "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, NOW())",
+                    [generate_uuid(), $item_id, $line_loc, $rate, $rate]
+                );
+            }
+        }
+
+        // Sync all-location stock figures from transaction history
         sync_and_get_item_inventory_balances($db, $item_id);
 
         // Journal Entries impact for the item's inventory asset account
@@ -161,11 +179,13 @@ try {
     $pdo->commit();
     clear_dashboard_cache();
     ob_end_clean();
-    echo json_encode(['status' => 'success', 'message' => 'Inventory Adjustment has been saved successfully.', 'id' => $id]);
+    http_response_code(200);
+    echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Inventory Adjustment has been saved successfully.', 'id' => $id]);
     exit;
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     ob_end_clean();
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;
 }

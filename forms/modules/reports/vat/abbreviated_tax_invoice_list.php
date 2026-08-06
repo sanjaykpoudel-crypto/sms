@@ -1,9 +1,11 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$from_date = $_GET['from_date'] ?? date('Y-m-01');
-$to_date = $_GET['to_date'] ?? date('Y-m-d');
+$fy        = rpt_get_current_fiscal_year_dates();
+$from_date = $_GET['from_date'] ?? $fy['start_date'];
+$to_date   = $_GET['to_date']   ?? $fy['end_date'];
 $payment_method = $_GET['payment_method'] ?? '';
 
 $sql = "
@@ -100,8 +102,8 @@ $tot_net = 0;
                 </tr>
                 <?php else: ?>
                 <?php foreach ($rows as $idx => $r): 
-                    $net = (float)$r['total_amount'];
-                    $disc = (float)$r['discount'];
+                    $net = (float)($r['grand_total'] ?? $r['total_amount'] ?? 0);
+                    $disc = (float)($r['discount_amount'] ?? $r['discount'] ?? 0);
                     $gross = $net + $disc;
                     $taxable = round($net / 1.13, 2);
                     $vat = round($net - $taxable, 2);

@@ -663,170 +663,208 @@ if ($is_logged_in) {
 
         <!-- Navigation Bar -->
         <nav class="ns-nav">
+            <?php if (can_access_feature('activity')): ?>
             <div class="ns-nav-item">
                 <i class="fas fa-tasks" style="margin-right: 8px;"></i> Activities <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="?page=activity/calendar" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i>
-                        Calendar</a>
-                    <a href="?page=activity&type=task" class="ns-dropdown-item"><i class="fas fa-check-square"></i>
-                        Tasks</a>
+                    <?php if (can_edit_feature('activity')): ?>
+                    <a href="?page=activity/activity_manage" class="ns-dropdown-item"><i class="fas fa-plus-circle"></i> New Activity / Task</a>
+                    <?php endif; ?>
+                    <a href="?page=activity/calendar" class="ns-dropdown-item"><i class="fas fa-calendar-alt"></i> Calendar</a>
+                    <a href="?page=activity&type=task" class="ns-dropdown-item"><i class="fas fa-check-square"></i> Tasks</a>
                     <a href="?page=activity&type=event" class="ns-dropdown-item"><i class="fas fa-bullhorn"></i> Events</a>
                     <a href="?page=activity&type=meeting" class="ns-dropdown-item"><i class="fas fa-users"></i> Meetings</a>
-                    <a href="?page=activity&type=phone_call" class="ns-dropdown-item"><i class="fas fa-phone-alt"></i> Phone
-                        Calls</a>
+                    <a href="?page=activity&type=phone_call" class="ns-dropdown-item"><i class="fas fa-phone-alt"></i> Phone Calls</a>
                     <a href="?page=activity" class="ns-dropdown-item"><i class="fas fa-list"></i> All Activities</a>
                 </div>
             </div>
+            <?php endif; ?>
 
             <a href="?page=home" class="ns-nav-item" title="Dashboard" style="padding: 0 15px;"><i
                     class="fas fa-home"></i></a>
 
+            <?php if (can_access_feature('pos') || can_access_feature('invoice') || can_access_feature('credit_memo') || can_access_feature('bill') || can_access_feature('bill_credit') || can_access_feature('payment') || can_access_feature('expense') || can_access_feature('journal') || can_access_feature('cash_denom') || can_access_feature('adjustment') || can_access_feature('transfer') || can_access_feature('inventory_transfer')): ?>
             <div class="ns-nav-item">
                 <i class="fas fa-exchange-alt" style="margin-right: 8px;"></i> <a
                     href="?page=transactions/transactions_list"
                     style="color:inherit; text-decoration:none;">Transactions</a> <i class="fas fa-caret-down"
                     style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
+                    <!-- POS -->
+                    <?php if (can_access_feature('pos')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-cash-register"></i> POS <i class="fas fa-caret-right"
+                        <i class="fas fa-cash-register" style="color: #f59e0b;"></i> POS <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/pos/manage" class="ns-sub-dropdown-item">New POS</a>
-                            <a href="?page=transactions/pos" class="ns-sub-dropdown-item">POS List</a>
+                            <?php if (can_edit_feature('pos')): ?>
+                            <a href="?page=transactions/pos/manage" class="ns-sub-dropdown-item"><i class="fas fa-plus-circle"></i> New POS Counter Sale</a>
+                            <?php endif; ?>
+                            <a href="?page=transactions/pos" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> POS Register</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+
+                    <!-- Sales -->
+                    <?php if (can_access_feature('invoice') || can_access_feature('credit_memo')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-file-invoice"></i> Bills <i class="fas fa-caret-right"
+                        <i class="fas fa-file-invoice-dollar" style="color: #10b981;"></i> Sales <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/bill/manage" class="ns-sub-dropdown-item">New Bill</a>
-                            <a href="?page=transactions/bill" class="ns-sub-dropdown-item">Bill List</a>
+                            <?php if (can_access_feature('invoice') && can_edit_feature('invoice')): ?>
+                            <a href="?page=transactions/invoice/manage" class="ns-sub-dropdown-item"><i class="fas fa-plus-circle"></i> New Sales Invoice</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('invoice')): ?>
+                            <a href="?page=transactions/invoice" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Sales Invoice Register</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
+                            <a href="?page=transactions/payment/manage" class="ns-sub-dropdown-item"><i class="fas fa-hand-holding-usd"></i> Receive Customer Payment</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('credit_memo') && can_edit_feature('credit_memo')): ?>
+                            <a href="?page=transactions/credit_memo/manage" class="ns-sub-dropdown-item"><i class="fas fa-undo-alt"></i> New Credit Memo</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('credit_memo')): ?>
+                            <a href="?page=transactions/credit_memo" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Credit Memo Register</a>
+                            <?php endif; ?>
                         </div>
                     </div>
+                    <?php endif; ?>
+
+                    <!-- Purchases -->
+                    <?php if (can_access_feature('bill') || can_access_feature('bill_credit')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-file-invoice-dollar"></i> Invoices <i class="fas fa-caret-right"
+                        <i class="fas fa-shopping-cart" style="color: #8b5cf6;"></i> Purchases <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/invoice/manage" class="ns-sub-dropdown-item">New Invoice</a>
-                            <a href="?page=transactions/invoice" class="ns-sub-dropdown-item">Invoice List</a>
+                            <?php if (can_access_feature('bill') && can_edit_feature('bill')): ?>
+                            <a href="?page=transactions/bill/manage" class="ns-sub-dropdown-item"><i class="fas fa-plus-circle"></i> New Vendor Bill</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('bill')): ?>
+                            <a href="?page=transactions/bill" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Vendor Bill Register</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
+                            <a href="?page=transactions/payment/manage" class="ns-sub-dropdown-item"><i class="fas fa-money-bill-wave"></i> Pay Vendor Bill</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('bill_credit') && can_edit_feature('bill_credit')): ?>
+                            <a href="?page=transactions/bill_credit/manage" class="ns-sub-dropdown-item"><i class="fas fa-file-signature"></i> New Vendor Credit</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('bill_credit')): ?>
+                            <a href="?page=transactions/bill_credit" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Vendor Credit Register</a>
+                            <?php endif; ?>
                         </div>
                     </div>
+                    <?php endif; ?>
+
+                    <!-- Bank & Financials -->
+                    <?php if (can_access_feature('transfer') || can_access_feature('expense') || can_access_feature('journal') || can_access_feature('cash_denom')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-undo-alt"></i> Credit Memo <i class="fas fa-caret-right"
+                        <i class="fas fa-university" style="color: #0284c7;"></i> Bank & Financials <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/credit_memo/manage" class="ns-sub-dropdown-item">New Credit Memo</a>
-                            <a href="?page=transactions/credit_memo" class="ns-sub-dropdown-item">Credit Memo List</a>
+                            <?php if (can_access_feature('transfer') && can_edit_feature('transfer')): ?>
+                            <a href="?page=transactions/transfer/manage" class="ns-sub-dropdown-item"><i class="fas fa-random"></i> Bank / Fund Transfer</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('expense') && can_edit_feature('expense')): ?>
+                            <a href="?page=transactions/expense/manage" class="ns-sub-dropdown-item"><i class="fas fa-wallet"></i> Enter Expense</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('expense')): ?>
+                            <a href="?page=transactions/expense" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Expense Register</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('journal') && can_edit_feature('journal')): ?>
+                            <a href="?page=transactions/journal/manage" class="ns-sub-dropdown-item"><i class="fas fa-book"></i> New Journal Entry</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('journal')): ?>
+                            <a href="?page=transactions/journal" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Journal Register</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('cash_denom') && can_edit_feature('cash_denom')): ?>
+                            <a href="?page=transactions/cash_denom/manage" class="ns-sub-dropdown-item"><i class="fas fa-coins"></i> Cash Denomination Entry</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('cash_denom')): ?>
+                            <a href="?page=transactions/cash_denom" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Cash Count Register</a>
+                            <?php endif; ?>
                         </div>
                     </div>
+                    <?php endif; ?>
+
+                    <!-- Inventory -->
+                    <?php if (can_access_feature('adjustment') || can_access_feature('inventory_transfer')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-file-invoice-dollar" style="color: #e11d48;"></i> Vendor Credits <i class="fas fa-caret-right"
+                        <i class="fas fa-boxes-packing" style="color: #06b6d4;"></i> Inventory <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/bill_credit/manage" class="ns-sub-dropdown-item">New Vendor Credit</a>
-                            <a href="?page=transactions/bill_credit" class="ns-sub-dropdown-item">Vendor Credit List</a>
+                            <?php if (can_access_feature('adjustment') && can_edit_feature('adjustment')): ?>
+                            <a href="?page=transactions/adjustment/manage" class="ns-sub-dropdown-item"><i class="fas fa-warehouse"></i> New Stock Adjustment</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('adjustment')): ?>
+                            <a href="?page=transactions/adjustment" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Stock Adjustment Register</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('inventory_transfer') && can_edit_feature('inventory_transfer')): ?>
+                            <a href="?page=transactions/inventory_transfer/manage" class="ns-sub-dropdown-item"><i class="fas fa-exchange-alt"></i> New Stock Transfer</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('inventory_transfer')): ?>
+                            <a href="?page=transactions/inventory_transfer" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Stock Transfer Register</a>
+                            <?php endif; ?>
                         </div>
                     </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-money-bill-wave"></i> Payments <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/payment/manage" class="ns-sub-dropdown-item">Record Payment</a>
-                            <a href="?page=transactions/payment" class="ns-sub-dropdown-item">Payment List</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-wallet"></i> Expenses <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/expense/manage" class="ns-sub-dropdown-item">Enter Expense</a>
-                            <a href="?page=transactions/expense" class="ns-sub-dropdown-item">Expense List</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-book"></i> Journal <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/journal/manage" class="ns-sub-dropdown-item">New Journal Entry</a>
-                            <a href="?page=transactions/journal" class="ns-sub-dropdown-item">Journal List</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-coins"></i> Cash Denomination <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/cash_denom/manage" class="ns-sub-dropdown-item">New Entry</a>
-                            <a href="?page=transactions/cash_denom" class="ns-sub-dropdown-item">List</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-warehouse"></i> Adjustments <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/adjustment/manage" class="ns-sub-dropdown-item">New Adjustment</a>
-                            <a href="?page=transactions/adjustment" class="ns-sub-dropdown-item">Adjustment List</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-random"></i> Bank Transfer <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/transfer/manage" class="ns-sub-dropdown-item">New Transfer</a>
-                        </div>
-                    </div>
-                    <div class="ns-dropdown-item">
-                        <i class="fas fa-boxes-packing"></i> Inventory Transfer <i class="fas fa-caret-right"
-                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
-                        <div class="ns-sub-dropdown">
-                            <a href="?page=transactions/inventory_transfer/manage" class="ns-sub-dropdown-item">New Transfer</a>
-                            <a href="?page=transactions/inventory_transfer" class="ns-sub-dropdown-item">Transfer List</a>
-                        </div>
+                    <?php endif; ?>
+
+                    <!-- All Transactions Link -->
+                    <div style="border-top: 1px solid var(--ns-border-color); margin-top: 4px; padding-top: 4px;">
+                        <a href="?page=transactions/transactions_list" class="ns-dropdown-item" style="font-weight: 700; color: var(--ns-primary);"><i class="fas fa-th-large"></i> Transactions Center Overview</a>
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
 
+            <?php if (can_access_feature('accounts') || can_access_feature('customers') || can_access_feature('vendors') || can_access_feature('items') || can_access_feature('users')): ?>
             <div class="ns-nav-item">
                 <a href="?page=master/master_list" style="color:inherit; text-decoration:none;">Lists</a> <i
                     class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="?page=master/account" class="ns-dropdown-item"><i class="fas fa-list-ul"></i> Accounts</a>
-                    <a href="?page=master/customer" class="ns-dropdown-item"><i class="fas fa-users"></i> Customers</a>
-                    <a href="?page=master/vendor" class="ns-dropdown-item"><i class="fas fa-user-tie"></i> Vendors</a>
-                    <a href="?page=master/item" class="ns-dropdown-item"><i class="fas fa-boxes"></i> Items</a>
-                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-friends"></i> Employees</a>
+                    <?php if (can_access_feature('accounts')): ?><a href="?page=master/account" class="ns-dropdown-item"><i class="fas fa-list-ul"></i> Accounts</a><?php endif; ?>
+                    <?php if (can_access_feature('customers')): ?><a href="?page=master/customer" class="ns-dropdown-item"><i class="fas fa-users"></i> Customers</a><?php endif; ?>
+                    <?php if (can_access_feature('vendors')): ?><a href="?page=master/vendor" class="ns-dropdown-item"><i class="fas fa-user-tie"></i> Vendors</a><?php endif; ?>
+                    <?php if (can_access_feature('items')): ?><a href="?page=master/item" class="ns-dropdown-item"><i class="fas fa-boxes"></i> Items</a><?php endif; ?>
+                    <?php if (can_access_feature('users')): ?><a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-friends"></i> Employees</a><?php endif; ?>
                 </div>
             </div>
+            <?php endif; ?>
 
+            <?php if (can_access_feature('rep_financial') || can_access_feature('rep_sales') || can_access_feature('rep_purchases') || can_access_feature('rep_vendors') || can_access_feature('rep_inventory') || can_access_feature('rep_vat') || can_access_feature('rep_customers') || can_access_feature('rep_insights')): ?>
             <div class="ns-nav-item"
                 onclick="if(event.target.tagName !== 'A' && !event.target.closest('.ns-dropdown')) window.location='?page=reports/reports_list';">
                 <a href="?page=reports/reports_list" style="color:inherit; text-decoration:none;">Reports</a> <i
                     class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
+                    <?php if (can_access_feature('rep_financial')): ?>
                     <div class="ns-dropdown-item">
                         <i class="fas fa-file-invoice-dollar"></i> Financial <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
                             <a href="?page=reports/financial/balance_sheet" class="ns-sub-dropdown-item">Balance Sheet</a>
-                            <a href="?page=reports/financial/comparative_balance_sheet"
-                                class="ns-sub-dropdown-item">Comparative Balance Sheet</a>
-                            <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income
-                                Statement</a>
-                            <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative
-                                Income Statement</a>
-                            <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit
-                                Report</a>
+                            <a href="?page=reports/financial/comparative_balance_sheet" class="ns-sub-dropdown-item">Comparative Balance Sheet</a>
+                            <a href="?page=reports/financial/income_statement" class="ns-sub-dropdown-item">Income Statement (P&L)</a>
+                            <a href="?page=reports/financial/comparative_income" class="ns-sub-dropdown-item">Comparative Income Statement</a>
+                            <a href="?page=reports/financial/cash_flow_statement" class="ns-sub-dropdown-item">Cash Flow Statement</a>
+                            <a href="?page=reports/financial/daily_profit" class="ns-sub-dropdown-item">Daily Profit Report</a>
                             <a href="?page=reports/financial/trial_balance" class="ns-sub-dropdown-item">Trial Balance</a>
                             <a href="?page=reports/financial/general_ledger" class="ns-sub-dropdown-item">General Ledger</a>
-                            <a href="?page=reports/financial/equity_statement" class="ns-sub-dropdown-item">Equity
-                                Statement</a>
-                            <a href="?page=reports/financial/cash_book" class="ns-sub-dropdown-item">Cash Book</a>
+                            <a href="?page=reports/financial/journal_register" class="ns-sub-dropdown-item">Journal Register & Audit</a>
+                            <a href="?page=reports/financial/equity_statement" class="ns-sub-dropdown-item">Equity Statement & Details</a>
+                            <a href="?page=reports/financial/retained_earnings" class="ns-sub-dropdown-item">Retained Earnings</a>
+                            <a href="?page=reports/financial/financial_ratios" class="ns-sub-dropdown-item">Financial Ratios & Metrics</a>
+                            <a href="?page=reports/financial/payment_register" class="ns-sub-dropdown-item">Receipts & Payments Register</a>
+                            <a href="?page=reports/financial/expense_register" class="ns-sub-dropdown-item">Expense Register</a>
+                            <a href="?page=reports/financial/cash_book" class="ns-sub-dropdown-item">Cash & Bank Book</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_sales')): ?>
                     <div class="ns-dropdown-item">
                         <i class="fas fa-chart-line"></i> Sales <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
+                            <a href="?page=reports/sales/sales_summary" class="ns-sub-dropdown-item">Sales Summary</a>
                             <a href="?page=reports/sales/by_item" class="ns-sub-dropdown-item">Sales by Item</a>
                             <a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a>
                             <a href="?page=reports/sales/by_customer" class="ns-sub-dropdown-item">Sales by Customer</a>
@@ -834,109 +872,123 @@ if ($is_logged_in) {
                             <a href="?page=reports/sales/open_invoices" class="ns-sub-dropdown-item">Open Invoices</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_purchases')): ?>
                     <div class="ns-dropdown-item">
                         <i class="fas fa-shopping-cart"></i> Purchases <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
+                            <a href="?page=reports/purchases/purchase_register" class="ns-sub-dropdown-item">Purchase Register</a>
                             <a href="?page=reports/purchases/by_item" class="ns-sub-dropdown-item">Purchase by Item</a>
                             <a href="?page=reports/purchases/by_vendor" class="ns-sub-dropdown-item">Purchase by Vendor</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_vendors')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-user-tie"></i> Vendors <i class="fas fa-caret-right"
+                        <i class="fas fa-user-tie"></i> Vendors (AP) <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/vendors/balance_confirmation" class="ns-sub-dropdown-item">Vendor Balance
-                                Confirmation</a>
+                            <a href="?page=reports/vendors/ap_balance_summary" class="ns-sub-dropdown-item">Vendor AP Balance Summary</a>
+                            <a href="?page=reports/vendors/balance_confirmation" class="ns-sub-dropdown-item">Vendor Balance Confirmation</a>
                             <a href="?page=reports/vendors/ap_register" class="ns-sub-dropdown-item">AP Register</a>
-                            <a href="?page=reports/vendors/ap_payment_by_bill" class="ns-sub-dropdown-item">AP Payment by
-                                Bill</a>
+                            <a href="?page=reports/vendors/ap_payment_by_bill" class="ns-sub-dropdown-item">AP Payment by Bill</a>
                             <a href="?page=reports/vendors/open_bills" class="ns-sub-dropdown-item">Open Bills</a>
                             <a href="?page=reports/vendors/payable_aging" class="ns-sub-dropdown-item">AP Aging</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_inventory')): ?>
                     <div class="ns-dropdown-item">
                         <i class="fas fa-warehouse"></i> Inventory <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/inventory/inventory_valuation" class="ns-sub-dropdown-item">Inventory
-                                Valuation</a>
-                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Current Inventory
-                                Snapshot</a>
+                            <a href="?page=reports/inventory/stock_movement" class="ns-sub-dropdown-item">Stock Movement Analysis</a>
+                            <a href="?page=reports/inventory/inventory_valuation" class="ns-sub-dropdown-item">Inventory Valuation</a>
+                            <a href="?page=reports/inventory/stock_summary" class="ns-sub-dropdown-item">Current Inventory Snapshot</a>
                             <a href="?page=reports/inventory/stock_ledger" class="ns-sub-dropdown-item">Stock Ledger</a>
-                            <a href="?page=reports/inventory/inventory_revenue" class="ns-sub-dropdown-item">Inventory
-                                Revenue</a>
-                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory
-                                Profitability</a>
+                            <a href="?page=reports/inventory/inventory_revenue" class="ns-sub-dropdown-item">Inventory Revenue</a>
+                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability</a>
                             <a href="?page=reports/inventory/low_stock" class="ns-sub-dropdown-item">Low Stock Report</a>
                             <a href="?page=reports/inventory/less_stock" class="ns-sub-dropdown-item">Less Stock Report</a>
                             <a href="?page=reports/inventory/urgent_buy" class="ns-sub-dropdown-item">Urgent Purchases</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_vat')): ?>
                     <div class="ns-dropdown-item">
                         <i class="fas fa-percent"></i> VAT/Tax <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
+                            <a href="?page=reports/vat/abbreviated_tax_invoice" class="ns-sub-dropdown-item">Abbreviated Tax Invoice</a>
                             <a href="?page=reports/vat/sales_register" class="ns-sub-dropdown-item">VAT Sales Register</a>
-                            <a href="?page=reports/vat/purchase_register" class="ns-sub-dropdown-item">VAT Purchase
-                                Register</a>
+                            <a href="?page=reports/vat/purchase_register" class="ns-sub-dropdown-item">VAT Purchase Register</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_customers')): ?>
                     <div class="ns-dropdown-item">
-                        <i class="fas fa-users"></i> Customers <i class="fas fa-caret-right"
+                        <i class="fas fa-users"></i> Customers (AR) <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/customers/balance_confirmation" class="ns-sub-dropdown-item">Customer
-                                Balance Confirmation</a>
+                            <a href="?page=reports/customers/ar_balance_summary" class="ns-sub-dropdown-item">Customer AR Balance Summary</a>
+                            <a href="?page=reports/customers/balance_confirmation" class="ns-sub-dropdown-item">Customer Balance Confirmation</a>
                             <a href="?page=reports/customers/statement" class="ns-sub-dropdown-item">Customer Statement</a>
                             <a href="?page=reports/customers/ar_register" class="ns-sub-dropdown-item">AR Register</a>
-                            <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment
-                                by Invoice</a>
+                            <a href="?page=reports/customers/ar_payment_by_invoice" class="ns-sub-dropdown-item">AR Payment by Invoice</a>
                             <a href="?page=reports/customers/receivable_aging" class="ns-sub-dropdown-item">AR Aging</a>
                         </div>
                     </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_insights')): ?>
                     <div class="ns-dropdown-item" style="background: #f0f9ff;">
-                        <i class="fas fa-lightbulb" style="color: #0284c7;"></i> <strong style="color: #0369a1;">General
-                            Insights</strong> <i class="fas fa-caret-right"
+                        <i class="fas fa-lightbulb" style="color: #0284c7;"></i> <strong style="color: #0369a1;">General Insights</strong> <i class="fas fa-caret-right"
                             style="float: right; margin-top: 3px; font-size: 10px; color: #0284c7;"></i>
                         <div class="ns-sub-dropdown">
-                            <a href="?page=reports/financial/break_even_payback" class="ns-sub-dropdown-item"
-                                style="font-weight: 700; color: #0284c7;">Break-Even & Investment Payback</a>
-                            <a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a>
-                            <a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory
-                                Profitability Insights</a>
+                            <a href="?page=reports/financial/break_even_payback" class="ns-sub-dropdown-item" style="font-weight: 700; color: #0284c7;">Break-Even & Investment Payback</a>
+                            <?php if (can_access_feature('rep_sales')): ?><a href="?page=reports/sales/top_profit_items" class="ns-sub-dropdown-item">Top Profit Items</a><?php endif; ?>
+                            <?php if (can_access_feature('rep_inventory')): ?><a href="?page=reports/inventory/inventory_profitability" class="ns-sub-dropdown-item">Inventory Profitability Insights</a><?php endif; ?>
                         </div>
+                    </div>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('rep_pos')): ?>
+                    <div class="ns-dropdown-item">
+                        <i class="fas fa-cash-register" style="color: #f59e0b;"></i> POS Summary <i class="fas fa-caret-right"
+                            style="float: right; margin-top: 3px; font-size: 10px;"></i>
+                        <div class="ns-sub-dropdown">
+                            <a href="?page=reports/pos_summary" class="ns-sub-dropdown-item"><i class="fas fa-chart-bar"></i> POS Daily Summary</a>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+                    <div class="ns-dropdown-item" style="border-top:1px solid #e2e8f0; font-weight:700;">
+                        <a href="?page=reports/reports_list" style="color:#003087; text-decoration:none; display:block;"><i class="fas fa-th-large"></i> All Reports Center...</a>
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
 
+            <?php if (can_access_feature('company_info') || can_access_feature('users') || can_access_feature('roles_perm') || can_access_feature('fiscal_years') || can_access_feature('accounting_prefs') || can_access_feature('opening_balances') || can_access_feature('whatsapp') || can_access_feature('ref_codes') || can_access_feature('import_export') || can_access_feature('backup_restore')): ?>
             <div class="ns-nav-item">
                 Setup <i class="fas fa-caret-down" style="margin-left: 5px; font-size: 10px; opacity: 0.7;"></i>
                 <div class="ns-dropdown">
-                    <a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System
-                        Information</a>
-                    <a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Employees &
-                        Users</a>
-                    <a href="?page=system/roles" class="ns-dropdown-item"><i class="fas fa-user-lock"></i> Role
-                        Permissions</a>
-                    <a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i>
-                        Accounting Periods / Closing</a>
-                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i>
-                        Accounting Lists</a>
-                    <a href="?page=system/settings/accounting_preferences" class="ns-dropdown-item"><i
-                            class="fas fa-file-contract"></i> Accounting Preferences</a>
-                    <a href="?page=master/account/opening_balance" class="ns-dropdown-item"><i
-                            class="fas fa-balance-scale"></i> Bank Opening Balances</a>
-                    <a href="?page=system/settings/whatsapp_settings" class="ns-dropdown-item"><i class="fab fa-whatsapp"
-                            style="color:#25D366;"></i> WhatsApp Integration</a>
-                    <a href="?page=system/ref_codes/manage" class="ns-dropdown-item"><i class="fas fa-list-ol"></i> Auto
-                        Generated Numbers</a>
-                    <a href="?page=system/import_export/manage" class="ns-dropdown-item"><i class="fas fa-file-import"></i>
-                        Import / Export Data</a>
-                    <a href="?page=system/backup/manage" class="ns-dropdown-item"><i class="fas fa-database"></i> Backup &
-                        Restore</a>
+                    <?php if (can_access_feature('company_info')): ?><a href="?page=system/company/manage" class="ns-dropdown-item"><i class="fas fa-building"></i> System Information</a><?php endif; ?>
+                    <?php if (can_access_feature('users')): ?><a href="?page=system/users" class="ns-dropdown-item"><i class="fas fa-user-shield"></i> Employees & Users</a><?php endif; ?>
+                    <?php if (can_access_feature('roles_perm')): ?><a href="?page=system/roles" class="ns-dropdown-item"><i class="fas fa-user-lock"></i> Role Permissions</a><?php endif; ?>
+                    <?php if (can_access_feature('fiscal_years')): ?><a href="?page=system/fiscal_years" class="ns-dropdown-item"><i class="fas fa-calendar-check"></i> Accounting Periods / Closing</a><?php endif; ?>
+                    <?php if (can_access_feature('accounting_prefs')): ?>
+                    <a href="?page=system/settings/accounting" class="ns-dropdown-item"><i class="fas fa-calculator"></i> Accounting Lists</a>
+                    <a href="?page=system/settings/accounting_preferences" class="ns-dropdown-item"><i class="fas fa-file-contract"></i> Accounting Preferences</a>
+                    <?php endif; ?>
+                    <?php if (can_access_feature('opening_balances')): ?><a href="?page=master/account/opening_balance" class="ns-dropdown-item"><i class="fas fa-balance-scale"></i> Bank Opening Balances</a><?php endif; ?>
+                    <?php if (can_access_feature('whatsapp')): ?><a href="?page=system/settings/whatsapp_settings" class="ns-dropdown-item"><i class="fab fa-whatsapp" style="color:#25D366;"></i> WhatsApp Integration</a><?php endif; ?>
+                    <?php if (can_access_feature('ref_codes')): ?><a href="?page=system/ref_codes/manage" class="ns-dropdown-item"><i class="fas fa-list-ol"></i> Auto Generated Numbers</a><?php endif; ?>
+                    <?php if (can_access_feature('import_export')): ?><a href="?page=system/import_export/manage" class="ns-dropdown-item"><i class="fas fa-file-import"></i> Import / Export Data</a><?php endif; ?>
+                    <?php if (can_access_feature('backup_restore')): ?><a href="?page=system/backup/manage" class="ns-dropdown-item"><i class="fas fa-database"></i> Backup & Restore</a><?php endif; ?>
                 </div>
             </div>
+            <?php endif; ?>
+
+
         </nav>
 
         <!-- Main Application Content -->
@@ -946,66 +998,81 @@ if ($is_logged_in) {
             if ($page == 'home' || $page == 'home-v3') {
                 include 'home.php';
             } else {
-                // Security: Sanitize page parameter to prevent path traversal
-                $page = str_replace(['../', '..\\'], '', $page);
-                $page = preg_replace('/[^a-zA-Z0-9\/_\-]/', '', $page);
+                // Security & Access Control: Verify module permission
+                if (!check_page_access($page)) {
+                    echo '<div style="padding:60px 20px; text-align:center; color:#c0392b;">
+                        <i class="fas fa-user-lock" style="font-size:56px; margin-bottom:16px; opacity:.7;"></i>
+                        <div style="font-size:22px; font-weight:800; color:#1e293b;">Access Denied</div>
+                        <div style="font-size:13px; color:#64748b; margin-top:8px;">You do not have permission to access or perform actions on this module.</div>
+                        <a href="?page=home" class="ns-btn ns-btn-primary" style="margin-top:24px; display:inline-block;"><i class="fas fa-home"></i> Back to Dashboard</a>
+                    </div>';
+                } else {
+                    // Security: Sanitize page parameter to prevent path traversal
+                    $page = str_replace(['../', '..\\'], '', $page);
+                    $page = preg_replace('/[^a-zA-Z0-9\/_\-]/', '', $page);
 
-                // Extract module parts
-                $parts = explode('/', $page);
-                $count = count($parts);
-                if ($count > 0) {
-                    $action = $parts[$count - 1]; // e.g., 'balance_sheet' or 'manage'
-                    $dir_path = implode('/', array_slice($parts, 0, $count - 1));
+                    // Extract module parts
+                    $parts = explode('/', $page);
+                    $count = count($parts);
+                    if ($count > 0) {
+                        $action = $parts[$count - 1]; // e.g., 'balance_sheet' or 'manage'
+                        $dir_path = implode('/', array_slice($parts, 0, $count - 1));
 
-                    if ($action == 'manage') {
-                        $module_name = $parts[$count - 2];
-                        if ($module_name == 'users')
-                            $module_name = 'user';
-                        if ($module_name == 'roles')
-                            $module_name = 'role';
-                        $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_manage.php";
-                    } elseif ($action == 'view' || $action == 'print') {
-                        $page_path = "forms/modules/" . $dir_path . "/" . $action . ".php";
-                        if (!file_exists($page_path) && $count >= 2) {
+                        if ($action == 'manage') {
                             $module_name = $parts[$count - 2];
-                            if ($module_name == 'users') $module_name = 'user';
-                            if ($module_name == 'roles') $module_name = 'role';
-                            $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_" . $action . ".php";
-                        }
-                        if (!file_exists($page_path) && $count >= 3) {
-                            $parent_dir = implode('/', array_slice($parts, 0, $count - 2));
-                            $page_path = "forms/modules/" . $parent_dir . "/" . $action . ".php";
-                        }
-                    } else {
-                        $module_name = $action;
-                        if ($module_name == 'users')
-                            $module_name = 'user';
-                        if ($module_name == 'roles')
-                            $module_name = 'role';
+                            if ($module_name == 'users')
+                                $module_name = 'user';
+                            if ($module_name == 'roles')
+                                $module_name = 'role';
+                            $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_manage.php";
+                        } elseif ($action == 'view' || $action == 'print') {
+                            $page_path = "forms/modules/" . $dir_path . "/" . $action . ".php";
+                            if (!file_exists($page_path) && $count >= 2) {
+                                $module_name = $parts[$count - 2];
+                                if ($module_name == 'users') $module_name = 'user';
+                                if ($module_name == 'roles') $module_name = 'role';
+                                $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_" . $action . ".php";
+                            }
+                            if (!file_exists($page_path) && $count >= 3) {
+                                $parent_dir = implode('/', array_slice($parts, 0, $count - 2));
+                                $page_path = "forms/modules/" . $parent_dir . "/" . $action . ".php";
+                            }
+                        } else {
+                            $module_name = $action;
+                            if ($module_name == 'users')
+                                $module_name = 'user';
+                            if ($module_name == 'roles')
+                                $module_name = 'role';
 
-                        // Primary path: forms/modules/{page}/{action}_list.php
-                        $page_path = "forms/modules/" . $page . "/" . $module_name . "_list.php";
+                            // Primary path: forms/modules/{page}/{action}_list.php
+                            $page_path = "forms/modules/" . $page . "/" . $module_name . "_list.php";
 
-                        // Fallback 1: forms/modules/{dir}/{action}_list.php
-                        if (!file_exists($page_path)) {
-                            $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_list.php";
+                            // Fallback 1: forms/modules/{dir}/{action}_list.php
+                            if (!file_exists($page_path)) {
+                                $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_list.php";
+                            }
+
+                            // Fallback 2: forms/modules/{dir}/{action}_manage.php
+                            if (!file_exists($page_path)) {
+                                $page_path = "forms/modules/" . $dir_path . "/" . $module_name . "_manage.php";
+                            }
+
+                            // Fallback 3: forms/modules/{page}.php
+                            if (!file_exists($page_path)) {
+                                $page_path = "forms/modules/" . $page . ".php";
+                            }
                         }
 
-                        // Fallback 2: forms/modules/{page}.php
-                        if (!file_exists($page_path)) {
-                            $page_path = "forms/modules/" . $page . ".php";
+                        if (file_exists($page_path)) {
+                            include $page_path;
+                        } else {
+                            echo '<div style="padding:40px;text-align:center;color:#888">
+                                <i class="fas fa-file-slash" style="font-size:48px;margin-bottom:16px;display:block;opacity:.3"></i>
+                                <div style="font-size:18px;font-weight:600;color:#555">Page Not Found</div>
+                                <div style="font-size:13px;margin-top:8px">Module: <code>' . htmlspecialchars($page) . '</code></div>
+                                <a href="?page=home" class="ns-btn ns-btn-primary" style="margin-top:20px;display:inline-block"><i class="fas fa-home"></i> Back to Dashboard</a>
+                            </div>';
                         }
-                    }
-
-                    if (file_exists($page_path)) {
-                        include $page_path;
-                    } else {
-                        echo '<div style="padding:40px;text-align:center;color:#888">
-                            <i class="fas fa-file-slash" style="font-size:48px;margin-bottom:16px;display:block;opacity:.3"></i>
-                            <div style="font-size:18px;font-weight:600;color:#555">Page Not Found</div>
-                            <div style="font-size:13px;margin-top:8px">Module: <code>' . htmlspecialchars($page) . '</code></div>
-                            <a href="?page=home" class="ns-btn ns-btn-primary" style="margin-top:20px;display:inline-block"><i class="fas fa-home"></i> Back to Dashboard</a>
-                        </div>';
                     }
                 }
             }
@@ -1174,11 +1241,23 @@ if ($is_logged_in) {
                         }
                     }
                 });
-            });
-        <?php endif; ?>
+            // Display flash notification if set in sessionStorage (e.g., post-delete reload)
+            const flashMsg = sessionStorage.getItem('ns_flash_msg');
+            const flashType = sessionStorage.getItem('ns_flash_type') || 'success';
+            if (flashMsg) {
+                nsNotify(flashMsg, flashType);
+                sessionStorage.removeItem('ns_flash_msg');
+                sessionStorage.removeItem('ns_flash_type');
+            }
+        });
+    <?php endif; ?>
 
         function nsNotify(message, type = 'success') {
             const toast = document.getElementById('ns-notification');
+            if (!toast) {
+                alert(message);
+                return;
+            }
             const icon = toast.querySelector('i');
             const text = toast.querySelector('span');
 
@@ -1210,9 +1289,14 @@ if ($is_logged_in) {
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        nsNotify(data.message);
-                        if (callback) callback();
-                        else location.reload();
+                        const msg = data.message || 'Record deleted successfully.';
+                        sessionStorage.setItem('ns_flash_msg', msg);
+                        sessionStorage.setItem('ns_flash_type', 'success');
+                        nsNotify(msg, 'success');
+                        setTimeout(() => {
+                            if (callback) callback();
+                            else location.reload();
+                        }, 400);
                     } else {
                         nsNotify(data.message || 'Delete failed', 'error');
                     }

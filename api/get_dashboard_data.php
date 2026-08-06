@@ -134,14 +134,12 @@ function cache_set($key, $value, $ttl_sec = 60) {
     }
 }
 
-$user_role = $_SESSION['role'] ?? 'user';
-if ($user_role !== 'admin') {
-    $selected_location_id = get_user_default_location_id();
+$raw_loc = $_GET['location_id'] ?? $_SESSION['location_id'] ?? get_user_default_location_id();
+if ($raw_loc === 'all') {
+    $selected_location_id = '';
 } else {
-    $selected_location_id = $_GET['location_id'] ?? get_user_default_location_id();
-    if ($selected_location_id === 'all') {
-        $selected_location_id = '';
-    } else if (!empty($selected_location_id)) {
+    $selected_location_id = !empty($raw_loc) ? $raw_loc : get_user_default_location_id();
+    if (!empty($selected_location_id)) {
         $_SESSION['location_id'] = $selected_location_id;
     }
 }
@@ -220,8 +218,28 @@ function get_daily_pnl_for_date($db, $date) {
           AND a.is_deleted = 0 {$loc_sql_h}
     ", [$date]);
 
-    $total_sales    = (float)$pos['sales'] + (float)$non_pos['sales'] + (float)$j['j_income'];
-    $total_cogs     = (float)$pos['cogs']  + (float)$non_pos['cogs']  + (float)$j['j_cogs'];
+    // Credit Memos (customer returns) - reduce both sales AND COGS for returned items
+    $credit_memos = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(cm.total_amount), 0) as total
+        FROM credit_memos cm
+        JOIN transaction_headers h ON cm.header_id = h.id
+        WHERE h.txn_type = 'credit_memo'
+          AND h.is_deleted = 0
+          AND h.txn_date = ? {$loc_sql_h}
+    ", [$date])['total'] ?? 0);
+
+    // Reverse COGS for returned items (look at credit memo transaction lines if available)
+    $credit_memo_cogs = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(l.cost_price * l.quantity), 0) as cogs
+        FROM transaction_lines l
+        JOIN transaction_headers h ON l.header_id = h.id
+        WHERE h.txn_type = 'credit_memo'
+          AND h.is_deleted = 0
+          AND h.txn_date = ? {$loc_sql_h}
+    ", [$date])['cogs'] ?? 0);
+
+    $total_sales    = (float)$pos['sales'] + (float)$non_pos['sales'] + (float)$j['j_income'] - $credit_memos;
+    $total_cogs     = (float)$pos['cogs']  + (float)$non_pos['cogs']  + (float)$j['j_cogs']  - $credit_memo_cogs;
     $gross_profit   = $total_sales - $total_cogs;
     $total_expenses = $exp_tbl + (float)$j['j_expenses'];
     $net_profit     = $gross_profit - $total_expenses;
@@ -306,24 +324,33 @@ function get_balances($db, $as_of) {
         ) as total
     ", [$as_of, $as_of])['total'] ?? 0);
 
-    // Cash and Bank totals
+    // Cash and Bank totals (excluding Fixed Deposit account)
     $cash_bank_rows = $db->fetchAll("
         SELECT 
-            CASE 
-                WHEN LOWER(a.account_subtype) = 'cash' OR LOWER(a.account_name) LIKE '%cash%' THEN 'cash'
-                WHEN LOWER(a.account_subtype) = 'bank' OR LOWER(a.account_name) LIKE '%bank%' THEN 'bank'
-                ELSE 'bank'
-            END as bt,
+            LOWER(a.account_subtype) as bt,
             COALESCE(SUM(CASE WHEN h.id IS NOT NULL THEN (CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END) ELSE 0 END), 0) as bal
         FROM accounts a
         LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
         LEFT JOIN transaction_headers h ON je.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-        WHERE (a.account_subtype IN ('Bank') OR LOWER(a.account_name) LIKE '%cash%' OR LOWER(a.account_name) LIKE '%bank%')
+        WHERE a.account_type = 'asset'
+          AND a.account_subtype IN ('Cash', 'Bank')
+          AND a.id != 'acc-1040' AND LOWER(a.account_name) NOT LIKE '%fixed deposit%'
           AND a.is_active = 1 AND a.is_deleted = 0
         GROUP BY bt HAVING bt IS NOT NULL
     ", [$as_of]);
 
-    $r = ['cash' => 0, 'bank' => 0, 'ar' => $ar, 'ap' => $ap];
+    // Fixed Deposit total (specifically for Fixed Deposit account acc-1040)
+    $fd_val = (float)($db->fetchOne("
+        SELECT (a.opening_balance + COALESCE(SUM(CASE WHEN h.id IS NOT NULL THEN (CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END) ELSE 0 END), 0)) as bal
+        FROM accounts a
+        LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
+        LEFT JOIN transaction_headers h ON je.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+        WHERE (a.id = 'acc-1040' OR LOWER(a.account_name) LIKE '%fixed deposit%')
+          AND a.is_active = 1 AND a.is_deleted = 0
+        GROUP BY a.id
+    ", [$as_of])['bal'] ?? 0);
+
+    $r = ['cash' => 0, 'bank' => 0, 'fd' => $fd_val, 'ar' => $ar, 'ap' => $ap];
     foreach ($cash_bank_rows as $row) { $r[$row['bt']] = (float)$row['bal']; }
     return $r;
 }
@@ -375,10 +402,11 @@ if (!empty($selected_location_id)) {
 // ══════════════════════════════════════════════════════════════════
 
 // Opening Cash from cash_denominations (morning shift = opening type)
+$loc_sql_h = dash_loc_sql('h');
 $opening_cash = (float)($db->fetchOne("
     SELECT COALESCE(total_cash, 0) as total_cash FROM cash_denominations cd
     JOIN transaction_headers h ON cd.header_id = h.id
-    WHERE cd.denomination_date = ? AND cd.denomination_type = 'opening' AND h.is_deleted = 0
+    WHERE cd.denomination_date = ? AND cd.denomination_type = 'opening' AND h.is_deleted = 0 {$loc_sql_h}
     ORDER BY cd.id ASC LIMIT 1
 ", [$today])['total_cash'] ?? 0);
 
@@ -386,7 +414,7 @@ $opening_cash = (float)($db->fetchOne("
 $closing_cash = (float)($db->fetchOne("
     SELECT COALESCE(total_cash, 0) as total_cash FROM cash_denominations cd
     JOIN transaction_headers h ON cd.header_id = h.id
-    WHERE cd.denomination_date = ? AND cd.denomination_type = 'closing' AND h.is_deleted = 0
+    WHERE cd.denomination_date = ? AND cd.denomination_type = 'closing' AND h.is_deleted = 0 {$loc_sql_h}
     ORDER BY cd.id DESC LIMIT 1
 ", [$today])['total_cash'] ?? 0);
 
@@ -395,7 +423,7 @@ if ($closing_cash <= 0) {
     $closing_cash = (float)($db->fetchOne("
         SELECT COALESCE(total_cash, 0) as total_cash FROM cash_denominations cd
         JOIN transaction_headers h ON cd.header_id = h.id
-        WHERE cd.denomination_date = ? AND h.is_deleted = 0
+        WHERE cd.denomination_date = ? AND h.is_deleted = 0 {$loc_sql_h}
         ORDER BY cd.id DESC LIMIT 1
     ", [$today])['total_cash'] ?? 0);
 }
@@ -580,17 +608,42 @@ $bank_accounts = $db->fetchAll("
 ");
 
 $pay_methods = [];
-foreach ($bank_accounts as $ba) {
-    $pay_methods[$ba['account_name']] = 0.0;
+$loc_sql_pe = dash_loc_sql('pe');
+$loc_sql_h  = dash_loc_sql('h');
+
+// POS payments today
+$pos_pay = $db->fetchAll("
+    SELECT 
+        CASE 
+            WHEN LOWER(pp.payment_mode) = 'cash' THEN 'Cash'
+            WHEN LOWER(pp.payment_mode) = 'esewa' THEN 'Esewa'
+            WHEN LOWER(pp.payment_mode) = 'fonepay' THEN 'Fonepay'
+            WHEN LOWER(pp.payment_mode) = 'khalti' THEN 'Khalti'
+            WHEN LOWER(pp.payment_mode) = 'card' THEN 'Card'
+            WHEN LOWER(pp.payment_mode) = 'bank' THEN 'Bank Transfer'
+            ELSE UPPER(pp.payment_mode)
+        END as pay_mode,
+        SUM(pp.amount) as total
+    FROM pos_payments pp
+    JOIN pos_entry pe ON pp.pos_id = pe.id
+    WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 {$loc_sql_pe}
+    GROUP BY pay_mode
+", [$today]);
+
+foreach ($pos_pay as $pp) {
+    $mode = $pp['pay_mode'];
+    $amt  = (float)$pp['total'];
+    if ($amt > 0) {
+        $pay_methods[$mode] = ($pay_methods[$mode] ?? 0.0) + $amt;
+    }
 }
 
-// Invoice and POS summary payments today (exclude deleted/voided)
-$loc_sql_h = dash_loc_sql('h');
+// Invoice payments today
 $ip = $db->fetchAll("
     SELECT 
         COALESCE(a.account_name, 
             CASE 
-                WHEN p.payment_method = 'cash' THEN 'Cash on Hand'
+                WHEN p.payment_method = 'cash' THEN 'Cash'
                 WHEN p.payment_method = 'esewa' THEN 'Esewa'
                 WHEN p.payment_method = 'khalti' THEN 'Khalti'
                 WHEN p.payment_method = 'card' THEN 'Card'
@@ -603,43 +656,60 @@ $ip = $db->fetchAll("
     JOIN transaction_headers h ON p.header_id = h.id
     LEFT JOIN accounts a ON p.bank_account_id = a.id
     WHERE p.payment_date = ? AND p.payment_type = 'customer_payment'
-      AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft') {$loc_sql_h}
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql_h}
     GROUP BY acc_name
 ", [$today]);
 
 foreach ($ip as $p) {
     $name = $p['acc_name'];
     $amt = (float)$p['total'];
-    $pay_methods[$name] = ($pay_methods[$name] ?? 0.0) + $amt;
+    if ($amt > 0) {
+        $pay_methods[$name] = ($pay_methods[$name] ?? 0.0) + $amt;
+    }
 }
 
-// Credit sales today (exclude deleted/voided)
+// Credit sales today
 $credit_today = (float)($db->fetchOne("
     SELECT COALESCE(SUM(ci.balance_due), 0) as balance_due FROM customer_invoices ci
     JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE h.txn_date = ? AND ci.sale_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft') {$loc_sql_h}
+    WHERE h.txn_date = ? AND ci.sale_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql_h}
 ", [$today])['balance_due'] ?? 0);
 
-$pay_methods['Credit'] = $credit_today;
+if ($credit_today > 0) {
+    $pay_methods['Credit'] = $credit_today;
+}
 
-// ── 2c. Sales by Beverage Category (This Month - Transactions only) ──
+$pay_methods = array_filter($pay_methods, function($v) { return $v > 0; });
+if (empty($pay_methods)) {
+    $pay_methods = ['Cash' => 0.00];
+}
+
+// ── 2c. Sales by Beverage Category (This Month - POS + Invoices) ──
 $cat_sales_data = $db->fetchAll("
     SELECT 
         rc.name as category_name,
-        COALESCE(SUM(t.amount), 0) as total_amount
+        COALESCE(SUM(sl.amount), 0) as total_amount
     FROM reference_codes rc
     LEFT JOIN (
+        SELECT pi.net_amount as amount, i.item_category
+        FROM pos_items pi
+        JOIN pos_entry pe ON pi.pos_id = pe.id
+        JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
+        WHERE DATE(pe.date_time) BETWEEN ? AND ? AND pe.is_deleted = 0 {$loc_sql_pe}
+        UNION ALL
         SELECT l.line_total as amount, i.item_category
         FROM transaction_lines l
         JOIN transaction_headers h ON l.header_id = h.id
         JOIN items i ON l.item_id = i.id AND i.is_deleted = 0
-        WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
-          AND h.txn_type = 'customer_invoice' {$loc_sql_h}
-    ) t ON rc.id = t.item_category
+        WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+          AND h.txn_type = 'customer_invoice'
+          AND COALESCE(h.source, '') != 'pos_sync' AND h.txn_number NOT LIKE 'INV-POS%' AND h.txn_number NOT LIKE 'POS-SUM%'
+          {$loc_sql_h}
+    ) sl ON rc.id = sl.item_category
     WHERE rc.type = 'category' AND rc.is_active = 1
     GROUP BY rc.id, rc.name
     ORDER BY total_amount DESC
-", [$month_start, $today]);
+", [$month_start, $today, $month_start, $today]);
 
 $sales_by_category = [];
 foreach ($cat_sales_data as $row) {
@@ -651,24 +721,76 @@ if (empty($sales_by_category)) {
     $sales_by_category = ['Spirits' => 0.00, 'Beer' => 0.00, 'Wine' => 0.00, 'RTD' => 0.00, 'Tobacco' => 0.00];
 }
 
-// ── 2d. Hourly Sales (now part of trend) ──
-// We already have the hourly in trend for 'today' range
+// ── 2d. Hourly Sales (Today) ──
+$hourly_labels = ['8 AM', '9 AM', '10 AM', '11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM', '7 PM', '8 PM', '9 PM'];
+$hourly_values = array_fill(0, count($hourly_labels), 0.0);
+$hour_map = [8=>0, 9=>1, 10=>2, 11=>3, 12=>4, 13=>5, 14=>6, 15=>7, 16=>8, 17=>9, 18=>10, 19=>11, 20=>12, 21=>13];
+
+$pos_hourly = $db->fetchAll("
+    SELECT HOUR(pe.date_time) as hr, SUM(pe.net_amount) as total
+    FROM pos_entry pe
+    WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 {$loc_sql_pe}
+    GROUP BY hr
+", [$today]);
+
+foreach ($pos_hourly as $h_row) {
+    $hr = (int)$h_row['hr'];
+    if (isset($hour_map[$hr])) {
+        $hourly_values[$hour_map[$hr]] += (float)$h_row['total'];
+    }
+}
+
+$inv_hourly = $db->fetchAll("
+    SELECT HOUR(h.created_at) as hr, SUM(h.net_amount) as total
+    FROM customer_invoices ci
+    JOIN transaction_headers h ON ci.header_id = h.id
+    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND COALESCE(h.source, '') != 'pos_sync' AND h.txn_number NOT LIKE 'INV-POS%' AND h.txn_number NOT LIKE 'POS-SUM%'
+      {$loc_sql_h}
+    GROUP BY hr
+", [$today]);
+
+foreach ($inv_hourly as $h_row) {
+    $hr = (int)$h_row['hr'];
+    if (isset($hour_map[$hr])) {
+        $hourly_values[$hour_map[$hr]] += (float)$h_row['total'];
+    }
+}
+
+$sales_hourly_data = [
+    'labels' => $hourly_labels,
+    'values' => $hourly_values
+];
 
 // ══════════════════════════════════════════════════════════════════
 // 3. INVENTORY DASHBOARD
 // ══════════════════════════════════════════════════════════════════
 
-// ── 3a. Top Selling Items (this month - Transactions only) ──
+// ── 3a. Top Selling Items (this month - POS + Invoices) ──
+$loc_sql_pe = dash_loc_sql('pe');
 $top_selling = $db->fetchAll("
     SELECT i.sku, i.item_name, i.current_stock,
-           SUM(tl.quantity) as total_qty, SUM(tl.line_total) as total_amount
-    FROM transaction_lines tl
-    JOIN transaction_headers h ON tl.header_id = h.id
-    JOIN items i ON tl.item_id = i.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
-      AND h.txn_type = 'customer_invoice' AND i.is_deleted = 0 {$loc_sql_h}
-    GROUP BY tl.item_id ORDER BY total_amount DESC LIMIT 10
-", [$month_start, $month_end]);
+           SUM(sl.quantity) as total_qty, SUM(sl.line_total) as total_amount
+    FROM (
+        SELECT pi.item_id, pi.quantity, pi.net_amount as line_total
+        FROM pos_items pi JOIN pos_entry pe ON pi.pos_id = pe.id
+        WHERE DATE(pe.date_time) BETWEEN ? AND ? AND pe.is_deleted = 0 {$loc_sql_pe}
+        UNION ALL
+        SELECT tl.item_id, tl.quantity, tl.line_total
+        FROM transaction_lines tl JOIN transaction_headers h ON tl.header_id = h.id
+        WHERE h.txn_date BETWEEN ? AND ? 
+          AND h.is_deleted = 0 
+          AND h.status NOT IN ('void', 'voided', 'draft') 
+          AND h.txn_type = 'customer_invoice'
+          AND COALESCE(h.source, '') != 'pos_sync'
+          AND h.txn_number NOT LIKE 'INV-POS%'
+          AND h.txn_number NOT LIKE 'POS-SUM%'
+          {$loc_sql_h}
+    ) sl
+    JOIN items i ON sl.item_id = i.id
+    WHERE i.is_deleted = 0
+    GROUP BY sl.item_id ORDER BY total_amount DESC LIMIT 10
+", [$month_start, $month_end, $month_start, $month_end]);
 
 // ── 3b. Slow Moving Items ──
 $loc_sql_pe = dash_loc_sql('pe');
@@ -685,7 +807,7 @@ $slow_30 = $db->fetchAll("
             WHERE h.is_deleted = 0 AND h.status NOT IN ('voided','draft') AND h.txn_type = 'customer_invoice' {$loc_sql_h} GROUP BY tl.item_id
         ) c GROUP BY item_id
     ) ls ON i.id = ls.item_id
-    WHERE i.is_deleted = 0 AND i.is_active = 1
+    WHERE i.is_deleted = 0 AND i.is_active = 1 AND i.current_stock > 0
     HAVING days_inactive >= 30 ORDER BY days_inactive DESC LIMIT 15
 ", [$today]);
 
@@ -911,16 +1033,16 @@ $out_ap = $db->fetchAll("
     ORDER BY balance DESC LIMIT 10
 ");
 
-// Bills due this week (exclude deleted vendors and deleted/voided bills)
+// Bills due to pay (exclude deleted vendors and deleted/voided bills)
 $bills_due = $db->fetchAll("
     SELECT vb.id, vb.vendor_invoice_number, v.company_name, vb.balance_due, vb.due_date
     FROM vendor_bills vb JOIN vendors v ON vb.vendor_id = v.id
     JOIN transaction_headers h ON vb.header_id = h.id
-    WHERE vb.balance_due > 0 AND vb.due_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft')
+    WHERE vb.balance_due > 0.01
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND v.is_deleted = 0
-    ORDER BY vb.due_date ASC LIMIT 5
-", [$today, date('Y-m-d', strtotime('+7 days'))]);
+    ORDER BY vb.due_date ASC LIMIT 10
+");
 
 // Recent purchases
 $loc_sql_h  = dash_loc_sql('h');
@@ -1087,99 +1209,140 @@ if (abs($cash_diff) > 0.01) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 7. RECENT ACTIVITIES (Unified Timeline)
+// ══════════════════════════════════════════════════════════════════
+// 7. RECENT ACTIVITIES (Unified Timeline — Non-POS Latest Transactions)
 // ══════════════════════════════════════════════════════════════════
 
 $activities = [];
+$loc_sql_h = dash_loc_sql('h');
 
-// POS Today (exclude deleted)
-$ap = $db->fetchAll("
-    SELECT pe.id, pe.invoice_no, pe.date_time, c.full_name as party, pe.net_amount
-    FROM pos_entry pe LEFT JOIN customers c ON pe.customer_id = c.id AND c.is_deleted = 0
-    WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 {$loc_sql_pe}
-", [$today]);
-foreach ($ap as $r) {
-    $activities[] = [
-        'type' => 'POS Sale', 'ref' => $r['invoice_no'], 'id' => $r['id'],
-        'time' => date('H:i', strtotime($r['date_time'])),
-        'party' => $r['party'] ?? 'Walk-in', 'amount' => (float)$r['net_amount'],
-        'status' => 'completed', 'link' => '?page=transactions/pos/view&id=' . $r['id']
-    ];
-}
-
-// Invoices Today (exclude deleted/voided/draft)
-$ai = $db->fetchAll("
-    SELECT h.id, h.txn_number, h.created_at, c.full_name as party, ci.total_amount, h.status
-    FROM transaction_headers h JOIN customer_invoices ci ON h.id = ci.header_id
-    LEFT JOIN customers c ON ci.customer_id = c.id AND c.is_deleted = 0
-    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft') {$loc_sql_h}
-", [$today]);
-foreach ($ai as $r) {
-    $activities[] = [
-        'type' => 'Invoice', 'ref' => $r['txn_number'], 'id' => $r['id'],
-        'time' => date('H:i', strtotime($r['created_at'])),
-        'party' => $r['party'] ?? 'Customer', 'amount' => (float)$r['total_amount'],
-        'status' => $r['status'], 'link' => '?page=transactions/invoice/view&id=' . $r['id']
-    ];
-}
-
-// Bills Today (exclude deleted/voided/draft)
-$ab = $db->fetchAll("
-    SELECT h.id, h.txn_number, h.created_at, v.company_name as party, vb.total_amount, h.status
-    FROM transaction_headers h JOIN vendor_bills vb ON h.id = vb.header_id
-    LEFT JOIN vendors v ON vb.vendor_id = v.id AND v.is_deleted = 0
-    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft') {$loc_sql_h}
-", [$today]);
-foreach ($ab as $r) {
-    $activities[] = [
-        'type' => 'Purchase', 'ref' => $r['txn_number'], 'id' => $r['id'],
-        'time' => date('H:i', strtotime($r['created_at'])),
-        'party' => $r['party'] ?? 'Vendor', 'amount' => (float)$r['total_amount'],
-        'status' => $r['status'], 'link' => '?page=transactions/bill/view&id=' . $r['id']
-    ];
-}
-
-// Payments Today (exclude deleted/voided)
-$apay = $db->fetchAll("
-    SELECT h.id, h.txn_number, h.created_at,
-           COALESCE(c.full_name, v.company_name) as party,
-           SUM(p.amount) as total, p.payment_type, h.status
-    FROM transaction_headers h JOIN payments p ON h.id = p.header_id
-    LEFT JOIN customers c ON p.customer_id = c.id AND c.is_deleted = 0
-    LEFT JOIN vendors v ON p.vendor_id = v.id AND v.is_deleted = 0
-    WHERE h.txn_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided','draft') {$loc_sql_h}
-    GROUP BY h.id
-", [$today]);
-foreach ($apay as $r) {
-    $activities[] = [
-        'type' => $r['payment_type'] === 'customer_payment' ? 'Payment In' : 'Payment Out',
-        'ref' => $r['txn_number'], 'id' => $r['id'],
-        'time' => date('H:i', strtotime($r['created_at'])),
-        'party' => $r['party'] ?? 'Party', 'amount' => (float)$r['total'],
-        'status' => $r['status'], 'link' => '?page=transactions/payment/view&id=' . $r['id']
-    ];
-}
-
-// Journal Today (exclude deleted/voided)
-$aj = $db->fetchAll("
-    SELECT h.id, h.txn_number, h.created_at, h.memo, h.net_amount, h.status
+$recent_txns = $db->fetchAll("
+    SELECT 
+        h.id, 
+        h.txn_number, 
+        h.txn_type, 
+        h.txn_date, 
+        h.created_at, 
+        h.status,
+        h.net_amount,
+        h.memo,
+        c.full_name as customer_party,
+        v.company_name as vendor_party,
+        ci.total_amount as invoice_amount,
+        vb.total_amount as bill_amount,
+        (SELECT SUM(p.amount) FROM payments p WHERE p.header_id = h.id) as payment_amount,
+        (SELECT p.payment_type FROM payments p WHERE p.header_id = h.id LIMIT 1) as payment_type
     FROM transaction_headers h
-    WHERE h.txn_date = ? AND h.is_deleted = 0
-      AND h.txn_type = 'journal_entry' AND h.status NOT IN ('voided','draft') {$loc_sql_h}
-", [$today]);
-foreach ($aj as $r) {
-    $net = (float)($r['net_amount'] ?? 0);
+    LEFT JOIN customer_invoices ci ON h.id = ci.header_id
+    LEFT JOIN customers c ON (ci.customer_id = c.id OR h.party_id = c.id) AND c.is_deleted = 0
+    LEFT JOIN vendor_bills vb ON h.id = vb.header_id
+    LEFT JOIN vendors v ON (vb.vendor_id = v.id OR h.party_id = v.id) AND v.is_deleted = 0
+    WHERE h.is_deleted = 0 
+      AND h.status NOT IN ('voided', 'draft', 'void')
+      AND h.txn_number NOT LIKE 'POS-%'
+      AND h.txn_number NOT LIKE 'INV-POS-%'
+      AND h.txn_number NOT LIKE 'PAY-POS-%'
+      AND h.txn_number NOT LIKE 'POS-SUM-%'
+      AND COALESCE(h.source, '') != 'pos_sync'
+      {$loc_sql_h}
+    ORDER BY h.created_at DESC
+    LIMIT 20
+");
+
+foreach ($recent_txns as $r) {
+    $txn_time = strtotime($r['created_at']);
+    $time_str = (date('Y-m-d', $txn_time) === $today) 
+        ? date('H:i', $txn_time) 
+        : date('d M, H:i', $txn_time);
+
+    $type = 'Transaction';
+    $party = '';
+    $amount = 0.0;
+    $link = '?page=transactions/view&id=' . $r['id'];
+
+    switch ($r['txn_type']) {
+        case 'customer_invoice':
+            $type = 'Invoice';
+            $party = $r['customer_party'] ?: 'Customer';
+            $amount = (float)($r['invoice_amount'] ?: $r['net_amount']);
+            $link = '?page=transactions/invoice/view&id=' . $r['id'];
+            break;
+        case 'vendor_bill':
+            $type = 'Purchase';
+            $party = $r['vendor_party'] ?: 'Vendor';
+            $amount = (float)($r['bill_amount'] ?: $r['net_amount']);
+            $link = '?page=transactions/bill/view&id=' . $r['id'];
+            break;
+        case 'customer_payment':
+            $type = 'Payment In';
+            $party = $r['customer_party'] ?: 'Customer';
+            $amount = (float)($r['payment_amount'] ?: $r['net_amount']);
+            $link = '?page=transactions/customer_payment/view&id=' . $r['id'];
+            break;
+        case 'vendor_payment':
+            $type = 'Payment Out';
+            $party = $r['vendor_party'] ?: 'Vendor';
+            $amount = (float)($r['payment_amount'] ?: $r['net_amount']);
+            $link = '?page=transactions/vendor_payment/view&id=' . $r['id'];
+            break;
+        case 'Journal':
+        case 'journal_entry':
+            $type = 'Journal';
+            $party = $r['memo'] ?: 'Journal Entry';
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/journal/view&id=' . $r['id'];
+            break;
+        case 'Expense':
+        case 'expense':
+            $type = 'Expense';
+            $party = $r['memo'] ?: 'Expense';
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/expense/view&id=' . $r['id'];
+            break;
+        case 'credit_memo':
+            $type = 'Credit Memo';
+            $party = $r['customer_party'] ?: ($r['memo'] ?: 'Customer Return');
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/credit_memo/view&id=' . $r['id'];
+            break;
+        case 'account_transfer':
+            $type = 'Transfer';
+            $party = $r['memo'] ?: 'Account Transfer';
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/account_transfer/view&id=' . $r['id'];
+            break;
+        case 'inventory_transfer':
+            $type = 'Stock Transfer';
+            $party = $r['memo'] ?: 'Inventory Transfer';
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/inventory_transfer/view&id=' . $r['id'];
+            break;
+        case 'cash_denomination':
+            $type = 'Cash Count';
+            $party = 'Cash Denomination';
+            $amount = (float)$r['net_amount'];
+            $link = '?page=transactions/cash_denom/view&id=' . $r['id'];
+            break;
+        default:
+            $type = ucwords(str_replace('_', ' ', $r['txn_type']));
+            $party = $r['memo'] ?: ($r['customer_party'] ?: $r['vendor_party']);
+            $amount = (float)$r['net_amount'];
+            break;
+    }
+
     $activities[] = [
-        'type' => 'Journal', 'ref' => $r['txn_number'], 'id' => $r['id'],
-        'time' => date('H:i', strtotime($r['created_at'])),
-        'party' => $r['memo'] ?? 'Journal Entry', 'amount' => $net,
-        'status' => $r['status'], 'link' => '?page=transactions/journal/view&id=' . $r['id']
+        'type'   => $type,
+        'ref'    => $r['txn_number'],
+        'id'     => $r['id'],
+        'time'   => $time_str,
+        'party'  => $party ?: 'N/A',
+        'amount' => $amount,
+        'status' => $r['status'],
+        'link'   => $link
     ];
 }
 
-// Sort by time (most recent first)
-usort($activities, fn($a, $b) => strtotime($b['time'] ? date('Y-m-d ' . $b['time']) : 'now') <=> strtotime($a['time'] ? date('Y-m-d ' . $a['time']) : 'now'));
-$recent = array_slice($activities, 0, 20);
+$recent = $activities;
 
 // ══════════════════════════════════════════════════════════════════
 // USER PREFERENCES
@@ -1203,7 +1366,7 @@ $bank_acct_ids = array_column($bank_accounts_list, 'id');
 $bank_agg_rows = [];
 if (!empty($bank_acct_ids)) {
     $ba_ph = implode(',', array_fill(0, count($bank_acct_ids), '?'));
-    $ba_params = array_merge($bank_acct_ids, $bank_acct_ids, [$today, $today]);
+    $loc_sql_h = dash_loc_sql('h');
     $bank_agg_raw = $db->fetchAll("
         SELECT
             je.account_id,
@@ -1213,7 +1376,7 @@ if (!empty($bank_acct_ids)) {
             COALESCE(SUM(CASE WHEN je.entry_type = 'credit' AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS today_out
         FROM journal_entries je
         JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id IN ({$ba_ph})
+        WHERE je.account_id IN ({$ba_ph}) {$loc_sql_h}
         GROUP BY je.account_id
     ", array_merge([$today, $today], $bank_acct_ids));
     foreach ($bank_agg_raw as $bar) {
@@ -1293,6 +1456,7 @@ $response = [
         'today_net_profit'   => make_kpi($net_profit_today, $net_profit_yest),
         'cash_on_hand'       => make_kpi($bal_today['cash'], $bal_yest['cash']),
         'bank_balance'       => make_kpi($bal_today['bank'], $bal_yest['bank']),
+        'fixed_deposit'      => make_kpi($bal_today['fd'], $bal_yest['fd']),
         'ar'                 => make_kpi($bal_today['ar'], $bal_yest['ar']),
         'ap'                 => make_kpi($bal_today['ap'], $bal_yest['ap']),
         'inventory_value'    => make_kpi((float)$inv_stats['inventory_value'], 0),
@@ -1328,7 +1492,7 @@ $response = [
         'labels' => array_keys($sales_by_category),
         'values' => array_values($sales_by_category)
     ],
-    'sales_hourly'  => $trend_data, // same as trend when range='today'
+    'sales_hourly'  => $sales_hourly_data,
 
     // Row 3: Inventory
     'inventory' => [

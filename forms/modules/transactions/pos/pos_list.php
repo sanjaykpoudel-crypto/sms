@@ -61,6 +61,9 @@ $list = $db->fetchAll($sql);
                         <div style="display: flex; gap: 5px;">
                             <a href="?page=transactions/pos/view&id=<?php echo $row['id']; ?>" class="ns-btn" title="View Details"><i class="fas fa-eye"></i></a>
                             <a href="api/print_pos.php?id=<?php echo $row['id']; ?>" target="_blank" class="ns-btn" title="Print Receipt"><i class="fas fa-print"></i></a>
+                            <?php if ($row['status'] == 'completed'): ?>
+                                <a href="?page=transactions/credit_memo/manage&pos_id=<?php echo $row['id']; ?>" class="ns-btn" style="color: #d97706; border-color: #fde68a; background: #fffbeb;" title="Return / Refund POS Sale"><i class="fas fa-undo"></i></a>
+                            <?php endif; ?>
                         </div>
                     </td>
                 </tr>

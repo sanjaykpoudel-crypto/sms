@@ -3,10 +3,10 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$today = date('Y-m-d');
-$month_start = date('Y-m-01');
-$date_from = $_GET['date_from'] ?? $month_start;
-$date_to = $_GET['date_to'] ?? $today;
+$fy        = rpt_get_current_fiscal_year_dates();
+$today     = date('Y-m-d');
+$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_from = $_GET['date_from'] ?? $fy['start_date'];
 
 require_once 'api/reference_helper.php';
 
@@ -21,7 +21,8 @@ $sql = "
     FROM accounts a
     JOIN journal_entries j ON a.id = j.account_id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+    WHERE j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     GROUP BY a.id, a.account_name, a.account_type
     HAVING (total_debit != 0 OR total_credit != 0)
     ORDER BY a.account_name ASC

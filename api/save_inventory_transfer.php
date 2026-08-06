@@ -45,6 +45,7 @@ try {
     $item_ids         = $_POST['item_id'] ?? [];
     $quantities       = $_POST['quantity'] ?? [];
     $unit_costs       = $_POST['unit_cost'] ?? [];
+    $mrps             = $_POST['mrp'] ?? [];
 
     if (empty($from_location_id)) {
         throw new Exception("Please select a Source (From) Location.");
@@ -64,7 +65,7 @@ try {
     $pdo->beginTransaction();
 
     if (empty($txn_number)) {
-        $txn_number = getNextTransactionNumber('inventory_transfer');
+        $txn_number = getNextTransactionNumber('inventory_transfer', $from_location_id);
     }
 
     $fiscal = calculate_fiscal_info($txn_date);
@@ -93,7 +94,8 @@ try {
             'item_id'    => $item_id,
             'quantity'   => $qty,
             'unit_cost'  => $cost,
-            'line_total' => $line_total
+            'line_total' => $line_total,
+            'mrp'        => isset($mrps[$idx]) && is_numeric($mrps[$idx]) ? (float)$mrps[$idx] : null
         ];
     }
 
@@ -105,7 +107,7 @@ try {
         $id = generate_uuid();
         $db->execute("
             INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, created_by, location_id)
-            VALUES (?, ?, 'inventory_transfer', ?, ?, ?, ?, 'posted', ?, ?, ?, 'user', ?, ?, ?)
+            VALUES (?, ?, 'inventory_transfer', ?, ?, ?, ?, 'posted', ?, ?, ?, NULL, ?, ?, ?)
         ", [
             $id, $txn_number, $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
@@ -147,7 +149,44 @@ try {
             generate_uuid(), $id, $idx + 1, $item_id, $inv_account_id, $line['quantity'], $line['unit_cost'], $line['unit_cost'], $line['line_total']
         ]);
 
-        // Sync real-time inventory balances for Source & Destination locations
+        // Update MRP on item master if provided
+        if ($line['mrp'] !== null && $line['mrp'] > 0) {
+            $db->execute("UPDATE items SET mrp = ? WHERE id = ?", [$line['mrp'], $item_id]);
+        }
+
+        // Update cost_price and MRP in inventory_balances for both from and to locations
+        $unit_cost = $line['unit_cost'];
+        foreach ([$from_location_id, $to_location_id] as $loc_id) {
+            $bal = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $loc_id]);
+            if ($bal) {
+                $mrp_update = ($line['mrp'] !== null && $line['mrp'] > 0) ? $line['mrp'] : null;
+                if ($mrp_update !== null) {
+                    $db->execute(
+                        "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, mrp = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
+                        [$unit_cost, $unit_cost, $mrp_update, $item_id, $loc_id]
+                    );
+                } else {
+                    $db->execute(
+                        "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
+                        [$unit_cost, $unit_cost, $item_id, $loc_id]
+                    );
+                }
+            } else if ($unit_cost > 0) {
+                // Create a balance record for this location if it doesn't exist
+                $mrp_val = ($line['mrp'] !== null && $line['mrp'] > 0) ? $line['mrp'] : null;
+                $db->execute(
+                    "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, mrp, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?, NOW())",
+                    [generate_uuid(), $item_id, $loc_id, $unit_cost, $unit_cost, $mrp_val]
+                );
+            }
+        }
+
+        // Also update the global items.cost_price to reflect transfer cost
+        if ($unit_cost > 0) {
+            $db->execute("UPDATE items SET cost_price = ? WHERE id = ?", [$unit_cost, $item_id]);
+        }
+
+        // Sync real-time inventory balances (stock quantities) for all locations
         sync_and_get_item_inventory_balances($db, $item_id);
     }
 

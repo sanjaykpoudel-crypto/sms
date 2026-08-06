@@ -73,15 +73,26 @@ try {
 
     $denom_type = ($party_id === 'Shift_A') ? 'opening' : 'closing';
 
+    // Compute system cash balance from the default cash account's journal balance
+    $cash_account = get_accounting_preference('default_cash_account') ?: 'acc-1010';
+    $cash_bal_row = $db->fetchOne("
+        SELECT COALESCE(SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END), 0) AS bal
+        FROM journal_entries je
+        JOIN transaction_headers th ON je.header_id = th.id
+        WHERE je.account_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ", [$cash_account]);
+    $system_cash_balance = round((float)($cash_bal_row['bal'] ?? 0), 2);
+    $difference = round($net_amount - $system_cash_balance, 2);
+
     $db->execute("INSERT INTO cash_denominations (
         id, header_id, denomination_date, denomination_type, 
         note_1000, note_500, note_100, note_50, note_20, note_10, 
-        coin_5, coin_2, coin_1, total_cash, counted_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        coin_5, coin_2, coin_1, total_cash, system_cash_balance, difference, counted_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
         generate_uuid(), $id, $txn_date, $denom_type,
         $note_1000, $note_500, $note_100, $note_50, $note_20, $note_10,
         $coin_5, $coin_2, $coin_1,
-        $net_amount,
+        $net_amount, $system_cash_balance, $difference,
         $_SESSION['user_id']
     ]);
 

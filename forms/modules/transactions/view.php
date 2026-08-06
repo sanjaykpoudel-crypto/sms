@@ -141,12 +141,23 @@ $items = $db->fetchAll("
 // Fetch GL Entries
 $gl_entries = $db->fetchAll("
     SELECT je.*, a.account_name,
-           COALESCE(c.full_name, v.company_name, u.full_name) as party_name
+           COALESCE(
+               c.full_name, 
+               v.company_name, 
+               u.full_name,
+               h_c.full_name,
+               h_v.company_name,
+               h_u.full_name
+           ) as party_name
     FROM journal_entries je 
     JOIN accounts a ON je.account_id = a.id 
     LEFT JOIN customers c ON je.party_id = c.id AND je.party_type = 'customer'
     LEFT JOIN vendors v ON je.party_id = v.id AND je.party_type = 'vendor'
     LEFT JOIN users u ON je.party_id = u.id AND je.party_type = 'user'
+    LEFT JOIN transaction_headers th ON je.header_id = th.id
+    LEFT JOIN customers h_c ON th.party_id = h_c.id AND th.party_type = 'customer'
+    LEFT JOIN vendors h_v ON th.party_id = h_v.id AND th.party_type = 'vendor'
+    LEFT JOIN users h_u ON th.party_id = h_u.id AND th.party_type = 'user'
     WHERE je.header_id = :id
     ORDER BY je.entry_type DESC, je.id ASC
 ", ['id' => $id]);
@@ -159,8 +170,8 @@ $links = $db->fetchAll("
     FROM transaction_links tl
     LEFT JOIN transaction_headers p ON tl.parent_id = p.id
     LEFT JOIN transaction_headers c ON tl.child_id = c.id
-    WHERE tl.parent_id = :id OR tl.child_id = :id
-", ['id' => $id]);
+    WHERE tl.parent_id = :parent_id OR tl.child_id = :child_id
+", ['parent_id' => $id, 'child_id' => $id]);
 
 // Also fetch from payments directly and via transaction_links
 $payments = $db->fetchAll("
@@ -171,15 +182,15 @@ $payments = $db->fetchAll("
     JOIN transaction_headers th ON tl.parent_id = th.id
     LEFT JOIN payments p ON p.header_id = th.id
     LEFT JOIN accounts a ON p.bank_account_id = a.id
-    WHERE tl.child_id = :id AND tl.link_type LIKE 'payment:%'
+    WHERE tl.child_id = :child_id AND tl.link_type LIKE 'payment:%'
     UNION DISTINCT
     SELECT p.id, p.header_id, p.payment_method, p.payment_date, th.txn_number, th.status, p.amount,
            a.account_name
     FROM payments p
     LEFT JOIN transaction_headers th ON p.header_id = th.id
     LEFT JOIN accounts a ON p.bank_account_id = a.id
-    WHERE p.applied_to_txn_id = :id
-", ['id' => $id]);
+    WHERE p.applied_to_txn_id = :applied_id
+", ['child_id' => $id, 'applied_id' => $id]);
 
 // Audit Logs
 $audit_logs = $db->fetchAll("
@@ -286,7 +297,7 @@ if ($txn_type == 'vendor_bill') {
     $list_url = "?page=transactions/cash_denom";
 } elseif ($txn_type == 'account_transfer') {
     $edit_url = "?page=transactions/transfer/manage&id=" . $id;
-    $list_url = "?page=transactions/transfer";
+    $list_url = "?page=transactions/transfer/manage";
 } elseif ($txn_type == 'credit_memo') {
     $edit_url = "?page=transactions/credit_memo/manage&id=" . $id;
     $list_url = "?page=transactions/credit_memo";
@@ -453,6 +464,26 @@ if ($txn_type == 'vendor_bill') {
     }
 </style>
 
+<?php 
+$is_pos_summary = (strpos($header['txn_number'] ?? '', 'INV-POS-') === 0 || strpos($header['txn_number'] ?? '', 'POS-SUM-') === 0 || strpos($header['txn_number'] ?? '', 'PAY-POS-') === 0);
+if ($is_pos_summary): 
+?>
+<div style="margin-bottom: 20px; padding: 14px 20px; background: #eff6ff; border: 1px solid #bfdbfe; border-left: 5px solid #3b82f6; border-radius: 8px; color: #1e40af; font-size: 13.5px; box-shadow: 0 2px 8px rgba(59,130,246,0.08);">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-info-circle" style="font-size: 18px; color: #2563eb;"></i>
+            <div>
+                <strong style="color: #1e3a8a;">Automated Daily POS Summary Rollup:</strong>
+                <span style="color: #1e40af; margin-left: 4px;">This invoice is automatically aggregated from individual counter POS receipts for <strong><?= date('M d, Y', strtotime($header['txn_date'])) ?></strong>. To view or edit individual sales receipts, open the POS Register.</span>
+            </div>
+        </div>
+        <a href="?page=transactions/pos/manage" class="ns-btn" style="background: #2563eb; color: #ffffff; border: none; font-weight: 600; padding: 6px 14px; text-decoration: none;">
+            <i class="fas fa-cash-register" style="margin-right: 6px;"></i> Open POS Register
+        </a>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="view-header">
     <div>
         <div class="view-title">
@@ -511,7 +542,11 @@ if ($txn_type == 'vendor_bill') {
                 </a>
             <?php endif; ?>
 
-            <?php if (!$is_locked): ?>
+            <?php if ($is_pos_summary): ?>
+                <button class="ns-btn" disabled
+                    style="color: #94a3b8; background: #f8fafc; border-color: #cbd5e1; cursor: not-allowed; opacity: 0.7;"
+                    title="Edit Disabled — POS generated invoices & payments are managed in the POS Register"><i class="fas fa-lock"></i> Edit Disabled (POS)</button>
+            <?php elseif (!$is_locked): ?>
                 <a href="<?php echo $edit_url; ?>" class="ns-btn"><i class="fas fa-edit"></i> Edit</a>
             <?php else: ?>
                 <button class="ns-btn" disabled
@@ -580,7 +615,7 @@ if ($txn_type == 'vendor_bill') {
             </div>
             <div class="detail-group">
                 <div class="detail-label">Memo</div>
-                <div class="detail-value"><?php echo nl2br(htmlspecialchars($header['memo'] ?: 'None')); ?></div>
+                <div class="detail-value"><?php echo nl2br(htmlspecialchars($header['memo'] ?? '')); ?></div>
             </div>
         </div>
 
@@ -651,10 +686,20 @@ if ($txn_type == 'vendor_bill') {
                         <div class="detail-value">Rs. <?php echo number_format($details['tax_amount'] ?? 0, 2); ?></div>
                     </div>
                 <?php endif; ?>
+                <?php
+                $display_total_amount = $details['total_amount'] ?? null;
+                if ($display_total_amount === null || (in_array(strtolower($txn_type), ['journal', 'account_transfer']) && (float)$display_total_amount == 0)) {
+                    $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit' AND account_id != 'acc-3300'", [$id])['s'] ?? 0;
+                    if ($gl_debit_sum == 0) {
+                        $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit'", [$id])['s'] ?? 0;
+                    }
+                    $display_total_amount = $gl_debit_sum > 0 ? $gl_debit_sum : abs($header['net_amount'] ?? 0);
+                }
+                ?>
                 <div class="detail-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
                     <div class="detail-label" style="font-size: 14px; color: #333;">Total Amount</div>
                     <div class="detail-value" style="font-size: 18px; font-weight: 700;">Rs.
-                        <?php echo number_format($details['total_amount'] ?? $header['net_amount'] ?? 0, 2); ?></div>
+                        <?php echo number_format($display_total_amount, 2); ?></div>
                 </div>
             <?php endif; ?>
         </div>
@@ -689,7 +734,7 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                 style="margin-right: 6px;"></i><?php echo $partyTabTitle; ?></div>
     <?php endif; ?>
 
-    <?php if (in_array($txn_type, ['customer_payment', 'vendor_payment'])): ?>
+    <?php if (in_array($txn_type, ['customer_payment', 'vendor_payment', 'credit_memo', 'bill_credit', 'vendor_credit'])): ?>
         <div class="ns-tab" data-target="tab-applied">Applied Documents</div>
     <?php endif; ?>
 
@@ -947,8 +992,11 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                         <td style="text-align: right;"><?php echo $dr > 0 ? number_format($dr, 2) : ''; ?></td>
                         <td style="text-align: right;"><?php echo $cr > 0 ? number_format($cr, 2) : ''; ?></td>
                         <td><?php echo htmlspecialchars($je['memo']); ?></td>
-                        <td><span
-                                style="font-size: 11px; color: #64748b;"><?php echo htmlspecialchars($je['party_name'] ?? '-'); ?></span>
+                        <td>
+                            <?php 
+                                $partyNameDisp = !empty($je['party_name']) ? $je['party_name'] : ($details['entity_name'] ?? ($header['party_name'] ?? ''));
+                            ?>
+                            <span style="font-size: 12px; color: #334155; font-weight: 500;"><?php echo htmlspecialchars($partyNameDisp); ?></span>
                         </td>
                     </tr>
                 <?php endforeach; ?>
@@ -964,18 +1012,27 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
 </div>
 
 <!-- APPLIED DOCUMENTS TAB -->
-<?php if (in_array($txn_type, ['customer_payment', 'vendor_payment'])): ?>
+<?php if (in_array($txn_type, ['customer_payment', 'vendor_payment', 'credit_memo', 'bill_credit', 'vendor_credit'])): ?>
     <?php
+    $linkPrefixPattern = 'payment:%';
+    if ($txn_type === 'credit_memo') {
+        $linkPrefixPattern = 'credit_memo_apply:%';
+    } elseif (in_array($txn_type, ['bill_credit', 'vendor_credit'])) {
+        $linkPrefixPattern = '%credit_apply:%';
+    }
+
     $applied_records = $db->fetchAll("
     SELECT tl.*, th.txn_number as applied_to_number, th.txn_type as applied_to_type, th.status as applied_to_status,
            CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)) as amount
     FROM transaction_links tl
     JOIN transaction_headers th ON tl.child_id = th.id
-    WHERE tl.parent_id = :id AND tl.link_type LIKE 'payment:%'
-", ['id' => $id]);
+    WHERE tl.parent_id = :id AND tl.link_type LIKE :pattern
+", ['id' => $id, 'pattern' => $linkPrefixPattern]);
     ?>
     <div class="ns-tab-content" id="tab-applied">
-        <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">Invoices / Bills Paid</h3>
+        <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">
+            <?php echo in_array($txn_type, ['credit_memo', 'bill_credit', 'vendor_credit']) ? 'Applied Invoices / Bills' : 'Invoices / Bills Paid'; ?>
+        </h3>
         <?php if (count($applied_records) == 0): ?>
             <p style="color: #888; font-style: italic;">No applied documents found.</p>
         <?php else: ?>

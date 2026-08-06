@@ -9,6 +9,9 @@ if (!isset($_SESSION['user_id'])) {
 }
 require_once '../database/DBConnection.php';
 require_once 'reference_helper.php';
+if (!function_exists('sysinfo_get')) {
+    require_once __DIR__ . '/system_cache.php';
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");
@@ -20,10 +23,12 @@ $pdo = $db->getConnection();
 try {
     $pdo->beginTransaction();
 
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
     $id = $_POST['id'] ?? null;
     $txn_number = $_POST['txn_number'] ?? '';
     if (empty($txn_number)) {
-        $txn_number = getNextTransactionNumber('vendor_bill');
+        $txn_number = getNextTransactionNumber('vendor_bill', $location_id);
+        incrementTransactionNumber('vendor_bill');
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
 
@@ -41,7 +46,6 @@ try {
     $ref_number = !empty($_POST['ref_number']) ? $_POST['ref_number'] : $txn_number;
     $memo = $_POST['memo'] ?? '';
     $discount_amount = (float)($_POST['discount_amount'] ?? 0);
-    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
     
     // Status preservation for edit mode
     if ($id) {
@@ -87,10 +91,12 @@ try {
     $rates = $_POST['rate'] ?? [];
     $amounts = $_POST['amount'] ?? [];
     $tax_rates = $_POST['tax_pct'] ?? [];
+    $mrps = $_POST['mrp'] ?? [];
     
     $subtotal = 0;
     $tax_total = 0;
     $gl_items = [];
+    $synced_items = [];
 
     foreach ($item_ids as $idx => $item_id) {
         if (empty($item_id)) continue;
@@ -114,13 +120,34 @@ try {
             generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $rate, 0
         ]);
         
-        // Add new stock and update cost price
+        // Add new stock and update cost price on item master + location-specific inventory_balances
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $item_sku = $db->fetchOne("SELECT sku FROM items WHERE id = ?", [$item_id])['sku'] ?? '';
+            $new_cost = ($item_sku === 'I-00013') ? 0.00 : $rate;
             if ($item_sku === 'I-00013') {
                 $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = 0.00 WHERE id = ?", [$qty, $item_id]);
             } else {
                 $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
+            }
+
+            // Update MRP on item master if provided
+            $mrp_val = isset($mrps[$idx]) && is_numeric($mrps[$idx]) ? (float)$mrps[$idx] : 0;
+            if ($mrp_val > 0) {
+                $db->execute("UPDATE items SET mrp = ? WHERE id = ?", [$mrp_val, $item_id]);
+            }
+
+            // Update cost_price (and MRP) in inventory_balances for the receiving location
+            if ($new_cost > 0) {
+                $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
+                if ($bal_exists) {
+                    if ($mrp_val > 0) {
+                        $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, mrp = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$new_cost, $new_cost, $mrp_val, $item_id, $location_id]);
+                    } else {
+                        $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$new_cost, $new_cost, $item_id, $location_id]);
+                    }
+                } else {
+                    $db->execute("INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, mrp, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?, NOW())", [generate_uuid(), $item_id, $location_id, $new_cost, $new_cost, $mrp_val ?: null]);
+                }
             }
         }
 
@@ -129,6 +156,7 @@ try {
             'inv_acc' => get_effective_account($item_id, 'inventory') ?: 'acc-1200',
             'amount' => $line_amount
         ];
+        $synced_items[] = $item_id;
     }
 
     $grand_total = $subtotal + $tax_total - $discount_amount;
@@ -216,18 +244,24 @@ try {
     }
 
     $pdo->commit();
+    // Sync inventory balances (stock + cost) across all locations for each affected item
+    foreach (array_unique($synced_items) as $sync_item_id) {
+        sync_and_get_item_inventory_balances($db, $sync_item_id);
+    }
     require_once __DIR__ . '/reference_helper.php';
     if (function_exists('auto_sync_pos_items_and_invoices')) {
         auto_sync_pos_items_and_invoices(true);
     }
     clear_dashboard_cache();
     ob_end_clean();
-    echo json_encode(['status' => 'success', 'message' => 'Vendor Bill has been saved successfully.', 'id' => $id]);
+    http_response_code(200);
+    echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Vendor Bill has been saved successfully.', 'id' => $id]);
     exit;
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     ob_end_clean();
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;
 }
 

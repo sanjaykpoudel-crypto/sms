@@ -46,8 +46,15 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             style="margin-right: 10px; color: var(--ns-accent);"></i>
         <?php echo $id ? 'Edit' : 'New'; ?> Sales Invoice</div>
     <div class="ns-page-actions">
-        <button type="submit" form="invoice-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
-        <?php if ($id): ?>
+        <?php 
+        $is_pos_inv = (!empty($data['txn_number']) && (strpos($data['txn_number'], 'INV-POS-') === 0 || strpos($data['txn_number'], 'POS-SUM-') === 0 || strpos($data['txn_number'], 'POS-') === 0));
+        if ($is_pos_inv): 
+        ?>
+            <button type="button" class="ns-btn" disabled style="color: #94a3b8; background: #f8fafc; border-color: #cbd5e1; cursor: not-allowed;" title="Editing disabled for POS created invoices"><i class="fas fa-lock"></i> Save Disabled (POS)</button>
+        <?php else: ?>
+            <button type="submit" form="invoice-form" class="ns-btn ns-btn-primary"><i class="fas fa-save"></i> Save</button>
+        <?php endif; ?>
+        <?php if ($id && !$is_pos_inv): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;" onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/invoice')"><i class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
         <a href="?page=transactions/invoice" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
@@ -57,7 +64,23 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
 <div class="ns-form-container">
     <form id="invoice-form" method="POST" action="api/save_invoice.php">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
-        <input type="hidden" name="txn_type" value="customer_invoice">
+        <!-- POS Summary Rollup Warning Banner -->
+        <?php if (!empty($data['txn_number']) && (strpos($data['txn_number'], 'INV-POS-') === 0 || strpos($data['txn_number'], 'POS-SUM-') === 0)): ?>
+        <div style="margin-bottom: 20px; padding: 14px 20px; background: #fffbebfb; border: 1px solid #fde68a; border-left: 5px solid #f59e0b; border-radius: 8px; color: #92400e; font-size: 13px; box-shadow: 0 2px 8px rgba(245,158,11,0.08);">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 18px; color: #d97706;"></i>
+                    <div>
+                        <strong style="color: #78350f;">Automated POS Rollup Notice:</strong>
+                        <span style="color: #92400e; margin-left: 4px;"><code><?= htmlspecialchars($data['txn_number']) ?></code> is an automatically generated daily POS summary rollup. Individual sales are managed in the POS Register.</span>
+                    </div>
+                </div>
+                <a href="?page=transactions/pos/manage" class="ns-btn" style="background: #d97706; color: #ffffff; border: none; font-weight: 600; padding: 6px 14px; text-decoration: none;">
+                    <i class="fas fa-cash-register" style="margin-right: 6px;"></i> Go to POS Register
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- Top Credit Limit Exceeded Warning Banner -->
         <div id="credit-limit-warning-banner" style="display: none; margin-bottom: 20px; padding: 14px 20px; background: #fff1f2; border: 1px solid #fecdd3; border-left: 6px solid #e11d48; border-radius: 8px; color: #9f1239; font-size: 13px; box-shadow: 0 4px 14px rgba(225, 29, 72, 0.12); transition: opacity 0.4s ease, transform 0.4s ease;">
@@ -116,7 +139,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 <div class="ns-form-group">
                     <label class="ns-label">Customer <span class="ns-required">*</span></label>
                     <select name="party_id" class="ns-select" onchange="updateCustomerInfo(this)" required>
-                        <option value="">Select Customer</option>
+                        <option value="" disabled <?php echo empty($data['party_id']) ? 'selected' : ''; ?> hidden>Select Customer</option>
                         <?php foreach ($all_customers as $c): ?>
                             <option value="<?php echo $c['id']; ?>" 
                                     data-phone="<?php echo htmlspecialchars($c['phone'] ?? ''); ?>" 
@@ -149,7 +172,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 <div class="ns-form-group">
                     <label class="ns-label">Location</label>
                     <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
+                        <option value="" disabled <?php echo empty($data['location_id']) ? 'selected' : ''; ?> hidden>-- Select Location --</option>
                         <?php 
                         $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
                         foreach (get_active_locations() as $loc): 
@@ -248,7 +271,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                             <td style="text-align: center; vertical-align: middle;"><?php echo $idx + 1; ?></td>
                             <td>
                                 <select name="item_id[]" class="ns-select" onchange="invoiceFetchItem(this)" required>
-                                    <option value="">Select item...</option>
+                                    <option value="" disabled <?php echo empty($selItem) ? 'selected' : ''; ?> hidden>Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
                                         <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
                                     <?php endforeach; ?>

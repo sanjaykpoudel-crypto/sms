@@ -7,9 +7,10 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
+$fy         = rpt_get_current_fiscal_year_dates();
 $today      = date('Y-m-d');
-$date_from  = $_GET['date_from'] ?? date('Y-m-01');
-$date_to    = $_GET['date_to']   ?? $today;
+$date_from  = $_GET['date_from'] ?? $fy['start_date'];
+$date_to    = $_GET['date_to']   ?? $fy['end_date'];
 
 $loc_sql = rpt_location_sql('h');
 $loc_sql_th = rpt_location_sql('th');
@@ -124,7 +125,7 @@ $dt_inv_txns = $db->fetchAll("
         COALESCE(NULLIF(SUM(l.line_total), 0), h.net_amount) as sales,
         COALESCE(SUM(l.cost_price * l.quantity), 0.00) as cogs,
         0.00 as expense,
-        COALESCE(NULLIF(SUM(l.gross_profit), 0), h.net_amount) as net_profit,
+        (COALESCE(NULLIF(SUM(l.line_total), 0), h.net_amount) - COALESCE(SUM(l.cost_price * l.quantity), 0.00)) as net_profit,
         NULL as pos_id,
         h.id as header_id
     FROM transaction_headers h

@@ -3,9 +3,10 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
+$fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
-$date_from = $_GET['date_from'] ?? $today;
-$date_to   = $_GET['date_to']   ?? $today;
+$date_from = $_GET['date_from'] ?? $fy['start_date'];
+$date_to   = $_GET['date_to']   ?? $fy['end_date'];
 
 $selected_loc = $_GET['location_id'] ?? '';
 
@@ -27,8 +28,9 @@ $loc_p_p  = get_pos_loc_sql('p');
 $loc_h_h  = get_hdr_loc_sql('h');
 $loc_p_pe = get_pos_loc_sql('pos_entry');
 $loc_h_th = get_hdr_loc_sql('transaction_headers');
+$loc_cm   = get_hdr_loc_sql('cm_h');
 
-// 1. Invoices List (POS Entries + Direct Sales Invoices)
+// 1. Invoices / Returns List (POS + Direct Sales Invoices + Credit Memos)
 $invoices = $db->fetchAll("
     SELECT 
         p.id, 
@@ -70,7 +72,7 @@ $invoices = $db->fetchAll("
         COALESCE(ci.payment_status, CASE WHEN h.status = 'paid' THEN 'paid' WHEN h.status = 'partial' THEN 'partial' ELSE 'unpaid' END) as payment_status,
         u.full_name as cashier_name,
         'Invoice' as txn_source,
-        '?page=transactions/invoice/view&id=' as view_link,
+        '?page=transactions/view&id=' as view_link,
         COALESCE((SELECT SUM(l.line_total - (l.cost_price * l.quantity)) FROM transaction_lines l WHERE l.header_id = h.id), 0) as profit
     FROM transaction_headers h
     LEFT JOIN customer_invoices ci ON ci.header_id = h.id
@@ -82,18 +84,49 @@ $invoices = $db->fetchAll("
       AND h.txn_number NOT LIKE 'POS-%'
       AND h.txn_number NOT LIKE 'INV-POS-%' {$loc_h_h}
 
+    UNION ALL
+
+    -- Credit Memos (Customer Returns) - shown as negative amounts
+    SELECT
+        cm_h.id,
+        cm_h.txn_number as invoice_no,
+        CONCAT(cm_h.txn_date, ' 00:00:00') as date_time,
+        c.full_name as customer_name,
+        -(cm.total_amount) as gross_amount,
+        0.00 as discount_amount,
+        -(COALESCE(cm.tax_amount, 0)) as tax_amount,
+        -(cm.total_amount) as net_amount,
+        0.00 as balance_due,
+        'credit' as payment_status,
+        u.full_name as cashier_name,
+        'Credit Memo' as txn_source,
+        '?page=transactions/view&id=' as view_link,
+        0.00 as profit
+    FROM transaction_headers cm_h
+    JOIN credit_memos cm ON cm.header_id = cm_h.id
+    LEFT JOIN customers c ON cm.customer_id = c.id
+    LEFT JOIN users u ON cm_h.created_by = u.id
+    WHERE cm_h.txn_type = 'credit_memo'
+      AND cm_h.txn_date BETWEEN ? AND ?
+      AND cm_h.is_deleted = 0 {$loc_cm}
+
     ORDER BY date_time DESC
-", [$date_from, $date_to, $date_from, $date_to]);
+", [$date_from, $date_to, $date_from, $date_to, $date_from, $date_to]);
 
 // 2. Summary Calculations
+$credit_memos_total = array_sum(array_map(function($inv) {
+    return $inv['txn_source'] === 'Credit Memo' ? abs((float)$inv['net_amount']) : 0;
+}, $invoices));
+$sales_invoices = array_filter($invoices, fn($inv) => $inv['txn_source'] !== 'Credit Memo');
 $summary = [
     'total_txns'         => count($invoices),
-    'gross_sales'        => array_sum(array_column($invoices, 'gross_amount')),
+    'gross_sales'        => array_sum(array_map(fn($i) => max(0, (float)$i['gross_amount']), $sales_invoices)),
     'total_discount'     => array_sum(array_column($invoices, 'discount_amount')),
     'total_vat'          => array_sum(array_column($invoices, 'tax_amount')),
     'net_sales'          => array_sum(array_column($invoices, 'net_amount')),
     'total_credit_sales' => array_sum(array_column($invoices, 'balance_due')),
     'total_profit'       => array_sum(array_column($invoices, 'profit')),
+    'total_credit_memos' => $credit_memos_total,
 ];
 
 // 3. Payment Method Breakdown
@@ -168,7 +201,7 @@ $top_items = $db->fetchAll("
     ) all_sales
     JOIN items i ON all_sales.item_id = i.id
     GROUP BY all_sales.item_id
-    ORDER BY total_qty DESC LIMIT 15
+    ORDER BY total_qty ASC
 ", [$date_from, $date_to, $date_from, $date_to]);
 
 // 5. Hourly Sales Distribution
@@ -209,7 +242,11 @@ $hourly_sales = $db->fetchAll("
     </div>
     <div class="rpt-summary-card">
         <div class="val"><?= rpt_currency($summary['net_sales'] ?? 0) ?></div>
-        <div class="lbl">Net Sales</div>
+        <div class="lbl">Net Sales (incl. Returns)</div>
+    </div>
+    <div class="rpt-summary-card">
+        <div class="val" style="color: #e74c3c;"><?= rpt_currency($summary['total_credit_memos'] ?? 0) ?></div>
+        <div class="lbl">Credit Memos (Returns)</div>
     </div>
     <div class="rpt-summary-card">
         <div class="val" style="color: #e67e22;"><?= rpt_currency($summary['total_credit_sales'] ?? 0) ?></div>
@@ -218,10 +255,6 @@ $hourly_sales = $db->fetchAll("
     <div class="rpt-summary-card">
         <div class="val" style="color: #2ecc71;"><?= rpt_currency($summary['total_profit'] ?? 0) ?></div>
         <div class="lbl">Total Profit</div>
-    </div>
-    <div class="rpt-summary-card">
-        <div class="val" style="color: #27ae60;"><?= rpt_currency(($summary['net_sales'] ?? 0) / max(1, $summary['total_txns'] ?? 1)) ?></div>
-        <div class="lbl">Avg. Ticket Size</div>
     </div>
 </div>
 
@@ -279,14 +312,14 @@ $hourly_sales = $db->fetchAll("
                 <div class="ns-portlet-title"><i class="fas fa-star"></i> Top Selling Items</div>
             </div>
             <div class="ns-portlet-content">
-                <table class="ns-report-table-static">
+                <table class="ns-report-table-static" id="top-items-table">
                     <thead>
-                        <tr>
-                            <th>Item Name</th>
-                            <th style="text-align: right;">Qty Sold</th>
-                            <th style="text-align: right;">Total Net</th>
-                            <th style="text-align: right;">Avg. Price</th>
-                            <th style="text-align: right;">Profit</th>
+                        <tr style="cursor: pointer;">
+                            <th onclick="sortTable(0, 'string')" title="Click to sort by Item Name">Item Name <i class="fas fa-sort" style="font-size: 11px; opacity: 0.5;"></i></th>
+                            <th onclick="sortTable(1, 'number')" style="text-align: right;" title="Click to sort by Qty Sold">Qty Sold <i class="fas fa-sort-numeric-down-alt" style="font-size: 11px; opacity: 0.5;"></i></th>
+                            <th onclick="sortTable(2, 'currency')" style="text-align: right;" title="Click to sort by Total Net">Total Net <i class="fas fa-sort" style="font-size: 11px; opacity: 0.5;"></i></th>
+                            <th onclick="sortTable(3, 'currency')" style="text-align: right;" title="Click to sort by Avg Price">Avg. Price <i class="fas fa-sort" style="font-size: 11px; opacity: 0.5;"></i></th>
+                            <th onclick="sortTable(4, 'currency')" style="text-align: right;" title="Click to sort by Profit">Profit <i class="fas fa-sort" style="font-size: 11px; opacity: 0.5;"></i></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -410,19 +443,32 @@ $hourly_sales = $db->fetchAll("
                     $sum_due      += (float)$inv['balance_due'];
                     $sum_profit   += (float)$inv['profit'];
                 ?>
-                    <tr>
+                    <?php
+                        $is_return = in_array($inv['txn_source'], ['Credit Memo', 'Bill Credit']);
+                        $row_style = $is_return ? 'background: #fff7f7;' : '';
+                        $src_color_map = [
+                            'POS'         => '#e0f2fe; color: #0369a1;',
+                            'Invoice'     => '#dcfce7; color: #15803d;',
+                            'Credit Memo' => '#fee2e2; color: #b91c1c;',
+                            'Bill Credit' => '#f3e8ff; color: #7c3aed;',
+                        ];
+                        $src_color = $src_color_map[$inv['txn_source']] ?? '#f1f5f9; color: #475569;';
+                    ?>
+                    <tr style="<?= $row_style ?>">
                         <td>
-                            <a href="<?= $inv['view_link'] . $inv['id'] ?>" style="font-weight: 700; text-decoration: none; color: var(--ns-primary);">
+                            <a href="<?= $inv['view_link'] . $inv['id'] ?>" style="font-weight: 700; text-decoration: none; color: <?= $is_return ? '#b91c1c' : 'var(--ns-primary)' ?>;">
                                 <?= htmlspecialchars($inv['invoice_no']) ?>
                             </a>
                         </td>
                         <td>
-                            <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: <?= $inv['txn_source'] === 'POS' ? '#e0f2fe; color: #0369a1;' : '#dcfce7; color: #15803d;' ?>">
+                            <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: <?= $src_color ?>">
                                 <?= htmlspecialchars($inv['txn_source']) ?>
                             </span>
                         </td>
                         <td style="text-align: center;">
-                            <?php if ($inv['payment_status'] === 'paid' || (float)$inv['balance_due'] <= 0): ?>
+                            <?php if ($is_return): ?>
+                                <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #fee2e2; color: #b91c1c;">RETURN</span>
+                            <?php elseif ($inv['payment_status'] === 'paid' || (float)$inv['balance_due'] <= 0): ?>
                                 <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #dcfce7; color: #15803d;">PAID</span>
                             <?php else: ?>
                                 <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #fef3c7; color: #b45309;">UNPAID</span>
@@ -430,12 +476,12 @@ $hourly_sales = $db->fetchAll("
                             <?php endif; ?>
                         </td>
                         <td><?= date('Y-m-d h:i A', strtotime($inv['date_time'])) ?></td>
-                        <td><?= htmlspecialchars($inv['customer_name'] ?? 'Walk-in Customer') ?></td>
+                        <td><?= htmlspecialchars($inv['customer_name'] ?? ($is_return ? '—' : 'Walk-in Customer')) ?></td>
                         <td><?= htmlspecialchars($inv['cashier_name'] ?? 'System') ?></td>
-                        <td style="text-align: right;"><?= rpt_currency($inv['gross_amount']) ?></td>
+                        <td style="text-align: right; <?= $is_return ? 'color:#b91c1c; font-weight:700;' : '' ?>"><?= rpt_currency($inv['gross_amount']) ?></td>
                         <td style="text-align: right; color: #e74c3c;"><?= rpt_currency($inv['discount_amount']) ?></td>
                         <td style="text-align: right;"><?= rpt_currency($inv['tax_amount']) ?></td>
-                        <td style="text-align: right; font-weight: 700;"><?= rpt_currency($inv['net_amount']) ?></td>
+                        <td style="text-align: right; font-weight: 700; <?= $is_return ? 'color:#b91c1c;' : '' ?>"><?= rpt_currency($inv['net_amount']) ?></td>
                         <td style="text-align: right; font-weight: 700; color: #2ecc71;"><?= rpt_currency($inv['profit']) ?></td>
                     </tr>
                 <?php endforeach; endif; ?>
@@ -457,6 +503,33 @@ $hourly_sales = $db->fetchAll("
 </div>
 
 <script>
+let sortDirections = {};
+function sortTable(colIndex, dataType) {
+    const table = document.getElementById('top-items-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    
+    // Toggle direction
+    sortDirections[colIndex] = !sortDirections[colIndex];
+    const asc = sortDirections[colIndex];
+
+    rows.sort((a, b) => {
+        const cellA = a.children[colIndex] ? a.children[colIndex].innerText.trim() : '';
+        const cellB = b.children[colIndex] ? b.children[colIndex].innerText.trim() : '';
+
+        if (dataType === 'number' || dataType === 'currency') {
+            const valA = parseFloat(cellA.replace(/[^0-9.-]+/g, '')) || 0;
+            const valB = parseFloat(cellB.replace(/[^0-9.-]+/g, '')) || 0;
+            return asc ? valA - valB : valB - valA;
+        } else {
+            return asc ? cellA.localeCompare(cellB) : cellB.localeCompare(cellA);
+        }
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
 function exportTableToCSV(id) {
     let csv = [];
     let rows = document.querySelectorAll("table tr");

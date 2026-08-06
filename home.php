@@ -32,7 +32,7 @@
                 <select id="dv4-location-select" class="ns-select" style="height: 28px; padding: 2px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #cbd5e1; cursor: pointer; background: #fff; font-weight: 600; color: #1e293b;">
                     <option value="all">All Locations</option>
                     <?php 
-                    $user_def_loc = get_user_default_location_id();
+                    $user_def_loc = $_SESSION['location_id'] ?? get_user_default_location_id();
                     foreach (get_active_locations() as $loc): 
                     ?>
                         <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($user_def_loc == $loc['id']) ? 'selected' : ''; ?>>
@@ -109,19 +109,19 @@
             <div class="dv4-kpi-value" id="kpi-net-profit-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-net-profit-sub"></div>
         </a>
-        <!-- Cash on Hand -->
-        <a class="dv4-kpi kpi-cash dv4-kpi-link" id="kpi-tile-cash" href="?page=reports/financial/general_ledger&account_type=cash" title="View Cash Ledger">
-            <i class="fas fa-coins dv4-kpi-icon"></i>
-            <div class="dv4-kpi-label">Cash on Hand</div>
-            <div class="dv4-kpi-value" id="kpi-cash-val">—</div>
-            <div class="dv4-kpi-sub" id="kpi-cash-sub"></div>
-        </a>
         <!-- Bank Balance -->
         <a class="dv4-kpi kpi-bank dv4-kpi-link" id="kpi-tile-bank" href="?page=reports/financial/general_ledger&account_type=bank" title="View Bank Ledger">
             <i class="fas fa-university dv4-kpi-icon"></i>
             <div class="dv4-kpi-label">Bank Balance</div>
             <div class="dv4-kpi-value" id="kpi-bank-val">—</div>
             <div class="dv4-kpi-sub" id="kpi-bank-sub"></div>
+        </a>
+        <!-- Fixed Deposit Account -->
+        <a class="dv4-kpi kpi-fd dv4-kpi-link" id="kpi-tile-fd" href="?page=reports/financial/general_ledger&account_id=acc-1040" title="View Fixed Deposit Ledger">
+            <i class="fas fa-piggy-bank dv4-kpi-icon"></i>
+            <div class="dv4-kpi-label">Fixed Deposit</div>
+            <div class="dv4-kpi-value" id="kpi-fd-val">—</div>
+            <div class="dv4-kpi-sub" id="kpi-fd-sub"></div>
         </a>
         <!-- Receivables (AR) -->
         <a class="dv4-kpi kpi-ar dv4-kpi-link" id="kpi-tile-ar" href="?page=reports/sales/open_invoices" title="View Open Invoices Report">
@@ -426,7 +426,7 @@
         <div class="dv4-card dv4-col-4" id="widget-top-selling">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-fire" style="color: #f59e0b;"></i> Top Selling Products
+                    <i class="fas fa-fire" style="color: #f59e0b;"></i> Top Selling Products (This Month)
                 </div>
             </div>
             <div class="dv4-card-body-flush dv4-scroll" style="height: 320px; overflow-y: auto;">
@@ -652,11 +652,11 @@
             </div>
         </div>
 
-        <!-- Bills Due This Week -->
+        <!-- Bills Due To Pay -->
         <div class="dv4-card dv4-col-4" id="widget-bills-due">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-exclamation-circle" style="color: #f59e0b;"></i> Bills Due This Week
+                    <i class="fas fa-exclamation-circle" style="color: #f59e0b;"></i> Bills Due To Pay
                 </div>
             </div>
             <div class="dv4-card-body dv4-scroll" style="height: 280px; overflow-y: auto;">
@@ -691,7 +691,7 @@
         <div class="dv4-card dv4-col-7" id="widget-recent-activities">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-history" style="color: #3b82f6;"></i> Recent Activities (Today)
+                    <i class="fas fa-history" style="color: #3b82f6;"></i> Recent Activities
                 </div>
             </div>
             <div class="dv4-card-body-flush dv4-scroll" style="height: 320px; overflow-y: auto;">

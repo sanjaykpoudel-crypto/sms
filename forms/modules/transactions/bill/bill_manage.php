@@ -82,7 +82,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 <div class="ns-form-group">
                     <label class="ns-label">Vendor <span class="ns-required">*</span></label>
                     <select name="party_id" class="ns-select" onchange="updateVendorInfo(this)" required>
-                        <option value="">Select Vendor</option>
+                        <option value="" disabled <?php echo empty($data['party_id']) ? 'selected' : ''; ?> hidden>Select Vendor</option>
                         <?php foreach ($all_vendors as $v):
                             $vVat = !empty($v['vat_number']) ? $v['vat_number'] : ($v['pan_number'] ?? '');
                             ?>
@@ -120,7 +120,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 <div class="ns-form-group">
                     <label class="ns-label">Location</label>
                     <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
+                        <option value="" disabled <?php echo empty($data['location_id']) ? 'selected' : ''; ?> hidden>-- Select Location --</option>
                         <?php 
                         $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
                         foreach (get_active_locations() as $loc): 
@@ -185,6 +185,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                         <th width="95" style="text-align: right; color: var(--ns-primary);">New Stock</th>
                         <th width="80" style="text-align: center;">Unit</th>
                         <th width="115" style="text-align: right;">Rate <span class="ns-required">*</span></th>
+                        <th width="110" style="text-align: right; color: #7c3aed;">MRP</th>
                         <th width="120" style="text-align: right;">Amount</th>
                         <th width="85" style="text-align: right;">Tax %</th>
                         <th width="110" style="text-align: right;">Tax Amt</th>
@@ -233,6 +234,10 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                                     oninput="billCalcFromRate(this)"
                                     onblur="this.value = parseFloat(this.value || 0).toFixed(2); billCalcFromRate(this)"
                                     onkeydown="billCheckEnter(event)" required></td>
+                            <td><input type="number" name="mrp[]" class="ns-input mrp-input ns-input-num"
+                                    value="0.00" min="0" step="any" onfocus="this.select()"
+                                    style="color: #7c3aed; font-weight: 600;"
+                                    placeholder="0.00" title="MRP — updates item master on save"></td>
                             <td><input type="number" name="amount[]"
                                     class="ns-input amount-input ns-input-num ns-input-subtotal"
                                     value="<?php echo $amount; ?>" min="0" step="any" onfocus="this.select()"
@@ -442,6 +447,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             row.querySelector('.stock-input').value = '';
             row.querySelector('.unit-input').value = '';
             row.querySelector('.rate-input').value = '0.00';
+            row.querySelector('.mrp-input').value = '0.00';
             row.querySelector('.tax-pct-input').value = '0';
             row.querySelector('.amount-input').value = '0.00';
             row.querySelector('.tax-amt-input').value = '0.00';
@@ -456,6 +462,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
                 row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
                 row.querySelector('.rate-input').value = data.cost_price;
+                row.querySelector('.mrp-input').value = parseFloat(data.mrp || 0).toFixed(2);
                 row.querySelector('.tax-pct-input').value = data.tax_rate || 0;
 
                 billCalcFromRate(row.querySelector('.qty-input'));
@@ -544,6 +551,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                     if (data.error) return;
                     row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
                     row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
+                    if (row.querySelector('.mrp-input').value === '0.00' || row.querySelector('.mrp-input').value === '0') {
+                        row.querySelector('.mrp-input').value = parseFloat(data.mrp || 0).toFixed(2);
+                    }
                     // Do not auto-calculate on load to preserve precisely saved amounts
                 });
         });

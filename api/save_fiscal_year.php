@@ -19,6 +19,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $db = db();
+ensure_period_closing_schema();
+try {
+    $db->getConnection()->exec("ALTER TABLE `fiscal_years` MODIFY COLUMN `status` VARCHAR(50) NOT NULL DEFAULT 'open'");
+} catch (Throwable $e) {}
 
 try {
     $id = $_POST['id'] ?? null;

@@ -1,5 +1,6 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/ui_helpers.php';
 $db = db();
 $id = $_GET['id'] ?? null;
 $data = [];
@@ -9,20 +10,21 @@ if ($id) {
                           FROM transaction_headers t 
                           INNER JOIN account_transfers at2 ON t.id = at2.header_id 
                           WHERE t.id = ?", [$id]);
+    $data['from_location_id'] = $data['location_id'] ?? '';
+    $data['to_location_id']   = $data['party_id'] ?? '';
 } else {
     $data = [
         'txn_number' => getNextTransactionNumber('account_transfer'),
         'txn_date' => date('Y-m-d'),
         'from_account_id' => '',
         'to_account_id' => '',
+        'from_location_id' => '',
+        'to_location_id' => '',
         'amount' => '0.00',
         'memo' => '',
         'status' => 'posted'
     ];
 }
-
-// Fetch Cash and Bank Accounts
-$bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('Bank') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-random" style="margin-right: 10px; color: var(--ns-accent);"></i>
@@ -32,10 +34,10 @@ $bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM ac
             Save</button>
         <?php if ($id): ?>
             <button type="button" class="ns-btn" style="color: #e74c3c; border-color: #fbcbc5; background: #fdf2f1;"
-                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/transfer')"><i
+                onclick="nsDeleteTransaction('<?php echo $id; ?>', '?page=transactions/transfer/manage')"><i
                     class="fas fa-trash-alt"></i> Delete</button>
         <?php endif; ?>
-        <a href="?page=transactions/transfer" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
+        <a href="?page=transactions/transfer/manage" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
     </div>
 </div>
 
@@ -54,26 +56,12 @@ $bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM ac
                         style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
                 </div>
                 <div class="ns-form-group">
-                    <label class="ns-label">From Account <span class="ns-required">*</span></label>
-                    <select name="from_account_id" class="ns-select" required>
-                        <option value="">Select Source Account</option>
-                        <?php foreach ($bank_accounts as $acc): ?>
-                            <option value="<?php echo $acc['id']; ?>" <?php echo ($data['from_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <label class="ns-label">From Location <span class="ns-required">*</span></label>
+                    <?php echo render_select_dropdown('from_location_id', 'from_location', $data['from_location_id'] ?? '', null, 'class="ns-select" required'); ?>
                 </div>
                 <div class="ns-form-group">
-                    <label class="ns-label">To Account <span class="ns-required">*</span></label>
-                    <select name="to_account_id" class="ns-select" required>
-                        <option value="">Select Destination Account</option>
-                        <?php foreach ($bank_accounts as $acc): ?>
-                            <option value="<?php echo $acc['id']; ?>" <?php echo ($data['to_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <label class="ns-label">From Account <span class="ns-required">*</span></label>
+                    <?php echo render_select_dropdown('from_account_id', 'from_account', $data['from_account_id'] ?? '', null, 'class="ns-select" required'); ?>
                 </div>
             </div>
             <div style="flex: 1; min-width: 300px;">
@@ -81,6 +69,14 @@ $bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM ac
                     <label class="ns-label">Date <span class="ns-required">*</span></label>
                     <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>"
                         required>
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">To Location <span class="ns-required">*</span></label>
+                    <?php echo render_select_dropdown('to_location_id', 'to_location', $data['to_location_id'] ?? '', null, 'class="ns-select" required'); ?>
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">To Account <span class="ns-required">*</span></label>
+                    <?php echo render_select_dropdown('to_account_id', 'to_account', $data['to_account_id'] ?? '', null, 'class="ns-select" required'); ?>
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Transfer Amount <span class="ns-required">*</span></label>
@@ -92,20 +88,6 @@ $bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM ac
                     <label class="ns-label">Memo / Description</label>
                     <input type="text" name="memo" class="ns-input" value="<?php echo $data['memo'] ?? ''; ?>"
                         placeholder="Notes about this transfer...">
-                </div>
-                <div class="ns-form-group">
-                    <label class="ns-label">Location</label>
-                    <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
-                        <?php 
-                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
-                        foreach (get_active_locations() as $loc): 
-                        ?>
-                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
                 </div>
             </div>
         </div>
@@ -121,10 +103,12 @@ $bank_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM ac
         // Validation
         const fromAcc = form.querySelector('select[name="from_account_id"]').value;
         const toAcc = form.querySelector('select[name="to_account_id"]').value;
+        const fromLoc = form.querySelector('select[name="from_location_id"]').value;
+        const toLoc = form.querySelector('select[name="to_location_id"]').value;
         const amount = parseFloat(form.querySelector('input[name="amount"]').value) || 0;
 
-        if (fromAcc === toAcc) {
-            nsNotify('Source and Destination accounts cannot be the same.', 'error');
+        if (fromAcc === toAcc && fromLoc === toLoc) {
+            nsNotify('Source and Destination accounts/locations cannot both be identical.', 'error');
             return;
         }
         if (amount <= 0) {

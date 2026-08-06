@@ -47,9 +47,12 @@ $item['current_stock'] = $total_stock_all_locations;
 
 // Fetch related records (Stock Movements)
 $movements = $db->fetchAll("
-    SELECT h.id, h.txn_date, h.txn_number, h.txn_type, l.quantity, l.unit_price, l.line_total 
+    SELECT h.id, h.txn_date, h.txn_number, h.txn_type, l.quantity, l.unit_price, l.line_total,
+           COALESCE(loc.name, loc_h.name, 'Gokarna') as location_name
     FROM transaction_lines l 
     JOIN transaction_headers h ON l.header_id = h.id 
+    LEFT JOIN locations loc ON l.location_id = loc.id
+    LEFT JOIN locations loc_h ON h.location_id = loc_h.id
     WHERE l.item_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     ORDER BY h.txn_date DESC, h.created_at DESC LIMIT 50
 ", [$id]);
@@ -220,6 +223,10 @@ function getDiff($oldJson, $newJson) {
                 <div class="detail-value">Rs <?php echo number_format($item['selling_price'] ?? 0, 2); ?></div>
             </div>
             <div class="detail-group">
+                <div class="detail-label">MRP (Max Retail Price)</div>
+                <div class="detail-value" style="color: #0284c7; font-weight: 600;">Rs <?php echo number_format($item['mrp'] ?? 0, 2); ?></div>
+            </div>
+            <div class="detail-group">
                 <div class="detail-label">Barcode</div>
                 <div class="detail-value"><?php echo htmlspecialchars($item['barcode'] ?? ''); ?></div>
             </div>
@@ -265,23 +272,29 @@ function getDiff($oldJson, $newJson) {
                 <th>Location</th>
                 <th style="text-align: right;">QuantityOnHand</th>
                 <th style="text-align: right;">AvailableQty</th>
-                <th style="text-align: right;">CommittedQty</th>
-                <th style="text-align: right;">OnOrderQty</th>
                 <th style="text-align: right;">AverageCost</th>
+                <th style="text-align: right;">Location Cost</th>
+                <th style="text-align: right;">Location Selling Price</th>
+                <th style="text-align: right;">Location MRP</th>
                 <th>LastUpdated</th>
             </tr>
         </thead>
         <tbody>
             <?php if (empty($inv_balances)): ?>
-                <tr><td colspan="7" style="text-align:center; padding: 20px; color: #999;">No location inventory balances found.</td></tr>
-            <?php else: foreach ($inv_balances as $bal): ?>
+                <tr><td colspan="8" style="text-align:center; padding: 20px; color: #999;">No location inventory balances found.</td></tr>
+            <?php else: foreach ($inv_balances as $bal): 
+                $eff_cost = ($bal['cost_price'] !== null && (float)$bal['cost_price'] > 0) ? number_format($bal['cost_price'], 2) : '<span style="color:#aaa;">(Base)</span>';
+                $eff_sell = ($bal['selling_price'] !== null && (float)$bal['selling_price'] > 0) ? number_format($bal['selling_price'], 2) : '<span style="color:#aaa;">(Base)</span>';
+                $eff_mrp  = ($bal['mrp'] !== null && (float)$bal['mrp'] > 0) ? number_format($bal['mrp'], 2) : '<span style="color:#aaa;">(Base)</span>';
+            ?>
                 <tr>
                     <td><strong><?php echo htmlspecialchars($bal['location_name']); ?></strong></td>
                     <td style="text-align: right; font-weight: 700; color: #080;"><?php echo number_format($bal['quantity_on_hand'], 2); ?></td>
                     <td style="text-align: right; font-weight: 700; color: #0284c7;"><?php echo number_format($bal['available_qty'], 2); ?></td>
-                    <td style="text-align: right; color: #e67e22;"><?php echo number_format($bal['committed_qty'], 2); ?></td>
-                    <td style="text-align: right; color: #8e44ad;"><?php echo number_format($bal['on_order_qty'], 2); ?></td>
                     <td style="text-align: right; font-weight: 600;">Rs <?php echo number_format($bal['average_cost'], 2); ?></td>
+                    <td style="text-align: right;">Rs <?php echo $eff_cost; ?></td>
+                    <td style="text-align: right; font-weight: 600; color: #2563eb;">Rs <?php echo $eff_sell; ?></td>
+                    <td style="text-align: right; font-weight: 600; color: #0284c7;">Rs <?php echo $eff_mrp; ?></td>
                     <td style="font-size: 11px; color: #64748b;"><?php echo date('Y-m-d h:i A', strtotime($bal['last_updated'])); ?></td>
                 </tr>
             <?php endforeach; endif; ?>
@@ -297,6 +310,7 @@ function getDiff($oldJson, $newJson) {
                 <th>Date</th>
                 <th>Transaction #</th>
                 <th>Type</th>
+                <th>Location</th>
                 <th style="text-align: right;">Quantity</th>
                 <th style="text-align: right;">Unit Price</th>
                 <th style="text-align: right;">Line Total</th>
@@ -320,6 +334,7 @@ function getDiff($oldJson, $newJson) {
                 <td><?php echo date('M d, Y', strtotime($mov['txn_date'])); ?></td>
                 <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($mov['id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($mov['txn_number']); ?></a></td>
                 <td><span style="background: #eef2f6; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; color: #475569;"><?php echo str_replace('_', ' ', htmlspecialchars($mov['txn_type'])); ?></span></td>
+                <td><span style="font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #f1f5f9; color: #334155; font-size: 11px;"><?php echo htmlspecialchars($mov['location_name']); ?></span></td>
                 <td style="text-align: right; font-weight: 600; color: <?php echo $qty_color; ?>;">
                     <?php echo $qty_prefix . $display_qty; ?>
                 </td>

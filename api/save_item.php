@@ -9,8 +9,8 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ob_end_clean();
@@ -33,6 +33,7 @@ try {
     
     $cost_price        = isset($_POST['cost_price']) && is_numeric($_POST['cost_price']) ? (float)$_POST['cost_price'] : 0.00;
     $selling_price_raw = $_POST['selling_price'] ?? null;
+    $mrp               = isset($_POST['mrp']) && is_numeric($_POST['mrp']) ? (float)$_POST['mrp'] : 0.00;
     $tax_id            = trim($_POST['tax_id'] ?? '');
     $tax_rate          = isset($_POST['tax_rate']) ? (float)$_POST['tax_rate'] : 0.00;
     $reorder_level     = isset($_POST['reorder_level']) && $_POST['reorder_level'] !== '' ? (int)$_POST['reorder_level'] : 10;
@@ -101,12 +102,12 @@ try {
         $db->execute("
             INSERT INTO items (
                 id, sku, item_name, item_category, brand, unit_type, bottle_size_ml, units_per_case,
-                barcode, is_active, cost_price, selling_price, tax_id, tax_rate, reorder_level, reorder_qty,
+                barcode, is_active, cost_price, selling_price, mrp, tax_id, tax_rate, reorder_level, reorder_qty,
                 description, inventory_account_id, cogs_account_id, income_account_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         ", [
             $id, $sku, $item_name, $item_category, $brand, $unit_type, $bottle_size_ml, $units_per_case,
-            $barcode ?: null, $is_active, $cost_price, $selling_price, $tax_id ?: null, $tax_rate, $reorder_level, $reorder_qty,
+            $barcode ?: null, $is_active, $cost_price, $selling_price, $mrp, $tax_id ?: null, $tax_rate, $reorder_level, $reorder_qty,
             $description, $inventory_account_id, $cogs_account_id, $income_account_id
         ]);
 
@@ -116,18 +117,46 @@ try {
         $db->execute("
             UPDATE items SET
                 item_name = ?, item_category = ?, brand = ?, unit_type = ?, bottle_size_ml = ?, units_per_case = ?,
-                barcode = ?, is_active = ?, cost_price = ?, selling_price = ?, tax_id = ?, tax_rate = ?,
+                barcode = ?, is_active = ?, cost_price = ?, selling_price = ?, mrp = ?, tax_id = ?, tax_rate = ?,
                 reorder_level = ?, reorder_qty = ?, description = ?, inventory_account_id = ?, cogs_account_id = ?,
                 income_account_id = ?, updated_at = NOW()
             WHERE id = ?
         ", [
             $item_name, $item_category, $brand, $unit_type, $bottle_size_ml, $units_per_case,
-            $barcode ?: null, $is_active, $cost_price, $selling_price, $tax_id ?: null, $tax_rate,
+            $barcode ?: null, $is_active, $cost_price, $selling_price, $mrp, $tax_id ?: null, $tax_rate,
             $reorder_level, $reorder_qty, $description, $inventory_account_id, $cogs_account_id,
             $income_account_id, $id
         ]);
 
         $message = "Item updated successfully.";
+    }
+
+    // Process Location-Specific Pricing & Costing Overrides
+    $loc_cost    = $_POST['loc_cost_price'] ?? [];
+    $loc_selling = $_POST['loc_selling_price'] ?? [];
+    $loc_mrp     = $_POST['loc_mrp'] ?? [];
+
+    $all_locs = $db->fetchAll("SELECT id FROM locations WHERE is_deleted = 0");
+    foreach ($all_locs as $loc_row) {
+        $lid = $loc_row['id'];
+        $c_price = isset($loc_cost[$lid]) && $loc_cost[$lid] !== '' ? (float)$loc_cost[$lid] : null;
+        $s_price = isset($loc_selling[$lid]) && $loc_selling[$lid] !== '' ? (float)$loc_selling[$lid] : null;
+        $m_price = isset($loc_mrp[$lid]) && $loc_mrp[$lid] !== '' ? (float)$loc_mrp[$lid] : null;
+
+        $inv_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$id, $lid]);
+        if ($inv_exists) {
+            $db->execute("
+                UPDATE inventory_balances 
+                SET cost_price = ?, selling_price = ?, mrp = ?, last_updated = NOW()
+                WHERE item_id = ? AND location_id = ?
+            ", [$c_price, $s_price, $m_price, $id, $lid]);
+        } else if ($c_price !== null || $s_price !== null || $m_price !== null) {
+            $inv_id = generate_uuid();
+            $db->execute("
+                INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, selling_price, mrp, last_updated)
+                VALUES (?, ?, ?, 0, 0, 0, 0, 0, ?, ?, ?, NOW())
+            ", [$inv_id, $id, $lid, $c_price, $s_price, $m_price]);
+        }
     }
 
     clear_dashboard_cache();

@@ -74,7 +74,8 @@ try {
     $pdo->beginTransaction();
 
     if (empty($txn_number)) {
-        $txn_number = getNextTransactionNumber('credit_memo');
+        $txn_number = getNextTransactionNumber('credit_memo', $location_id);
+        incrementTransactionNumber('credit_memo');
     }
 
     // Process & validate line items
@@ -236,6 +237,8 @@ try {
     }
 
     $pdo->commit();
+
+    recalculate_document_payment_status($id, $pdo);
 
     // Trigger instant stock & dashboard cache refresh
     auto_sync_pos_items_and_invoices(true);

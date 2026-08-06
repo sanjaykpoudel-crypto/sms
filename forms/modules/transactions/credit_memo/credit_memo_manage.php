@@ -22,17 +22,50 @@ if ($id) {
         WHERE tl.header_id = ?
     ", [$id]);
 } else {
+    $pos_id  = $_GET['pos_id'] ?? '';
+    $pos_rec = null;
+    if (!empty($pos_id)) {
+        $pos_rec = $db->fetchOne("SELECT * FROM pos_entry WHERE id = ?", [$pos_id]);
+    }
+
     $data = [
         'txn_number'      => getNextTransactionNumber('credit_memo'),
         'txn_date'        => date('Y-m-d'),
-        'party_id'        => $_GET['customer_id'] ?? '',
+        'party_id'        => $pos_rec['customer_id'] ?? ($_GET['customer_id'] ?? ''),
         'invoice_id'      => $_GET['invoice_id'] ?? '',
-        'location_id'     => get_user_default_location_id(),
+        'location_id'     => $pos_rec['location_id'] ?? get_user_default_location_id(),
         'return_to_stock' => 1,
-        'net_amount'      => 0,
+        'net_amount'      => $pos_rec['net_amount'] ?? 0,
         'status'          => 'open',
-        'memo'            => ''
+        'memo'            => $pos_rec ? ('Return for POS Sale #' . $pos_rec['invoice_no']) : ''
     ];
+
+    if ($pos_rec) {
+        $pos_items = $db->fetchAll("
+            SELECT pi.*, i.current_stock, i.item_name, i.sku, i.cost_price, i.unit
+            FROM pos_items pi
+            LEFT JOIN items i ON pi.item_id = i.id
+            WHERE pi.pos_id = ?
+        ", [$pos_id]);
+
+        foreach ($pos_items as $pi) {
+            $tax_pct = ($pi['amount'] > 0) ? round(($pi['tax'] / $pi['amount']) * 100, 2) : 0;
+            $txn_items[] = [
+                'item_id'       => $pi['item_id'],
+                'item_name'     => $pi['item_name'],
+                'sku'           => $pi['sku'],
+                'quantity'      => (float)$pi['quantity'],
+                'unit_price'    => (float)$pi['rate'],
+                'amount'        => (float)$pi['amount'],
+                'tax_rate'      => $tax_pct,
+                'tax_amount'    => (float)$pi['tax'],
+                'gross_amount'  => (float)$pi['net_amount'],
+                'unit'          => $pi['unit'] ?? 'pcs',
+                'current_stock' => (float)($pi['current_stock'] ?? 0),
+                'cost_price'    => (float)($pi['cost_price'] ?? 0)
+            ];
+        }
+    }
 }
 
 $all_items = $db->fetchAll("SELECT id, item_name, sku, cost_price, selling_price FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
@@ -136,7 +169,7 @@ foreach ($raw_invoice_lines as $rl) {
                 <div class="ns-form-group">
                     <label class="ns-label">Customer <span class="ns-required">*</span></label>
                     <select name="party_id" id="party-id-select" class="ns-select" onchange="updateCustomerInfo(this)" required>
-                        <option value="">-- Select Customer --</option>
+                        <option value="" disabled <?php echo empty($data['party_id']) ? 'selected' : ''; ?> hidden>-- Select Customer --</option>
                         <?php foreach ($all_customers as $c): ?>
                             <option value="<?php echo $c['id']; ?>"
                                     data-phone="<?php echo htmlspecialchars($c['phone'] ?? ''); ?>"
@@ -176,7 +209,7 @@ foreach ($raw_invoice_lines as $rl) {
                 <div class="ns-form-group">
                     <label class="ns-label">Location</label>
                     <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
+                        <option value="" disabled <?php echo empty($data['location_id']) ? 'selected' : ''; ?> hidden>-- Select Location --</option>
                         <?php foreach (get_active_locations() as $loc): ?>
                             <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($data['location_id'] == $loc['id']) ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
@@ -244,7 +277,7 @@ foreach ($raw_invoice_lines as $rl) {
                             <td style="text-align: center; vertical-align: middle;"><?php echo $idx + 1; ?></td>
                             <td>
                                 <select name="item_id[]" class="ns-select" onchange="cmFetchItem(this)" required>
-                                    <option value="">Select item...</option>
+                                    <option value="" disabled hidden>Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
                                         <option value="<?php echo $i['id']; ?>" data-cost="<?php echo (float)$i['cost_price']; ?>" data-price="<?php echo (float)$i['selling_price']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>>
                                             <?php echo htmlspecialchars($i['item_name']); ?>

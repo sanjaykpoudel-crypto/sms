@@ -23,59 +23,74 @@ $menu_sections = [
     'transactions' => [
         'title' => 'Transactions & Operational Entries',
         'icon' => 'fas fa-exchange-alt',
+        'color' => '#0284c7',
         'items' => [
-            'pos' => 'POS (Point of Sale)',
-            'bill' => 'Bills (Vendor Bills)',
-            'invoice' => 'Invoices (Customer Invoices)',
-            'payment' => 'Payments (Customer & Vendor Payments)',
-            'expense' => 'Expenses Entry',
-            'journal' => 'Journal Entries',
-            'cash_denom' => 'Cash Denominations',
-            'adjustment' => 'Inventory Adjustments',
-            'transfer' => 'Bank Account Transfers',
-            'inventory_transfer' => 'Inventory Transfers'
+            'pos'                => 'POS — Point of Sale Counter Checkout',
+            'invoice'            => 'Sales Invoices (Customer Invoices & Quotations)',
+            'credit_memo'        => 'Credit Memos & Sales Returns',
+            'bill'               => 'Vendor Bills (Purchase Invoices)',
+            'bill_credit'        => 'Vendor Credit / Debit Memos (Purchase Returns)',
+            'payment'            => 'Payments (Customer Receipts & Vendor Payments)',
+            'expense'            => 'Expense Entry',
+            'journal'            => 'Journal Entries (Manual JV)',
+            'transfer'           => 'Bank / Fund Transfers',
+            'cash_denom'         => 'Cash Denominations (Till Count)',
+            'adjustment'         => 'Inventory Stock Adjustments',
+            'inventory_transfer' => 'Inventory Location Transfers',
         ]
     ],
     'master_lists' => [
         'title' => 'Master Lists & Entities',
         'icon' => 'fas fa-list',
+        'color' => '#7c3aed',
         'items' => [
-            'accounts' => 'Chart of Accounts',
-            'customers' => 'Customer Master',
-            'vendors' => 'Vendor Master',
-            'items' => 'Item & Inventory Master',
-            'users' => 'Employees & Users'
+            'customers'       => 'Customer Master List',
+            'vendors'         => 'Vendor / Supplier Master List',
+            'items'           => 'Item & Inventory Catalog',
+            'accounts'        => 'Chart of Accounts',
+            'opening_balances'=> 'Bank & Account Opening Balances',
+            'users'           => 'Employees & System User Accounts',
         ]
     ],
     'reports' => [
         'title' => 'Reports & Financial Insights',
         'icon' => 'fas fa-chart-bar',
+        'color' => '#059669',
         'items' => [
-            'rep_financial' => 'Financial Statements (Balance Sheet, Income Statement, Profit Report, GL, Trial Balance)',
-            'rep_sales' => 'Sales Reports (By Item, Top Profit, By Customer, Sales Register, Open Invoices)',
-            'rep_purchases' => 'Purchase Reports (By Item, By Vendor)',
-            'rep_vendors' => 'Vendor Reports (Balance Confirmation, AP Register, Open Bills, AP Aging)',
-            'rep_inventory' => 'Inventory Reports (Valuation, Stock Snapshot, Stock Ledger, Profitability, Low Stock)',
-            'rep_vat' => 'VAT / Tax Reports (VAT Sales Register, VAT Purchase Register)',
-            'rep_customers' => 'Customer Reports (Balance Confirmation, Statement, AR Register, AR Aging)',
-            'rep_insights' => 'General Insights (Break-Even & Investment Payback)'
+            'rep_financial'  => 'Financial Statements (Balance Sheet, Income Statement, Trial Balance, General Ledger, Cash Book, Equity)',
+            'rep_sales'      => 'Sales Reports (By Item, By Customer, Sales Register, Top Profit Items, Open Invoices)',
+            'rep_purchases'  => 'Purchase Reports (By Item, By Vendor)',
+            'rep_inventory'  => 'Inventory Reports (Valuation, Stock Snapshot, Stock Ledger, Revenue, Profitability, Low Stock, Urgent Buy)',
+            'rep_vat'        => 'VAT / Tax Reports (Abbreviated Tax Invoice, VAT Sales Register, VAT Purchase Register)',
+            'rep_vendors'    => 'Vendor Reports (Balance Confirmation, AP Register, Open Bills, AP Aging, AP Payments)',
+            'rep_customers'  => 'Customer Reports (Balance Confirmation, Statement, AR Register, Open Invoices, AR Aging)',
+            'rep_pos'        => 'POS Summary & Daily Cash Reports',
+            'rep_insights'   => 'General Insights (Break-Even Tracker, Investment Payback, Profitability)',
         ]
     ],
     'setup_settings' => [
         'title' => 'Setup & System Administration',
         'icon' => 'fas fa-cogs',
+        'color' => '#dc2626',
         'items' => [
-            'company_info' => 'System & Company Information',
-            'roles_perm' => 'Role Permissions & Access Control',
-            'fiscal_years' => 'Accounting Periods & Fiscal Closing',
-            'accounting_prefs' => 'Accounting Preferences & System Accounts',
-            'opening_balances' => 'Bank & Account Opening Balances',
-            'whatsapp' => 'WhatsApp Integration Settings',
-            'ref_codes' => 'Auto Generated Numbers & Reference Prefixes',
-            'import_export' => 'Import / Export Data',
-            'backup_restore' => 'Backup & Restore Database'
+            'company_info'    => 'System & Company Information',
+            'roles_perm'      => 'Role Permissions & Access Control',
+            'fiscal_years'    => 'Accounting Periods & Fiscal Year Closing',
+            'accounting_prefs'=> 'Accounting Preferences & Default System Accounts',
+            'whatsapp'        => 'WhatsApp Integration Settings',
+            'ref_codes'       => 'Auto-Generated Reference Numbers & Prefixes',
+            'import_export'   => 'Import / Export Data (Excel, CSV)',
+            'backup_restore'  => 'Backup & Restore Database',
         ]
-    ]
+    ],
+    'activity' => [
+        'title' => 'Activity & Task Management',
+        'icon' => 'fas fa-calendar-alt',
+        'color' => '#f59e0b',
+        'items' => [
+            'activity'  => 'Activities, Tasks & Calendar',
+        ]
+    ],
 ];
 ?>
 
@@ -172,7 +187,7 @@ $menu_sections = [
             <div class="perm-card">
                 <div class="perm-header">
                     <div class="perm-header-title">
-                        <i class="<?php echo $sec['icon']; ?>" style="color: var(--ns-primary);"></i>
+                        <i class="<?php echo $sec['icon']; ?>" style="color: <?php echo $sec['color'] ?? 'var(--ns-primary)'; ?>;"></i>
                         <?php echo $sec['title']; ?>
                     </div>
                     <div style="display: flex; gap: 6px;">
@@ -234,10 +249,12 @@ function setAllPermissions(val) {
 document.getElementById('role-form').addEventListener('submit', function(e) {
     e.preventDefault();
     const form = this;
-    const btn = form.querySelector('button[type="submit"]');
-    const origText = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    const btn = document.querySelector('button[form="role-form"]') || form.querySelector('button[type="submit"]');
+    const origText = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    }
 
     const formData = new FormData(form);
 
@@ -247,8 +264,10 @@ document.getElementById('role-form').addEventListener('submit', function(e) {
     })
     .then(r => r.json())
     .then(res => {
-        btn.disabled = false;
-        btn.innerHTML = origText;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origText;
+        }
         if (res.status === 'success') {
             if (typeof showNotification === 'function') {
                 showNotification(res.message, 'success');
@@ -263,8 +282,10 @@ document.getElementById('role-form').addEventListener('submit', function(e) {
         }
     })
     .catch(err => {
-        btn.disabled = false;
-        btn.innerHTML = origText;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origText;
+        }
         alert('An error occurred while saving role.');
     });
 });

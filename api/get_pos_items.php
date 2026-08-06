@@ -23,7 +23,8 @@ $query = "
     SELECT 
         i.id, i.sku, i.item_name, r.name as category_name, 
         CAST(COALESCE(ib.selling_price, i.selling_price) AS DECIMAL(12,2)) as selling_price, 
-        CAST(COALESCE(ib.average_cost, i.cost_price) AS DECIMAL(12,2)) as cost_price, 
+        CAST(COALESCE(ib.average_cost, i.cost_price) AS DECIMAL(12,2)) as cost_price,
+        CAST(COALESCE(ib.mrp, i.mrp, 0) AS DECIMAL(12,2)) as mrp,
         CAST(i.tax_rate AS DECIMAL(5,2)) as tax_rate, 
         i.barcode,
         CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
@@ -31,6 +32,7 @@ $query = "
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
     LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = ?
     WHERE i.is_active = 1 AND i.is_deleted = 0
+      AND COALESCE(ib.quantity_on_hand, 0) > 0
     ORDER BY i.item_name ASC
 ";
 

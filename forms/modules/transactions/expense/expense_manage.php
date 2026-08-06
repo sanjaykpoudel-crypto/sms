@@ -1,6 +1,7 @@
 <?php
 require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
+require_once 'api/ui_helpers.php';
 $db = db();
 $id = $_GET['id'] ?? null;
 $data = [];
@@ -19,9 +20,6 @@ if ($id) {
         'location_id' => get_accounting_preference('default_location_id') ?: ''
     ];
 }
-
-// Fetch Accounts for Paid From
-$paid_from_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 AND account_type IN ('asset') ORDER BY account_name ASC");
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><?php echo $id ? 'Edit' : 'Enter'; ?> Expense</div>
@@ -54,14 +52,7 @@ $paid_from_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Paid From (Bank/Cash) *</label>
-                    <select name="paid_from_account_id" class="ns-select" required>
-                        <option value="">Select Account</option>
-                        <?php foreach ($paid_from_accounts as $acc): ?>
-                            <option value="<?php echo $acc['id']; ?>" <?php echo ($data['paid_from_account_id'] ?? '') == $acc['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($acc['account_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php echo render_select_dropdown('paid_from_account_id', 'bank_account', $data['paid_from_account_id'] ?? '', 'Select Account', 'class="ns-select" required'); ?>
                 </div>
             </div>
             <div style="flex: 1;">
@@ -88,18 +79,9 @@ $paid_from_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Location</label>
-                    <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
-                        <?php 
-                        $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
-                        foreach (get_active_locations() as $loc): 
-                        ?>
-                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($curr_loc_id == $loc['id']) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($loc['name']); ?><?php echo !empty($loc['is_default']) ? ' (Default)' : ''; ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php echo render_select_dropdown('location_id', 'location', $data['location_id'] ?? '', null, 'class="ns-select"'); ?>
                 </div>
+            </div>
             </div>
             <div style="flex: 1;">
                 <div class="ns-form-group">

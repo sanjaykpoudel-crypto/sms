@@ -211,7 +211,6 @@ function rpt_header(string $title) {
     $sys_company_phone   = $sys['contact'] ?? ($sys['company_phone'] ?? ($sys['phone'] ?? ''));
     $sys_company_pan     = $sys['pan_no'] ?? ($sys['company_pan'] ?? ($sys['pan_vat_number'] ?? ($sys['pan'] ?? '')));
     $sys_company_email   = $sys['email'] ?? ($sys['company_email'] ?? '');
-    $sys_logo            = $sys['logo'] ?? '';
     $sys_short_name      = $sys['short_name'] ?? 'MNS';
     static $shutdown_registered = false;
     if (!$shutdown_registered) {
@@ -254,9 +253,64 @@ function rpt_header(string $title) {
     echo '<tbody><tr><td style="border:none; padding:0;">';
 }
 
+function rpt_get_current_fiscal_year_dates(): array {
+    static $fy_dates = null;
+    if ($fy_dates !== null) return $fy_dates;
+    
+    $today = date('Y-m-d');
+    $db = db();
+    $active_fy = $db->fetchOne("SELECT * FROM fiscal_years WHERE ? BETWEEN start_date AND end_date LIMIT 1", [$today]);
+    if (!$active_fy) {
+        $active_fy = $db->fetchOne("SELECT * FROM fiscal_years WHERE status IN ('open', 'reopened') ORDER BY start_date DESC LIMIT 1");
+    }
+    if (!$active_fy) {
+        $active_fy = $db->fetchOne("SELECT * FROM fiscal_years ORDER BY start_date DESC LIMIT 1");
+    }
+    
+    if ($active_fy) {
+        $fy_dates = [
+            'start_date' => $active_fy['start_date'],
+            'end_date'   => $active_fy['end_date'],
+            'name'       => $active_fy['name'],
+        ];
+    } else {
+        $m = (int)date('n'); $d = (int)date('j'); $y = (int)date('Y');
+        if ($m > 7 || ($m == 7 && $d >= 16)) {
+            $s = "{$y}-07-16"; $e = ($y+1) . "-07-15";
+        } else {
+            $s = ($y-1) . "-07-16"; $e = "{$y}-07-15";
+        }
+        $fy_dates = [
+            'start_date' => $s,
+            'end_date'   => $e,
+            'name'       => 'Current FY',
+        ];
+    }
+    return $fy_dates;
+}
+
 function rpt_filter_bar(string $title, array $filters, string $export_id = '', string $extra_html = '') {
     rpt_header($title);
     
+    $fy_info = rpt_get_current_fiscal_year_dates();
+
+    // Auto-default date filter fields to current active fiscal year if not provided or set to legacy monthly default
+    foreach ($filters as &$f) {
+        if (($f['type'] ?? '') === 'date') {
+            if (($f['name'] ?? '') === 'date_from' || ($f['name'] ?? '') === 'from_date') {
+                if (!isset($_GET[$f['name']]) && (empty($f['default']) || $f['default'] === date('Y-m-01') || $f['default'] === date('Y-01-01'))) {
+                    $f['default'] = $fy_info['start_date'];
+                }
+            }
+            if (($f['name'] ?? '') === 'date_to' || ($f['name'] ?? '') === 'to_date') {
+                if (!isset($_GET[$f['name']]) && (empty($f['default']) || $f['default'] === date('Y-m-d'))) {
+                    $f['default'] = $fy_info['end_date'];
+                }
+            }
+        }
+    }
+    unset($f);
+
     // Build filter parameter summary string for printout
     $summary_parts = [];
     foreach ($filters as $f) {
@@ -410,7 +464,6 @@ function rpt_date($date): string {
     }
     return date($df, strtotime($date));
 }
-
 function rpt_badge(string $text, string $color = '#888'): string {
     return '<span style="background:'.$color.';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">'.$text.'</span>';
 }
@@ -438,7 +491,6 @@ function rpt_location_filter(string $name = 'location_id', string $label = 'Loca
         'options' => rpt_get_location_options()
     ];
 }
-
 function rpt_location_sql(string $alias = 'h'): string {
     $loc_id = $_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
     if (!empty($loc_id) && $loc_id !== 'all') {
@@ -450,119 +502,152 @@ function rpt_location_sql(string $alias = 'h'): string {
 
 function get_customer_aging_summary($db, string $customer_id, ?string $as_of_date = null): array {
     if (!$as_of_date) $as_of_date = date('Y-m-d');
-    $loc_sql = rpt_location_sql('h');
     
-    $debits = [];
+    // 1. Calculate Total Customer Net Balance as of date (Opening Balances + Invoices + Debit Journals + Customer Refunds - Received Payments - Credit Memos - Credit Journals)
+    $inv_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(ci.total_amount), 0) as total 
+        FROM customer_invoices ci 
+        JOIN transaction_headers th ON ci.header_id = th.id 
+        WHERE ci.customer_id = ? AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+    ", [$customer_id, $as_of_date])['total'] ?? 0);
     
-    // 1. Invoices gross totals
-    $inv_rows = $db->fetchAll("
-        SELECT ci.id, ci.invoice_number as doc_no, ci.invoice_date as doc_date, ci.total_amount as amount
-        FROM customer_invoices ci
-        JOIN transaction_headers h ON ci.header_id = h.id
-        WHERE ci.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND ci.invoice_date <= ? {$loc_sql}
-        ORDER BY ci.invoice_date ASC
-    ", [$customer_id, $as_of_date]);
-    
-    foreach ($inv_rows as $inv) {
-        $debits[] = [
-            'doc_no' => $inv['doc_no'],
-            'date'   => $inv['doc_date'],
-            'amount' => (float)$inv['amount'],
-            'open'   => (float)$inv['amount'],
+    $jour_debits = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(j.amount), 0) as total 
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id 
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+          AND j.entry_type = 'debit'
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+    ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
+
+    $jour_credits = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(j.amount), 0) as total 
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id 
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+          AND j.entry_type = 'credit'
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+    ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
+
+    // Payments Received (Money IN)
+    $pay_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total 
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND th.id NOT IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $as_of_date])['total'] ?? 0);
+
+    // Customer Refunds (Money OUT to customer for Credit Memo / Return)
+    $refund_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total 
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND th.id IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $as_of_date])['total'] ?? 0);
+
+    $cm_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0) as total 
+        FROM transaction_headers th
+        LEFT JOIN credit_memos cm ON cm.header_id = th.id 
+        WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+          AND th.txn_type IN ('credit_memo', 'Credit Memo')
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+    ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
+
+    // Fetch opening balance entries before or on as_of_date
+    $jour_op = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as total 
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id 
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+          AND th.txn_type IN ('Opening Balance', 'Opening_Balance', 'opening_balance')
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+    ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
+
+    $net_customer_balance = ($jour_op + $inv_total + $jour_debits + $refund_total) - ($pay_total + $cm_total + $jour_credits);
+
+    $aging7  = ['current' => 0.0, '1_7' => 0.0, '8_14' => 0.0, '15_21' => 0.0, 'over_21' => 0.0];
+    $aging30 = ['current' => 0.0, 'b30' => 0.0, 'b60' => 0.0, 'b90' => 0.0, 'over_90' => 0.0];
+
+    if ($net_customer_balance <= 0.001) {
+        $aging7['current'] = round($net_customer_balance, 2);
+        $aging30['current'] = round($net_customer_balance, 2);
+        return [
+            'aging7' => $aging7,
+            'aging30' => $aging30,
+            'total_due' => round($net_customer_balance, 2)
         ];
     }
-    
-    // 2. Journal Entries (Debits to AR or opening customer receivables)
-    $jv_rows = $db->fetchAll("
-        SELECT j.id, h.txn_number as doc_no, h.txn_date as doc_date, j.amount
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE (j.party_id = ? OR h.party_id = ?) 
-          AND j.entry_type = 'debit'
-          AND (j.account_id = 'acc-1100' OR h.txn_type IN ('Journal', 'journal_entry'))
-          AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_date <= ? {$loc_sql}
-        ORDER BY h.txn_date ASC
-    ", [$customer_id, $customer_id, $as_of_date]);
-    
-    foreach ($jv_rows as $jv) {
-        $already = false;
-        foreach ($debits as $d) {
-            if ($d['doc_no'] === $jv['doc_no']) { $already = true; break; }
-        }
-        if (!$already) {
-            $debits[] = [
-                'doc_no' => $jv['doc_no'],
-                'date'   => $jv['doc_date'],
-                'amount' => (float)$jv['amount'],
-                'open'   => (float)$jv['amount'],
-            ];
-        }
-    }
-    
-    usort($debits, function($a, $b) {
-        return strtotime($a['date']) - strtotime($b['date']);
-    });
-    
-    // 3. Payments received for this customer
-    $payments = $db->fetchAll("
-        SELECT p.id, p.amount, p.payment_date as doc_date
-        FROM payments p
-        JOIN transaction_headers h ON p.header_id = h.id
-        WHERE p.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND p.payment_date <= ? {$loc_sql}
-    ", [$customer_id, $as_of_date]);
-    
-    $total_unapplied_credits = 0.0;
-    foreach ($payments as $p) {
-        $total_unapplied_credits += (float)$p['amount'];
-    }
-    
-    $jv_credits = $db->fetchAll("
-        SELECT j.amount
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE (j.party_id = ? OR h.party_id = ?)
-          AND j.entry_type = 'credit'
-          AND j.account_id = 'acc-1100'
-          AND h.txn_type IN ('Journal', 'journal_entry')
-          AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_date <= ? {$loc_sql}
-    ", [$customer_id, $customer_id, $as_of_date]);
-    
-    foreach ($jv_credits as $jvc) {
-        $total_unapplied_credits += (float)$jvc['amount'];
-    }
-    
-    foreach ($debits as &$d) {
-        if ($total_unapplied_credits <= 0) break;
-        $apply = min($d['open'], $total_unapplied_credits);
-        $d['open'] -= $apply;
-        $total_unapplied_credits -= $apply;
-    }
-    unset($d);
-    
-    $aging7 = ['current' => 0.0, '1_7' => 0.0, '8_14' => 0.0, '15_21' => 0.0, 'over_21' => 0.0];
-    $aging30 = ['current' => 0.0, 'b30' => 0.0, 'b60' => 0.0, 'b90' => 0.0, 'over_90' => 0.0];
-    
-    foreach ($debits as $d) {
-        if ($d['open'] <= 0.001) continue;
-        $days = (int)floor((strtotime($as_of_date) - strtotime($d['date'])) / 86400);
-        
-        if ($days <= 0)      $aging7['current'] += $d['open'];
-        elseif ($days <= 7)  $aging7['1_7']     += $d['open'];
-        elseif ($days <= 14) $aging7['8_14']    += $d['open'];
-        elseif ($days <= 21) $aging7['15_21']   += $d['open'];
-        else                 $aging7['over_21'] += $d['open'];
 
-        if ($days <= 0)       $aging30['current'] += $d['open'];
-        elseif ($days <= 30)  $aging30['b30']     += $d['open'];
-        elseif ($days <= 60)  $aging30['b60']     += $d['open'];
-        elseif ($days <= 90)  $aging30['b90']     += $d['open'];
-        else                  $aging30['over_90'] += $d['open'];
+    // 2. Fetch all debit documents sorted by date DESC (Newest to Oldest)
+    $debit_docs = [];
+
+    $invoices = $db->fetchAll("
+        SELECT th.txn_date as doc_date, ci.total_amount as amount
+        FROM customer_invoices ci
+        JOIN transaction_headers th ON ci.header_id = th.id
+        WHERE ci.customer_id = ? AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+        ORDER BY th.txn_date DESC
+    ", [$customer_id, $as_of_date]);
+    foreach ($invoices as $i) { $debit_docs[] = ['doc_date' => $i['doc_date'], 'amount' => (float)$i['amount']]; }
+
+    $journals = $db->fetchAll("
+        SELECT th.txn_date as doc_date, j.amount
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
+          AND j.entry_type = 'debit'
+          AND th.txn_type IN ('Journal', 'journal_entry')
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+        ORDER BY th.txn_date DESC
+    ", [$customer_id, $customer_id, $as_of_date]);
+    foreach ($journals as $j) { $debit_docs[] = ['doc_date' => $j['doc_date'], 'amount' => (float)$j['amount']]; }
+
+    usort($debit_docs, function($a, $b) {
+        return strtotime($b['doc_date']) - strtotime($a['doc_date']);
+    });
+
+    $remaining_balance = $net_customer_balance;
+
+    foreach ($debit_docs as $doc) {
+        if ($remaining_balance <= 0.001) break;
+        $alloc = min($doc['amount'], $remaining_balance);
+        $remaining_balance -= $alloc;
+
+        $days = (int)floor((strtotime($as_of_date) - strtotime($doc['doc_date'])) / 86400);
+
+        if ($days <= 0)      $aging7['current'] += $alloc;
+        elseif ($days <= 7)  $aging7['1_7']     += $alloc;
+        elseif ($days <= 14) $aging7['8_14']    += $alloc;
+        elseif ($days <= 21) $aging7['15_21']   += $alloc;
+        else                 $aging7['over_21'] += $alloc;
+
+        if ($days <= 0)       $aging30['current'] += $alloc;
+        elseif ($days <= 30)  $aging30['b30']     += $alloc;
+        elseif ($days <= 60)  $aging30['b60']     += $alloc;
+        elseif ($days <= 90)  $aging30['b90']     += $alloc;
+        else                  $aging30['over_90'] += $alloc;
     }
-    
+
+    if ($remaining_balance > 0.001) {
+        $aging7['over_21'] += $remaining_balance;
+        $aging30['over_90'] += $remaining_balance;
+    }
+
     return [
-        'aging7'  => $aging7,
+        'aging7' => $aging7,
         'aging30' => $aging30,
-        'total_due' => array_sum($aging7)
+        'total_due' => round($net_customer_balance, 2)
     ];
 }
 ?>

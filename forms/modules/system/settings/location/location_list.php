@@ -42,6 +42,7 @@ $locations = $db->fetchAll("
                 <tr>
                     <th width="40" style="text-align: center;">#</th>
                     <th>Location Name</th>
+                    <th>Short Code</th>
                     <th>Type</th>
                     <th>Description</th>
                     <th>Status</th>
@@ -51,7 +52,7 @@ $locations = $db->fetchAll("
             <tbody>
                 <?php if (empty($locations)): ?>
                     <tr>
-                        <td colspan="6" style="text-align: center; color: #888; padding: 20px;">No location records found.
+                        <td colspan="7" style="text-align: center; color: #888; padding: 20px;">No location records found.
                         </td>
                     </tr>
                 <?php else: ?>
@@ -60,6 +61,7 @@ $locations = $db->fetchAll("
                         <tr>
                             <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
                             <td style="font-weight: 600; color: #003087;"><?php echo htmlspecialchars($row['name']); ?></td>
+                            <td><span style="font-weight: 700; color: #0284c7; background: #e0f2fe; padding: 2px 8px; border-radius: 4px; font-size: 11px;"><?php echo htmlspecialchars($row['code'] ?? '-'); ?></span></td>
                             <td><span class="ns-badge-type"><?php echo htmlspecialchars($row['type']); ?></span></td>
                             <td style="color: #64748b; font-size: 12px;">
                                 <?php echo htmlspecialchars($row['description'] ?? '-'); ?></td>

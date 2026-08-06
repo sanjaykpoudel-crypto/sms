@@ -56,7 +56,7 @@
                                         <span class="sr-only">Toggle Dropdown</span>
                                     </button>
                                     <div class="dropdown-menu" role="menu">
-                                        <a class="dropdown-item" href="./?page=transactions/stock_adjustments/view_adjustment&id=<?php echo $row['id'] ?>"><span class="fa fa-eye text-dark"></span> View</a>
+                                        <a class="dropdown-item" href="./?page=transactions/view&id=<?php echo $row['id'] ?>"><span class="fa fa-eye text-dark"></span> View</a>
                                         <div class="dropdown-divider"></div>
                                         <a class="dropdown-item edit_data" href="javascript:void(0)" data-id="<?php echo $row['id'] ?>"><span class="fa fa-edit text-primary"></span> Edit</a>
                                         <div class="dropdown-divider"></div>

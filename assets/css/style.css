@@ -2984,6 +2984,7 @@ body.dark-theme, .dark-mode {
 .dv4-kpi.kpi-profit   { background: var(--dv4-gradient-amber); }
 .dv4-kpi.kpi-cash     { background: var(--dv4-gradient-blue); }
 .dv4-kpi.kpi-bank     { background: var(--dv4-gradient-purple); }
+.dv4-kpi.kpi-fd       { background: linear-gradient(135deg, #0d9488, #0f766e); }
 .dv4-kpi.kpi-ar       { background: var(--dv4-gradient-red); }
 .dv4-kpi.kpi-ap       { background: var(--dv4-gradient-pink); }
 .dv4-kpi.kpi-inv      { background: var(--dv4-gradient-cyan); }

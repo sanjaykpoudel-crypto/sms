@@ -4,20 +4,18 @@ require_once 'forms/modules/reports/rpt_helpers.php';
 require_once 'api/reference_helper.php';
 $db = db();
 
-$today    = date('Y-m-d');
-$date_to  = $_GET['date_to'] ?? $today;
-
-// Allow user to specify date_from, otherwise default to 1 month prior to date_to (today)
-$default_from = date('Y-m-d', strtotime('-1 month', strtotime($date_to)));
-$date_from = $_GET['date_from'] ?? $default_from;
+$fy        = rpt_get_current_fiscal_year_dates();
+$today     = date('Y-m-d');
+$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_from = $_GET['date_from'] ?? $fy['start_date'];
 
 $start_date = $date_from;
 $as_of      = $date_to;
 
 /**
- * Helper to get GL balance for an account or subtype
+ * Helper to get GL balance for an account or subtype as of date
  */
-function get_gl_bal($db, $id_or_subtype, $as_of, $start_date, $is_id = true) {
+function get_gl_bal($db, $id_or_subtype, $as_of, $start_date = null, $is_id = true) {
     $field = $is_id ? 'j.account_id' : 'a.account_subtype';
     $loc_sql = rpt_location_sql('h');
     $row = $db->fetchOne("
@@ -25,28 +23,30 @@ function get_gl_bal($db, $id_or_subtype, $as_of, $start_date, $is_id = true) {
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    ", [$id_or_subtype, $start_date, $as_of]);
+        WHERE $field = ? AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
+    ", [$id_or_subtype, $as_of]);
     return (float)($row['bal'] ?? 0);
 }
 
 $loc_sql = rpt_location_sql('h');
+$src_filter = "AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening'))";
 
 // ─── ASSETS ───────────────────────────────────────────────────────────────────
-$cash_on_hand   = get_gl_bal($db, 'acc-1010', $as_of, $start_date);
+$cash_on_hand   = get_gl_bal($db, 'acc-1010', $as_of);
 // Other bank accounts (anything subtype bank except the main cash account)
 $bank_balance   = (float)($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-", [$start_date, $as_of])['bal'] ?? 0);
+    WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
+", [$as_of])['bal'] ?? 0);
 
-$ar             = get_gl_bal($db, 'Accounts Receivable', $as_of, $start_date, false);
-$inventory_val  = get_gl_bal($db, 'Inventory Asset', $as_of, $start_date, false);
+$ar             = get_gl_bal($db, 'Accounts Receivable', $as_of, null, false);
+$inventory_val  = get_gl_bal($db, 'Inventory Asset', $as_of, null, false);
 
-// Other Assets (Fixed assets, etc.)
+// Other Assets (Fixed assets, Accumulated Depreciation, etc.)
 $other_assets_list = $db->fetchAll("
     SELECT a.account_name, SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
     FROM journal_entries j
@@ -56,10 +56,10 @@ $other_assets_list = $db->fetchAll("
       AND a.account_subtype NOT IN ('Accounts Receivable', 'Inventory Asset') 
       AND a.id != 'acc-1010' 
       AND a.account_subtype != 'Bank'
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
-", [$start_date, $as_of]);
+", [$as_of]);
 
 $other_assets = array_sum(array_column($other_assets_list, 'bal'));
 
@@ -67,8 +67,8 @@ $total_current_assets = $cash_on_hand + $bank_balance + $ar + $inventory_val;
 $total_assets         = $total_current_assets + $other_assets;
 
 // ─── LIABILITIES ──────────────────────────────────────────────────────────────
-$ap             = -get_gl_bal($db, 'Accounts Payable', $as_of, $start_date, false);
-$tax_payable    = -get_gl_bal($db, 'Other Current Liability', $as_of, $start_date, false);
+$ap             = -get_gl_bal($db, 'Accounts Payable', $as_of, null, false);
+$tax_payable    = -get_gl_bal($db, 'Other Current Liability', $as_of, null, false);
 
 // Other Liabilities
 $other_liabilities_list = $db->fetchAll("
@@ -78,33 +78,31 @@ $other_liabilities_list = $db->fetchAll("
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'liability' 
       AND a.account_subtype NOT IN ('Accounts Payable', 'Other Current Liability')
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
-", [$start_date, $as_of]);
+", [$as_of]);
 
 $other_liabilities = array_sum(array_column($other_liabilities_list, 'bal'));
 $total_liabilities = $ap + $tax_payable + $other_liabilities;
 
 // ─── EQUITY ───────────────────────────────────────────────────────────────────
-// Use Type-based balances for Income and Expenses (including system closing journals)
+// Use Type-based balances for Income and Expenses (including CA Audit Adjustments, excluding period close journals)
 $revenue = -(float)($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL {$loc_sql}
-", [$start_date, $as_of])['v'] ?? 0);
+    WHERE a.account_type = 'income' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
+", [$as_of])['v'] ?? 0);
 
 $expenses = (float)($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
     FROM journal_entries j 
     JOIN accounts a ON j.account_id = a.id 
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.source IS NULL {$loc_sql}
-", [$start_date, $as_of])['v'] ?? 0);
+    WHERE a.account_type = 'expense' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
+", [$as_of])['v'] ?? 0);
 
 $retained_earnings = $revenue - $expenses;
 
@@ -115,10 +113,10 @@ $equity_accounts_list = $db->fetchAll("
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE a.account_type = 'equity'
-      AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
     GROUP BY a.id, a.account_name
     HAVING bal != 0
-", [$start_date, $as_of]);
+", [$as_of]);
 
 // Inventory adjustments are now included in their original accounts directly.
 $inventory_adjustment_reserve = 0.0;

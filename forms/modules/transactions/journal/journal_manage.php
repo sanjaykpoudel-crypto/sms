@@ -69,7 +69,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                 <div class="ns-form-group">
                     <label class="ns-label">Location</label>
                     <select name="location_id" class="ns-select">
-                        <option value="">-- Select Location --</option>
+                        <option value="" disabled <?php echo empty($data['location_id']) ? 'selected' : ''; ?> hidden>-- Select Location --</option>
                         <?php 
                         $curr_loc_id = !empty($data['location_id']) ? $data['location_id'] : get_user_default_location_id();
                         foreach (get_active_locations() as $loc): 
@@ -125,7 +125,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                         <td class="text-center"><?php echo $i + 1; ?></td>
                         <td>
                             <select name="account_id[]" class="ns-select" style="width: 100%;">
-                                <option value="">Select Account</option>
+                                <option value="" disabled <?php echo empty($line['account_id']) ? 'selected' : ''; ?> hidden>Select Account</option>
                                 <?php foreach ($accounts as $acc): ?>
                                     <option value="<?php echo $acc['id']; ?>" <?php echo ($acc['id'] == $line['account_id']) ? 'selected' : ''; ?>>
                                         <?php echo htmlspecialchars($acc['account_name']); ?>
@@ -145,7 +145,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                             <div style="display: flex; gap: 2px;">
                                 <select name="line_party_type[]" class="ns-select" style="width: 70px; font-size: 10px;"
                                     onchange="updateLineEntity(this)">
-                                    <option value="">Type</option>
+                                    <option value="" disabled <?php echo empty($line_party_type) ? 'selected' : ''; ?> hidden>Type</option>
                                     <option value="customer" <?php echo ($line_party_type === 'customer') ? 'selected' : ''; ?>>Cust</option>
                                     <option value="vendor" <?php echo ($line_party_type === 'vendor') ? 'selected' : ''; ?>>
                                         Vend</option>
@@ -154,7 +154,7 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                                 </select>
                                 <select name="line_party_id[]" class="ns-select line-party-select"
                                     style="flex: 1; font-size: 10px;">
-                                    <option value="">Name</option>
+                                    <option value="" disabled <?php echo empty($line_party_id) ? 'selected' : ''; ?> hidden>Name</option>
                                     <?php
                                     if ($line_party_type) {
                                         $party_list = [];

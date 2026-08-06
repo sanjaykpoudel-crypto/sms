@@ -179,7 +179,7 @@ $erp_header = $db->fetchOne("SELECT id, txn_number FROM transaction_headers WHER
 <script>
 function initiateReturn() {
     if(confirm('Initiate a return for this POS transaction? This will open the return management screen.')) {
-        window.location.href = '?page=transactions/pos/return&pos_id=<?php echo $id; ?>';
+        window.location.href = '?page=transactions/credit_memo/manage&pos_id=<?php echo $id; ?>';
     }
 }
 </script>

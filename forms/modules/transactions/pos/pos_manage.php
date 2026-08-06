@@ -3,19 +3,39 @@ require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 $db = db();
 
-$pos_location_id = $_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '');
+$user_id = $_SESSION['user_id'] ?? '';
+$user_info = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$user_id]);
+
+$is_admin = false;
+if ($user_info) {
+    $role = strtolower($user_info['role'] ?? '');
+    if ($role === 'admin') {
+        $is_admin = true;
+    }
+}
+
+// User default location
+$pos_location_id = $user_info['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '');
+if (empty($pos_location_id)) {
+    $firstLoc = $db->fetchOne("SELECT id FROM locations WHERE is_deleted = 0 ORDER BY name ASC LIMIT 1");
+    $pos_location_id = $firstLoc['id'] ?? '';
+}
+
+$all_locations = $db->fetchAll("SELECT id, name FROM locations WHERE is_deleted = 0 ORDER BY name ASC");
 
 // Fetch active items with category names, location-specific stock, cost, and selling price
 $items = $db->fetchAll("
     SELECT i.id, i.sku, i.item_name, r.name as category_name, 
         CAST(COALESCE(ib.selling_price, i.selling_price) AS DECIMAL(12,2)) as selling_price, 
         CAST(COALESCE(ib.average_cost, i.cost_price) AS DECIMAL(12,2)) as cost_price, 
+        CAST(COALESCE(ib.mrp, i.mrp, 0) AS DECIMAL(12,2)) as mrp,
         i.tax_rate, i.barcode,
         CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
     LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = ?
     WHERE i.is_active = 1 AND i.is_deleted = 0
+      AND COALESCE(ib.quantity_on_hand, 0) > 0
     ORDER BY i.item_name ASC
 ", [$pos_location_id]);
 
@@ -123,6 +143,35 @@ $txn_date = date('Y-m-d');
                 <i class="fas fa-search pos-search-icon"></i>
                 <input type="text" id="pos-search" class="pos-search-input" placeholder="Scan Barcode or Search Item Name..." autocomplete="off" autofocus>
             </div>
+
+            <!-- LOCATION SELECTOR FOR POS -->
+            <?php if ($is_admin): ?>
+                <div class="pos-location-wrapper" style="display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 4px 12px; border-radius: 8px;">
+                    <i class="fas fa-map-marker-alt" style="color: var(--ns-primary); font-size: 15px;"></i>
+                    <label style="font-size: 12px; font-weight: 700; color: #475569; margin: 0; white-space: nowrap;">Location:</label>
+                    <select id="pos-location-select" style="border: none; background: transparent; font-weight: 700; font-size: 13px; color: #1e293b; cursor: pointer; outline: none;" onchange="changePosLocation(this.value)">
+                        <?php foreach ($all_locations as $loc): ?>
+                            <option value="<?php echo htmlspecialchars($loc['id']); ?>" <?php echo ($loc['id'] == $pos_location_id) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($loc['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            <?php else: ?>
+                <div class="pos-location-badge" style="display: flex; align-items: center; gap: 6px; background: #f1f5f9; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 700; color: #334155;">
+                    <i class="fas fa-map-marker-alt" style="color: var(--ns-primary);"></i>
+                    <span>
+                        <?php 
+                            $user_loc_name = 'Default Location';
+                            foreach ($all_locations as $l) {
+                                if ($l['id'] == $pos_location_id) { $user_loc_name = $l['name']; break; }
+                            }
+                            echo htmlspecialchars($user_loc_name);
+                        ?>
+                    </span>
+                </div>
+            <?php endif; ?>
+
             <div class="barcode-active"><i class="fas fa-barcode"></i> SCANNER READY</div>
         </div>
         
@@ -153,7 +202,7 @@ $txn_date = date('Y-m-d');
         </div>
 
         <div class="pos-checkout-area">
-            <input type="hidden" id="pos-location-id" name="location_id" value="<?php echo htmlspecialchars(get_user_default_location_id()); ?>">
+            <input type="hidden" id="pos-location-id" name="location_id" value="<?php echo htmlspecialchars($pos_location_id); ?>">
 
             <div class="pos-summary">
                 <div class="pos-summary-line">
@@ -241,8 +290,27 @@ let cart = [];
 let payments = [];
 let activeCat = 'all';
 
+function changePosLocation(locId) {
+    const hiddenInput = document.getElementById('pos-location-id');
+    if (cart.length > 0) {
+        if (confirm("Switching location will clear the current POS cart items. Proceed?")) {
+            cart = [];
+            renderCart();
+            calculateTotals();
+        } else {
+            const sel = document.getElementById('pos-location-select');
+            if (sel && hiddenInput) sel.value = hiddenInput.value;
+            return;
+        }
+    }
+    if (hiddenInput) {
+        hiddenInput.value = locId;
+    }
+    refreshPosItems();
+}
+
 function refreshPosItems() {
-    const locId = document.getElementById('pos-location-id')?.value || '';
+    const locId = document.getElementById('pos-location-id')?.value || '<?php echo htmlspecialchars($pos_location_id); ?>';
     fetch('api/get_pos_items.php?location_id=' + encodeURIComponent(locId))
         .then(r => r.json())
         .then(res => {
@@ -308,6 +376,7 @@ function renderGrid(search = '') {
         const stockColor = availStock <= 0 ? '#ef4444' : (availStock <= 5 ? '#f59e0b' : '#10b981');
         const costPrice = parseFloat(item.cost_price || 0);
         const sellPrice = parseFloat(item.selling_price || 0);
+        const mrpPrice  = parseFloat(item.mrp || 0);
 
         div.innerHTML = `
             <div class="pos-card-name" style="margin-bottom: 4px;">${item.item_name}</div>
@@ -323,6 +392,10 @@ function renderGrid(search = '') {
                 <div style="display: flex; justify-content: space-between;">
                     <span style="font-weight: 600;">Sell:</span> 
                     <span style="font-weight: 700; color: #16a34a;">Rs ${sellPrice.toFixed(2)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; border-top: 1px dashed #e2e8f0; padding-top: 2px;">
+                    <span style="font-weight: 600;">MRP:</span> 
+                    <span style="font-weight: 700; color: #7c3aed;">Rs ${mrpPrice.toFixed(2)}</span>
                 </div>
             </div>
         `;
@@ -614,14 +687,18 @@ function completeSale() {
         customer_id: null // Can add customer selector later
     };
 
+    let httpStatusCode = 200;
     fetch('api/save_pos.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     })
-    .then(r => r.json())
+    .then(r => {
+        httpStatusCode = r.status;
+        return r.json();
+    })
     .then(res => {
-        if(res.status === 'success') {
+        if (httpStatusCode === 200 && res.status === 'success') {
             nsNotify('Sale Completed! Transaction: ' + res.txn_number);
 
             const posId = res.pos_id || '';
@@ -640,13 +717,14 @@ function completeSale() {
 
             setTimeout(() => location.reload(), 500);
         } else {
-            nsNotify('Error: ' + res.message, 'error');
+            const errText = res.message || 'Transaction failed';
+            nsNotify('Error: ' + errText, 'error');
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-check-double"></i> Complete Sale (F10)';
         }
     })
     .catch(err => {
-        nsNotify('Network Error', 'error');
+        nsNotify('Error: ' + (err.message || 'Network / Server Error'), 'error');
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-check-double"></i> Complete Sale (F10)';
     });

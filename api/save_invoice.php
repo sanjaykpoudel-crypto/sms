@@ -29,10 +29,13 @@ $pdo = $db->getConnection();
 try {
     $pdo->beginTransaction();
 
+    $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
+
     $id = $_POST['id'] ?? null;
     $txn_number = $_POST['txn_number'] ?? '';
     if (empty($txn_number)) {
-        $txn_number = getNextTransactionNumber('customer_invoice');
+        $txn_number = getNextTransactionNumber('customer_invoice', $location_id);
+        incrementTransactionNumber('customer_invoice');
     }
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
     $old_txn_date = $txn_date;
@@ -85,7 +88,7 @@ try {
             $sale_type = $old_invoice['sale_type'];
         }
 
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, status = ?, location_id = ? WHERE id = ?", [
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, status = ?, location_id = ?, source = 'manual' WHERE id = ?", [
             $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $status, $location_id, $id
         ]);
         
@@ -147,6 +150,7 @@ try {
     $tax_total = 0;
     $total_cogs = 0;
     $gl_items = [];
+    $synced_items = [];
 
     foreach ($item_ids as $idx => $item_id) {
         if (empty($item_id)) continue;
@@ -201,14 +205,24 @@ try {
             [generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit]
         );
 
-        // Deduct new stock
+        // Deduct new stock and update inventory_balances for the selling location
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
             // Also update local batch map so subsequent validation in same request is accurate
             if (isset($item_data_map[$item_id])) {
                 $item_data_map[$item_id]['current_stock'] -= $qty;
             }
+            // Update cost_price in inventory_balances for the selling location (reflects COGS cost)
+            if ($cost_price > 0) {
+                $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
+                if ($bal_exists) {
+                    $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$cost_price, $cost_price, $item_id, $location_id]);
+                } else {
+                    $db->execute("INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, NOW())", [generate_uuid(), $item_id, $location_id, $cost_price, $cost_price]);
+                }
+            }
         }
+        $synced_items[] = $item_id;
 
         $gl_items[] = [
             'item_id'      => $item_id,
@@ -433,9 +447,12 @@ try {
     }
 
     $pdo->commit();
-    // Move expensive auto-sync to run AFTER response is sent (non-blocking)
-    register_shutdown_function(function() {
+    // Sync inventory balances (stock + cost) across all locations for each affected item
+    register_shutdown_function(function() use ($synced_items, $db) {
         try {
+            foreach (array_unique($synced_items) as $sync_item_id) {
+                sync_and_get_item_inventory_balances($db, $sync_item_id);
+            }
             require_once __DIR__ . '/reference_helper.php';
             if (function_exists('auto_sync_pos_items_and_invoices')) {
                 auto_sync_pos_items_and_invoices(true);
@@ -444,13 +461,15 @@ try {
     });
     clear_dashboard_cache();
     ob_end_clean();
-    echo json_encode(['status' => 'success', 'message' => 'Invoice has been saved successfully.', 'id' => $id]);
+    http_response_code(200);
+    echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Invoice has been saved successfully.', 'id' => $id]);
     exit;
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     ob_end_clean();
     file_put_contents(__DIR__ . '/../scratch/api_error.log', date('Y-m-d H:i:s') . ' - save_invoice.php: ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n", FILE_APPEND);
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;
 }
 

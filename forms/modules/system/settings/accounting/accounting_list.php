@@ -12,9 +12,11 @@ $type_labels = [
 
 $db = db();
 $items = $db->fetchAll("SELECT * FROM reference_codes ORDER BY name ASC");
-$loc_rows = $db->fetchAll("SELECT id, name, type as location_type, 'location' as type, '' as code, 0 as value, '' as symbol, description, is_active FROM locations WHERE is_deleted = 0 ORDER BY name ASC");
+$loc_rows = $db->fetchAll("SELECT id, name, type as location_type, 'location' as type, code, 0 as value, '' as symbol, description, is_active FROM locations WHERE is_deleted = 0 ORDER BY name ASC");
 foreach ($loc_rows as $loc) {
-    $loc['code'] = $loc['location_type'];
+    if (empty($loc['code'])) {
+        $loc['code'] = $loc['location_type'];
+    }
     $loc['is_location'] = true;
     $items[] = $loc;
 }

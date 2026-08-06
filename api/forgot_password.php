@@ -36,23 +36,21 @@ if ($action === 'request_reset') {
         // Generate token and 6-digit OTP code
         $token = bin2hex(random_bytes(32));
         $otp_code = sprintf('%06d', mt_rand(100000, 999999));
-        $expires_at = date('Y-m-d H:i:s', time() + 900); // 15 minutes validity
 
         // Invalidate old tokens for this user
         $db->execute("UPDATE password_resets SET is_used = 1 WHERE user_id = :user_id AND is_used = 0", [
             'user_id' => $user['id']
         ]);
 
-        // Insert new password reset request
+        // Insert new password reset request with MySQL timestamp calculation (prevents PHP vs MySQL timezone mismatches)
         $db->execute(
-            "INSERT INTO password_resets (user_id, username, email, token, otp_code, expires_at) VALUES (:user_id, :username, :email, :token, :otp_code, :expires_at)",
+            "INSERT INTO password_resets (user_id, username, email, token, otp_code, expires_at) VALUES (:user_id, :username, :email, :token, :otp_code, DATE_ADD(NOW(), INTERVAL 30 MINUTE))",
             [
-                'user_id'    => $user['id'],
-                'username'   => $user['username'],
-                'email'      => $user['email'],
-                'token'      => $token,
-                'otp_code'   => $otp_code,
-                'expires_at' => $expires_at
+                'user_id'  => $user['id'],
+                'username' => $user['username'],
+                'email'    => $user['email'],
+                'token'    => $token,
+                'otp_code' => $otp_code
             ]
         );
 

@@ -472,20 +472,16 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
 
                     <div class="fy-actions-bar">
                         <button class="ns-btn" id="btn-validate" onclick="runValidation()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-tasks"></i> Validate Period</button>
-                        <button class="ns-btn" id="btn-preview" onclick="runPreview()" <?= $is_closed ? 'disabled' : '' ?>><i
-                                class="fas fa-eye"></i> Preview Closing</button>
-                        <button class="ns-btn ns-btn-primary" id="btn-close" onclick="openCloseModal()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-lock"></i> Close Fiscal Year</button>
-                        <button class="ns-btn" id="btn-reopen" onclick="openReopenModal()" <?= !$is_closed ? 'disabled' : '' ?> style="color:#d32f2f; border-color: currentColor;"
-                            onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i
-                                class="fas fa-unlock"></i> Reopen Fiscal Year</button>
-
+                        <button class="ns-btn" id="btn-preview" onclick="runPreview()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-eye"></i> Preview Closing</button>
+                        <button class="ns-btn" id="btn-soft-close" onclick="runSoftClose()" <?= ($selected_fy['status'] === 'soft_closed' || $is_closed) ? 'disabled' : '' ?> style="color:#d97706; border-color:currentColor;"><i class="fas fa-pause-circle"></i> Soft Close</button>
+                        <button class="ns-btn ns-btn-primary" id="btn-close" onclick="openCloseModal()" <?= $is_closed ? 'disabled' : '' ?>><i class="fas fa-lock"></i> Close Period</button>
+                        <button class="ns-btn" id="btn-lock" onclick="runLock()" <?= ($selected_fy['status'] === 'locked') ? 'disabled' : '' ?> style="color:#475569; border-color:currentColor;"><i class="fas fa-key"></i> Lock Period</button>
+                        <button class="ns-btn" id="btn-reopen" onclick="openReopenModal()" <?= (!$is_closed && $selected_fy['status'] !== 'soft_closed' && $selected_fy['status'] !== 'locked') ? 'disabled' : '' ?> style="color:#d32f2f; border-color: currentColor;" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i class="fas fa-unlock"></i> Unlock / Reopen</button>
+                        <button class="ns-btn" id="btn-snapshots" onclick="openSnapshotsModal()"><i class="fas fa-camera"></i> Report Snapshots</button>
                         <?php if (!empty($selected_fy['closing_journal_id'])): ?>
-                            <a href="?page=transactions/view&id=<?= $selected_fy['closing_journal_id'] ?>" class="ns-btn"
-                                id="btn-journal"><i class="fas fa-file-invoice"></i> View Closing Journal</a>
+                            <a href="?page=transactions/view&id=<?= $selected_fy['closing_journal_id'] ?>" class="ns-btn" id="btn-journal"><i class="fas fa-file-invoice"></i> View Closing Journal</a>
                         <?php endif; ?>
-
-                        <button class="ns-btn" id="btn-print" onclick="printReport()" <?= !$is_closed ? 'disabled' : '' ?>><i
-                                class="fas fa-print"></i> Print Closing Report</button>
+                        <button class="ns-btn" id="btn-print" onclick="printReport()" <?= !$is_closed ? 'disabled' : '' ?>><i class="fas fa-print"></i> Print Report</button>
                     </div>
 
                     <!-- Operations Result Container -->
@@ -695,9 +691,78 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
     </div>
 </div>
 
+<!-- MODAL: View Period Report Snapshots -->
+<div class="ns-modal" id="snapshots-modal">
+    <div class="ns-modal-content" style="width: 750px;">
+        <div class="ns-modal-header">
+            <h3 class="ns-modal-title"><i class="fas fa-camera"></i> Immutable Period Report Snapshots</h3>
+            <span class="ns-modal-close" onclick="closeSnapshotsModal()">&times;</span>
+        </div>
+        <div id="snapshots-list-body" style="min-height: 200px;">
+            <div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i></div>
+        </div>
+        <div class="ns-modal-footer">
+            <button type="button" class="ns-btn" onclick="closeSnapshotsModal()">Close</button>
+        </div>
+    </div>
+</div>
+
 <script>
     function selectFY(id) {
         window.location.href = '?page=system/fiscal_years&id=' + id;
+    }
+
+    function runSoftClose() {
+        if (!confirm("Are you sure you want to Soft Close this period? No new transactions will be allowed unless reopened.")) return;
+        const fy_id = '<?= $selected_id ?>';
+        $.post('api/fiscal_year_handler.php', { action: 'soft_close', id: fy_id }, function(res) {
+            if (res.status === 'success') { alert(res.message); location.reload(); }
+            else { alert(res.message); }
+        }, 'json');
+    }
+
+    function runLock() {
+        if (!confirm("Are you sure you want to Lock this period? Operations will be strictly locked.")) return;
+        const fy_id = '<?= $selected_id ?>';
+        $.post('api/fiscal_year_handler.php', { action: 'lock', id: fy_id }, function(res) {
+            if (res.status === 'success') { alert(res.message); location.reload(); }
+            else { alert(res.message); }
+        }, 'json');
+    }
+
+    function openSnapshotsModal() {
+        const fy_id = '<?= $selected_id ?>';
+        $('#snapshots-modal').fadeIn();
+        $('#snapshots-list-body').html('<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #003087;"></i></div>');
+        $.post('api/fiscal_year_handler.php', { action: 'get_snapshots', id: fy_id }, function(res) {
+            if (res.status === 'success' && res.snapshots.length > 0) {
+                let html = '<table style="width:100%; border-collapse:collapse; font-size:12px;"><thead style="background:#f1f5f9;"><tr><th style="padding:8px;">Report Name</th><th style="padding:8px;">Type</th><th style="padding:8px;">Captured At</th><th style="padding:8px; text-align:right;">Action</th></tr></thead><tbody>';
+                res.snapshots.forEach(s => {
+                    html += `<tr style="border-bottom:1px solid #e2e8f0;">
+                        <td style="padding:8px; font-weight:700;">${s.report_name}</td>
+                        <td style="padding:8px; text-transform:uppercase; font-size:10px; color:#64748b;">${s.report_type}</td>
+                        <td style="padding:8px; color:#64748b;">${s.created_at}</td>
+                        <td style="padding:8px; text-align:right;"><button class="ns-btn" style="padding:2px 8px; font-size:11px;" onclick="viewSnapshotDetail('${s.id}')"><i class="fas fa-eye"></i> View Detail</button></td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                $('#snapshots-list-body').html(html);
+            } else {
+                $('#snapshots-list-body').html('<div style="padding:30px; text-align:center; color:#64748b;">No frozen report snapshots found for this period. Snapshots are captured automatically upon Period Close.</div>');
+            }
+        }, 'json');
+    }
+    function closeSnapshotsModal() { $('#snapshots-modal').fadeOut(); }
+
+    function viewSnapshotDetail(snapId) {
+        $.post('api/fiscal_year_handler.php', { action: 'get_snapshot_detail', snapshot_id: snapId }, function(res) {
+            if (res.status === 'success') {
+                const data = JSON.parse(res.snapshot.snapshot_data);
+                alert(`Report Snapshot: ${res.snapshot.report_name}\nTotal Account Records: ${data.length}\nCaptured At: ${res.snapshot.created_at}`);
+            } else {
+                alert(res.message);
+            }
+        }, 'json');
     }
 
     function closeResultsBox() {
@@ -765,21 +830,92 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                         } else if (v.status === 'error') {
                             icon = '<i class="fas fa-times-circle validation-icon validation-error"></i>';
                         }
-                        let actionLink = '';
+                        let actionButtons = '';
                         if (v.action_url) {
-                            actionLink = `<a href="${v.action_url}" style="margin-left: 15px; font-size: 11px; font-weight: 600; text-decoration: none; padding: 4px 10px; border-radius: 4px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; white-space: nowrap;"><i class="fas fa-tools"></i> Fix Issue</a>`;
+                            actionButtons += `<a href="${v.action_url}" style="font-size: 11px; font-weight: 600; text-decoration: none; padding: 4px 10px; border-radius: 4px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; white-space: nowrap;"><i class="fas fa-tools"></i> Fix Issue</a>`;
                         }
+                        if (v.status !== 'success' && (v.needs_journal || v.journal_url)) {
+                            const jUrl = v.journal_url || '?page=transactions/journal/manage';
+                            const jText = v.journal_btn_text || '➕ Create Adjustment JV';
+                            actionButtons += `<a href="${jUrl}" style="margin-left: 8px; font-size: 11px; font-weight: 600; text-decoration: none; padding: 4px 10px; border-radius: 4px; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; white-space: nowrap;"><i class="fas fa-plus-circle"></i> ${jText}</a>`;
+                        }
+
+                        let journalBadge = '';
+                        if (v.status !== 'success') {
+                            if (v.needs_journal) {
+                                journalBadge = `<span style="font-size: 10px; font-weight: 700; background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">Adjustment JV Required: YES</span>`;
+                            } else {
+                                journalBadge = `<span style="font-size: 10px; font-weight: 600; background: #f1f5f9; color: #64748b; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">Adjustment JV Required: NO</span>`;
+                            }
+                        }
+
+                        let solutionHtml = '';
+                        if (v.status !== 'success' && v.solution) {
+                            solutionHtml = `<div style="margin-top: 6px; padding: 6px 10px; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 4px; font-size: 11px; color: #d48806; font-weight: 500;">
+                                <i class="fas fa-lightbulb" style="color: #faad14; margin-right: 4px;"></i> <strong>How to Fix:</strong> ${v.solution}
+                            </div>`;
+                        }
+
+                        let suggestedJvCard = '';
+                        if (v.status !== 'success' && v.suggested_jv) {
+                            const sjv = v.suggested_jv;
+                            let linesRows = '';
+                            sjv.lines.forEach(l => {
+                                const isDr = l.type === 'debit';
+                                linesRows += `
+                                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                                        <td style="padding: 6px 10px; font-weight: 600;">${l.account_name}</td>
+                                        <td style="padding: 6px 10px; font-weight: 700; color: ${isDr ? '#003087' : '#94a3b8'};">${isDr ? 'DEBIT' : '—'}</td>
+                                        <td style="padding: 6px 10px; font-weight: 700; color: ${!isDr ? '#c00' : '#94a3b8'};">${!isDr ? 'CREDIT' : '—'}</td>
+                                        <td style="padding: 6px 10px; text-align: right; font-weight: 700;">NPR ${numberFormat(l.amount)}</td>
+                                    </tr>
+                                `;
+                            });
+
+                            const sjvDataEscaped = encodeURIComponent(JSON.stringify(sjv));
+
+                            suggestedJvCard = `
+                                <div style="margin-top: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <div style="font-size: 12px; font-weight: 800; color: #0f172a;"><i class="fas fa-calculator" style="color: #003087;"></i> CA Audit JV Suggestion: ${sjv.title}</div>
+                                        <button type="button" onclick="postSuggestedJv('${sjvDataEscaped}', this)" style="background: #003087; color: #fff; border: none; padding: 6px 14px; font-size: 11px; font-weight: 700; border-radius: 4px; cursor: pointer; transition: background 0.2s;"><i class="fas fa-bolt"></i> 1-Click Post CA Entry</button>
+                                    </div>
+                                    <div style="font-size: 11px; color: #475569; margin-bottom: 8px; font-style: italic; background: #eff6ff; border-left: 3px solid #003087; padding: 6px 10px;">
+                                        <strong>CA Audit Rationale:</strong> ${sjv.ca_explanation}
+                                    </div>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 11px; background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;">
+                                        <thead>
+                                            <tr style="background: #f1f5f9; text-align: left; border-bottom: 1px solid #e2e8f0;">
+                                                <th style="padding: 6px 10px;">Account Name</th>
+                                                <th style="padding: 6px 10px;">Debit</th>
+                                                <th style="padding: 6px 10px;">Credit</th>
+                                                <th style="padding: 6px 10px; text-align: right;">Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${linesRows}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `;
+                        }
+
                         html += `
-                        <div class="validation-item" style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                        <div class="validation-item" style="display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 0;">
+                            <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1;">
                                 ${icon}
-                                <div>
-                                    <div style="font-weight:700; color:#334155;">${v.name}</div>
+                                <div style="flex: 1;">
+                                    <div style="font-weight:700; color:#334155; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
+                                        <span>${v.name}</span>
+                                        ${journalBadge}
+                                    </div>
                                     <div style="font-size:12px; color:#64748b; margin-top:2px;">${v.message}</div>
+                                    ${solutionHtml}
+                                    ${suggestedJvCard}
                                 </div>
                             </div>
-                            <div>
-                                ${actionLink}
+                            <div style="margin-left: 15px; display: flex; align-items: center;">
+                                ${actionButtons}
                             </div>
                         </div>
                     `;
@@ -792,6 +928,46 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
             error: function () {
                 $btn.prop('disabled', false).html(originalText);
                 $('#results-content').html('<div class="validation-item"><i class="fas fa-times-circle validation-icon validation-error"></i><div><div style="font-weight:700;">Connection Error</div><div style="font-size:12px; color:#64748b; margin-top:2px;">Server returned an error.</div></div></div>');
+            }
+        });
+    }
+
+    // 1-Click Post Suggested CA Journal Voucher
+    function postSuggestedJv(sjvEscaped, btnElem) {
+        const sjv = JSON.parse(decodeURIComponent(sjvEscaped));
+        const fy_id = '<?= $selected_id ?>';
+
+        if (!confirm(`Are you sure you want to post the suggested CA Journal Entry:\n"${sjv.title}"?`)) {
+            return;
+        }
+
+        const $btn = $(btnElem);
+        const origHtml = $btn.html();
+        $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Posting...');
+
+        $.ajax({
+            url: 'api/fiscal_year_handler.php',
+            method: 'POST',
+            data: {
+                action: 'post_suggested_jv',
+                id: fy_id,
+                jv_type: sjv.jv_type,
+                memo: sjv.memo,
+                lines: JSON.stringify(sjv.lines)
+            },
+            dataType: 'json',
+            success: function (res) {
+                if (res.status === 'success') {
+                    alert(res.message);
+                    runValidations(); // Re-run audit checks immediately!
+                } else {
+                    $btn.prop('disabled', false).html(origHtml);
+                    alert('Posting Failed: ' + res.message);
+                }
+            },
+            error: function (xhr, status, err) {
+                $btn.prop('disabled', false).html(origHtml);
+                alert('Server connection error: ' + err);
             }
         });
     }
@@ -829,7 +1005,7 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                         <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:left;">
                             <thead>
                                 <tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
-                                    <th style="padding:6px 10px;">Account</th>
+                                    <th style="padding:6px 10px;">Account Name</th>
                                     <th style="padding:6px 10px; text-align:right;">Debit</th>
                                     <th style="padding:6px 10px; text-align:right;">Credit</th>
                                     <th style="padding:6px 10px;">Memo</th>
@@ -841,7 +1017,7 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                     p.journal_lines.forEach(l => {
                         html += `
                         <tr style="border-bottom:1px solid #f8fafc;">
-                            <td style="padding:6px 10px; font-weight:600;">[${l.account_code}] ${l.account_name}</td>
+                            <td style="padding:6px 10px; font-weight:600;">${l.account_name}</td>
                             <td style="padding:6px 10px; text-align:right; color:#003087;">${l.type === 'debit' ? numberFormat(l.amount) : '—'}</td>
                             <td style="padding:6px 10px; text-align:right; color:#c00;">${l.type === 'credit' ? numberFormat(l.amount) : '—'}</td>
                             <td style="padding:6px 10px; color:#666;">${l.memo}</td>
@@ -859,7 +1035,7 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                         <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:left;">
                             <thead>
                                 <tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
-                                    <th style="padding:6px 10px;">Account</th>
+                                    <th style="padding:6px 10px;">Account Name</th>
                                     <th style="padding:6px 10px;">Type</th>
                                     <th style="padding:6px 10px; text-align:right;">Balance</th>
                                     <th style="padding:6px 10px;">Normal</th>
@@ -871,7 +1047,7 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                     p.post_closing_balances.forEach(b => {
                         html += `
                         <tr style="border-bottom:1px solid #f8fafc;">
-                            <td style="padding:6px 10px; font-weight:600;">[${b.code}] ${b.name}</td>
+                            <td style="padding:6px 10px; font-weight:600;">${b.name}</td>
                             <td style="padding:6px 10px; text-transform:capitalize; color:#64748b;">${b.type}</td>
                             <td style="padding:6px 10px; text-align:right; font-weight:700;">NPR ${numberFormat(b.balance)}</td>
                             <td style="padding:6px 10px; text-transform:uppercase; color:${b.normal === 'debit' ? '#003087' : '#c00'};">${b.normal}</td>

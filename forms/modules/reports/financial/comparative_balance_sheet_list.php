@@ -56,7 +56,8 @@ function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id =
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     ", [$id_or_subtype, $start_date, $as_of]);
   return (float) ($row['bal'] ?? 0);
 }
@@ -69,7 +70,8 @@ function get_bank_bal_for_dates($db, $start_date, $as_of)
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+        WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     ", [$start_date, $as_of]);
   return (float) ($row['bal'] ?? 0);
 }
@@ -83,7 +85,7 @@ function get_re_for_dates($db, $start_date, $as_of)
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
         WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.source IS NULL {$loc_sql}
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     ", [$start_date, $as_of])['v'] ?? 0);
 
   $expenses = (float) ($db->fetchOne("
@@ -92,7 +94,7 @@ function get_re_for_dates($db, $start_date, $as_of)
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
         WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.source IS NULL {$loc_sql}
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     ", [$start_date, $as_of])['v'] ?? 0);
 
   return $revenue - $expenses;

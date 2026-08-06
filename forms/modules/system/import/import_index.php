@@ -14,7 +14,7 @@ $master = new Master();
 // If this file is requested directly, redirect into admin wrapper so header/sidebar/footer remain consistent
 if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'])) {
     $type = isset($_GET['type']) ? $_GET['type'] : 'items';
-    header('Location: ' . base_url . 'admin/?page=import&type=' . urlencode($type));
+    header('Location: ?page=system/import_export/manage&type=' . urlencode($type));
     exit;
 }
 ?>

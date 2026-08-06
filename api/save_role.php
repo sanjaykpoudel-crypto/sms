@@ -29,6 +29,21 @@ try {
     $is_active = isset($_POST['is_inactive']) ? 0 : 1;
     $permissions_input = $_POST['permissions'] ?? [];
 
+    $db->execute("
+        CREATE TABLE IF NOT EXISTS roles (
+            id VARCHAR(36) PRIMARY KEY,
+            role_code VARCHAR(50) NOT NULL UNIQUE,
+            role_name VARCHAR(100) NOT NULL,
+            description VARCHAR(255) NULL,
+            access_level VARCHAR(20) NOT NULL DEFAULT 'custom',
+            permissions LONGTEXT NULL,
+            is_system TINYINT(1) NOT NULL DEFAULT 0,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+    ");
+
     if (empty($role_name)) {
         throw new Exception("Role Name is required.");
     }

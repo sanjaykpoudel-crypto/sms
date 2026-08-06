@@ -47,9 +47,9 @@ $company_name = function_exists('get_accounting_preference') ? (get_accounting_p
 .info-grid { display: flex; gap: 30px; margin-bottom: 24px; background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; }
 .info-col { flex: 1; font-size: 13px; color: #334155; line-height: 1.6; }
 .info-col strong { color: #1e293b; }
-.ns-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
-.ns-table th { background: #f8fafc; color: #475569; padding: 10px 12px; font-weight: 700; text-align: left; border: 1px solid #e2e8f0; }
-.ns-table td { padding: 10px 12px; border: 1px solid #e2e8f0; }
+.ns-item-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+.ns-item-table th { background: #f8fafc; color: #475569; padding: 10px 12px; font-weight: 700; text-align: left; border: 1px solid #e2e8f0; }
+.ns-item-table td { padding: 10px 12px; border: 1px solid #e2e8f0; }
 .total-box { margin-top: 20px; text-align: right; font-size: 15px; font-weight: 700; color: #1e293b; }
 .actions-bar { display: flex; gap: 10px; margin-bottom: 20px; max-width: 900px; margin: 0 auto 20px; justify-content: space-between; }
 @media print {
@@ -103,7 +103,7 @@ $company_name = function_exists('get_accounting_preference') ? (get_accounting_p
         </div>
     <?php endif; ?>
 
-    <table class="ns-table">
+    <table class="ns-item-table" id="transfer-view-table">
         <thead>
             <tr>
                 <th width="40" style="text-align: center;">#</th>

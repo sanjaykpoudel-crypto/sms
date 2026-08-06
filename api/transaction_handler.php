@@ -25,9 +25,12 @@ if (!defined('TESTING')) {
 
     try {
         $result = handleTransaction($input, $pdo, $db);
-        echo json_encode($result);
-    } catch (Exception $e) {
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        http_response_code(200);
+        echo json_encode(array_merge(['code' => 200], is_array($result) ? $result : ['status' => 'success']));
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     }
 } else {
     require_once __DIR__ . '/../database/DBConnection.php';
@@ -139,12 +142,22 @@ function handleTransaction($json, $pdo, $db)
                 }
 
                 // Auto-generate missing master record codes
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
-                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code'];
+                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor', 'accounts' => 'account', 'locations' => 'location'];
+                $codeFields = ['items' => 'sku', 'customers' => 'customer_code', 'vendors' => 'vendor_code', 'accounts' => 'account_code', 'locations' => 'code'];
 
                 if (isset($refTypes[$tableName]) && empty($data[$codeFields[$tableName]])) {
                     $data[$codeFields[$tableName]] = getNextTransactionNumber($refTypes[$tableName]);
+                    incrementTransactionNumber($refTypes[$tableName]);
                 }
+                // Filter out non-column keys (such as array inputs loc_cost_price[...])
+                $cleanData = [];
+                foreach ($data as $k => $v) {
+                    if (strpos($k, '[') === false && strpos($k, ']') === false) {
+                        $cleanData[$k] = $v;
+                    }
+                }
+                $data = $cleanData;
+
                 $keys = array_keys($data);
                 $columns = implode(', ', $keys);
                 $placeholders = implode(', ', array_fill(0, count($keys), '?'));
@@ -155,12 +168,6 @@ function handleTransaction($json, $pdo, $db)
 
                 foreach ($childTables as $child) {
                     saveChildRows($child, $insertId, $pdo);
-                }
-
-                // Increment auto-numbering for master records
-                $refTypes = ['items' => 'item', 'customers' => 'customer', 'vendors' => 'vendor'];
-                if (isset($refTypes[$tableName]) && isset($data[$codeFields[$tableName]])) {
-                    incrementTransactionNumber($refTypes[$tableName]);
                 }
                 break;
 
@@ -226,6 +233,9 @@ function handleTransaction($json, $pdo, $db)
                 }
 
                 foreach ($data as $key => $val) {
+                    if (strpos($key, '[') !== false || strpos($key, ']') !== false) {
+                        continue;
+                    }
                     $sets[] = "$key = ?";
                     $values[] = $val;
                 }

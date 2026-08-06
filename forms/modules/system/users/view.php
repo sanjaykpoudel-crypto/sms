@@ -168,11 +168,20 @@ function getDiff($oldJson, $newJson) {
 </style>
 
 <div class="view-header">
-    <div>
-        <div class="view-title">
-            <h1><?php echo htmlspecialchars($user['full_name']); ?></h1>
+    <div style="display: flex; align-items: center; gap: 15px;">
+        <?php if (!empty($user['avatar']) && file_exists(__DIR__ . '/../../../../' . $user['avatar'])): ?>
+            <img src="<?php echo htmlspecialchars($user['avatar']); ?>" alt="Photo" style="width: 65px; height: 65px; object-fit: cover; border-radius: 50%; border: 3px solid #cbd5e1; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+        <?php else: ?>
+            <div style="width: 65px; height: 65px; border-radius: 50%; background: #e2e8f0; color: #64748b; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700;">
+                <i class="fas fa-user"></i>
+            </div>
+        <?php endif; ?>
+        <div>
+            <div class="view-title">
+                <h1><?php echo htmlspecialchars($user['full_name']); ?></h1>
+            </div>
+            <div class="view-subtitle">Employee Username: <?php echo htmlspecialchars($user['username']); ?></div>
         </div>
-        <div class="view-subtitle">Employee Username: <?php echo htmlspecialchars($user['username']); ?></div>
     </div>
     <div class="view-actions">
         <a href="?page=system/users/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
@@ -203,16 +212,60 @@ function getDiff($oldJson, $newJson) {
                 <div class="detail-label">Role</div>
                 <div class="detail-value"><?php echo ucfirst(htmlspecialchars($user['role'])); ?></div>
             </div>
+            <div class="detail-group">
+                <div class="detail-label">Phone Number</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['phone'] ?? ''); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Designation / Title</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['designation'] ?? ''); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Department</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['department'] ?? ''); ?></div>
+            </div>
         </div>
         <!-- Column 2 -->
         <div>
             <div class="detail-group">
                 <div class="detail-label">Email</div>
-                <div class="detail-value"><?php echo htmlspecialchars($user['email'] ?: 'N/A'); ?></div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['email'] ?? ''); ?></div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Assigned Location</div>
                 <div class="detail-value"><?php echo htmlspecialchars($user['location_name'] ?: 'All / Default'); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Date of Joining</div>
+                <div class="detail-value"><?php echo !empty($user['joining_date']) ? date('M d, Y', strtotime($user['joining_date'])) : ''; ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Address</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['address'] ?? ''); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Emergency Contact</div>
+                <div class="detail-value"><?php echo htmlspecialchars($user['emergency_contact'] ?? ''); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Citizenship Card (Front)</div>
+                <div class="detail-value">
+                    <?php if (!empty($user['citizenship_front']) && file_exists(__DIR__ . '/../../../../' . $user['citizenship_front'])): ?>
+                        <a href="<?php echo htmlspecialchars($user['citizenship_front']); ?>" target="_blank" style="color: var(--ns-primary); text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-id-card" style="font-size: 15px;"></i> View Front Document
+                        </a>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Citizenship Card (Back)</div>
+                <div class="detail-value">
+                    <?php if (!empty($user['citizenship_back']) && file_exists(__DIR__ . '/../../../../' . $user['citizenship_back'])): ?>
+                        <a href="<?php echo htmlspecialchars($user['citizenship_back']); ?>" target="_blank" style="color: var(--ns-primary); text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-id-card" style="font-size: 15px;"></i> View Back Document
+                        </a>
+                    <?php endif; ?>
+                </div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Status</div>
@@ -290,15 +343,18 @@ function getDiff($oldJson, $newJson) {
             </thead>
             <tbody>
                 <?php foreach($audit_logs as $log): 
-                    $diffs = getDiff($log['old_value'], $log['new_value']);
-                    if ($log['action_type'] == 'update' && empty($diffs)) continue;
-                    if (($log['action_type'] == 'save' || $log['action_type'] == 'delete') && empty($diffs)):
+                    $oldValJson = $log['old_values'] ?? $log['old_value'] ?? '';
+                    $newValJson = $log['new_values'] ?? $log['new_value'] ?? '';
+                    $actionType = $log['action'] ?? $log['action_type'] ?? 'update';
+                    $diffs = getDiff($oldValJson, $newValJson);
+                    if ($actionType == 'update' && empty($diffs)) continue;
+                    if (in_array($actionType, ['save', 'create', 'delete']) && empty($diffs)):
                 ?>
                     <tr>
                         <td><?php echo date('M d, Y H:i', strtotime($log['created_at'])); ?></td>
                         <td><strong><?php echo htmlspecialchars($log['updated_by_name'] ?? 'System'); ?></strong></td>
                         <td colspan="3" style="color: #64748b; font-style: italic;">
-                            Record <?php echo ucfirst($log['action_type']); ?>d
+                            Record <?php echo ucfirst($actionType); ?>d
                         </td>
                     </tr>
                 <?php else: foreach($diffs as $field => $changes): ?>

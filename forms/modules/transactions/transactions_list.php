@@ -91,34 +91,20 @@
 
     <div class="txn-categories">
 
-        <!-- Sales Transactions -->
+        <!-- 1. POS Counter Sale -->
+        <?php if (can_access_feature('pos')): ?>
         <div class="txn-category-card">
             <div class="txn-category-header">
-                <div class="cat-icon" style="background: linear-gradient(135deg, #10b981, #059669);">
-                    <i class="fas fa-file-invoice-dollar"></i>
+                <div class="cat-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+                    <i class="fas fa-cash-register"></i>
                 </div>
                 <div>
-                    <h3>Sales Transactions</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Invoices, POS & Sales Payments</div>
+                    <h3>POS Terminal</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Counter Sales & Checkout</div>
                 </div>
             </div>
             <div class="txn-links-list">
-                <a href="?page=transactions/invoice/manage" class="txn-link-item">
-                    <span class="txn-dot" style="background:#10b981;"></span>
-                    <span>
-                        New Sales Invoice <span class="txn-badge-new">New</span>
-                        <span class="txn-desc">Create customer credit or cash sales invoice</span>
-                    </span>
-                    <i class="fas fa-arrow-right txn-arrow"></i>
-                </a>
-                <a href="?page=transactions/invoice" class="txn-link-item">
-                    <span class="txn-dot" style="background:#059669;"></span>
-                    <span>
-                        Sales Invoice Register
-                        <span class="txn-desc">View and search all customer sales invoices</span>
-                    </span>
-                    <i class="fas fa-arrow-right txn-arrow"></i>
-                </a>
+                <?php if (can_edit_feature('pos')): ?>
                 <a href="?page=transactions/pos/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#f59e0b;"></span>
                     <span>
@@ -127,6 +113,51 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <a href="?page=transactions/pos" class="txn-link-item">
+                    <span class="txn-dot" style="background:#d97706;"></span>
+                    <span>
+                        POS Transaction Register
+                        <span class="txn-desc">View and search all POS sales transactions</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- 2. Sales Transactions -->
+        <?php if (can_access_feature('invoice')): ?>
+        <div class="txn-category-card">
+            <div class="txn-category-header">
+                <div class="cat-icon" style="background: linear-gradient(135deg, #10b981, #059669);">
+                    <i class="fas fa-file-invoice-dollar"></i>
+                </div>
+                <div>
+                    <h3>Sales & Receivables</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Invoices, Payments & Returns</div>
+                </div>
+            </div>
+            <div class="txn-links-list">
+                <?php if (can_edit_feature('invoice')): ?>
+                <a href="?page=transactions/invoice/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#10b981;"></span>
+                    <span>
+                        New Sales Invoice <span class="txn-badge-new">New</span>
+                        <span class="txn-desc">Create customer credit or cash sales invoice</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php endif; ?>
+                <a href="?page=transactions/invoice" class="txn-link-item">
+                    <span class="txn-dot" style="background:#059669;"></span>
+                    <span>
+                        Sales Invoice Register
+                        <span class="txn-desc">View and search all customer sales invoices</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
                 <a href="?page=transactions/payment/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#3b82f6;"></span>
                     <span>
@@ -135,21 +166,43 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_edit_feature('invoice')): ?>
+                <a href="?page=transactions/credit_memo/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#ef4444;"></span>
+                    <span>
+                        New Credit Memo / Return
+                        <span class="txn-desc">Issue credit memos for sales returns</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php endif; ?>
+                <a href="?page=transactions/credit_memo" class="txn-link-item">
+                    <span class="txn-dot" style="background:#dc2626;"></span>
+                    <span>
+                        Credit Memo Register
+                        <span class="txn-desc">History of issued customer credit memos</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Purchasing & Vendor Bills -->
+        <!-- 3. Purchasing & Vendor Bills -->
+        <?php if (can_access_feature('bill')): ?>
         <div class="txn-category-card">
             <div class="txn-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9);">
                     <i class="fas fa-shopping-cart"></i>
                 </div>
                 <div>
-                    <h3>Purchases & Bills</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Vendor Bills & Payables</div>
+                    <h3>Purchases & Payables</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Vendor Bills, Credits & Payments</div>
                 </div>
             </div>
             <div class="txn-links-list">
+                <?php if (can_edit_feature('bill')): ?>
                 <a href="?page=transactions/bill/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#8b5cf6;"></span>
                     <span>
@@ -158,6 +211,7 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
                 <a href="?page=transactions/bill" class="txn-link-item">
                     <span class="txn-dot" style="background:#6d28d9;"></span>
                     <span>
@@ -166,6 +220,7 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
                 <a href="?page=transactions/payment/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#ec4899;"></span>
                     <span>
@@ -174,29 +229,53 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
-                <a href="?page=transactions/payment" class="txn-link-item">
-                    <span class="txn-dot" style="background:#64748b;"></span>
+                <?php endif; ?>
+                <?php if (can_edit_feature('bill')): ?>
+                <a href="?page=transactions/bill_credit/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#e11d48;"></span>
                     <span>
-                        Payment Register
-                        <span class="txn-desc">History of all incoming and outgoing payments</span>
+                        New Vendor Credit / Debit Memo
+                        <span class="txn-desc">Record purchase returns and vendor credit notes</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php endif; ?>
+                <a href="?page=transactions/bill_credit" class="txn-link-item">
+                    <span class="txn-dot" style="background:#be123c;"></span>
+                    <span>
+                        Vendor Credit Register
+                        <span class="txn-desc">History of vendor credits and debit memos</span>
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Expenses & Banking -->
+        <!-- 4. Expenses & Banking -->
+        <?php if (can_access_feature('transfer') || can_access_feature('expense') || can_access_feature('journal') || can_access_feature('cash_denom')): ?>
         <div class="txn-category-card">
             <div class="txn-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #0284c7, #0369a1);">
-                    <i class="fas fa-wallet"></i>
+                    <i class="fas fa-university"></i>
                 </div>
                 <div>
-                    <h3>Banking & Expenses</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Expenses, Transfers & Denominations</div>
+                    <h3>Bank, Cash & Financials</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Transfers, Expenses & Journals</div>
                 </div>
             </div>
             <div class="txn-links-list">
+                <?php if (can_access_feature('transfer') && can_edit_feature('transfer')): ?>
+                <a href="?page=transactions/transfer/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#0284c7;"></span>
+                    <span>
+                        Bank / Fund Transfer
+                        <span class="txn-desc">Transfer funds between cash and bank accounts</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('expense') && can_edit_feature('expense')): ?>
                 <a href="?page=transactions/expense/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#ef4444;"></span>
                     <span>
@@ -205,6 +284,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('expense')): ?>
                 <a href="?page=transactions/expense" class="txn-link-item">
                     <span class="txn-dot" style="background:#dc2626;"></span>
                     <span>
@@ -213,45 +294,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
-                <a href="?page=transactions/cash_denom/manage" class="txn-link-item">
-                    <span class="txn-dot" style="background:#f59e0b;"></span>
-                    <span>
-                        Cash Denomination Entry
-                        <span class="txn-desc">Record daily cash drawer physical count</span>
-                    </span>
-                    <i class="fas fa-arrow-right txn-arrow"></i>
-                </a>
-                <a href="?page=transactions/cash_denom" class="txn-link-item">
-                    <span class="txn-dot" style="background:#d97706;"></span>
-                    <span>
-                        Cash Count History
-                        <span class="txn-desc">Review physical cash count logs</span>
-                    </span>
-                    <i class="fas fa-arrow-right txn-arrow"></i>
-                </a>
-                <a href="?page=transactions/transfer/manage" class="txn-link-item">
-                    <span class="txn-dot" style="background:#0284c7;"></span>
-                    <span>
-                        Bank Funds Transfer
-                        <span class="txn-desc">Transfer funds between cash and bank accounts</span>
-                    </span>
-                    <i class="fas fa-arrow-right txn-arrow"></i>
-                </a>
-            </div>
-        </div>
-
-        <!-- General Ledger & Accounting -->
-        <div class="txn-category-card">
-            <div class="txn-category-header">
-                <div class="cat-icon" style="background: linear-gradient(135deg, #d97706, #b45309);">
-                    <i class="fas fa-book"></i>
-                </div>
-                <div>
-                    <h3>Accounting & Journals</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">General Journal Entries</div>
-                </div>
-            </div>
-            <div class="txn-links-list">
+                <?php endif; ?>
+                <?php if (can_access_feature('journal') && can_edit_feature('journal')): ?>
                 <a href="?page=transactions/journal/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#d97706;"></span>
                     <span>
@@ -260,6 +304,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('journal')): ?>
                 <a href="?page=transactions/journal" class="txn-link-item">
                     <span class="txn-dot" style="background:#b45309;"></span>
                     <span>
@@ -268,21 +314,35 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('cash_denom') && can_edit_feature('cash_denom')): ?>
+                <a href="?page=transactions/cash_denom/manage" class="txn-link-item">
+                    <span class="txn-dot" style="background:#f59e0b;"></span>
+                    <span>
+                        Cash Denomination Entry
+                        <span class="txn-desc">Record daily cash drawer physical count</span>
+                    </span>
+                    <i class="fas fa-arrow-right txn-arrow"></i>
+                </a>
+                <?php endif; ?>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Inventory & Stock Transactions -->
+        <!-- 5. Stock & Inventory -->
+        <?php if (can_access_feature('adjustment') || can_access_feature('inventory_transfer')): ?>
         <div class="txn-category-card">
             <div class="txn-category-header">
                 <div class="cat-icon" style="background: linear-gradient(135deg, #06b6d4, #0891b2);">
-                    <i class="fas fa-boxes"></i>
+                    <i class="fas fa-boxes-packing"></i>
                 </div>
                 <div>
-                    <h3>Stock & Inventory</h3>
-                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Adjustments & Transfers</div>
+                    <h3>Inventory & Stock</h3>
+                    <div style="font-size: 10px; color: #95a5a6; font-weight: 500;">Stock Adjustments & Location Transfers</div>
                 </div>
             </div>
             <div class="txn-links-list">
+                <?php if (can_access_feature('adjustment') && can_edit_feature('adjustment')): ?>
                 <a href="?page=transactions/adjustment/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#06b6d4;"></span>
                     <span>
@@ -291,6 +351,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('adjustment')): ?>
                 <a href="?page=transactions/adjustment" class="txn-link-item">
                     <span class="txn-dot" style="background:#0891b2;"></span>
                     <span>
@@ -299,6 +361,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('inventory_transfer') && can_edit_feature('inventory_transfer')): ?>
                 <a href="?page=transactions/inventory_transfer/manage" class="txn-link-item">
                     <span class="txn-dot" style="background:#0284c7;"></span>
                     <span>
@@ -307,6 +371,8 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
+                <?php if (can_access_feature('inventory_transfer')): ?>
                 <a href="?page=transactions/inventory_transfer" class="txn-link-item">
                     <span class="txn-dot" style="background:#0369a1;"></span>
                     <span>
@@ -315,8 +381,10 @@
                     </span>
                     <i class="fas fa-arrow-right txn-arrow"></i>
                 </a>
+                <?php endif; ?>
             </div>
         </div>
+        <?php endif; ?>
 
     </div>
 </div>

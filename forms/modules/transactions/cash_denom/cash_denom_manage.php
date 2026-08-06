@@ -1,6 +1,7 @@
 <?php
 require_once 'database/DBConnection.php';
-$db = db();
+require_once 'api/reference_helper.php';
+require_once 'api/ui_helpers.php';
 $id = $_GET['id'] ?? null;
 $copy_from = $_GET['copy_from'] ?? null;
 $data = [];
@@ -75,7 +76,7 @@ if ($id) {
         <input type="hidden" name="net_amount" id="net_amount" value="<?php echo $data['net_amount']; ?>">
         
         <div class="ns-section-title">Session Information</div>
-        <div class="ns-form-row">
+        <div class="ns-form-row" style="display: flex; gap: 15px;">
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Date *</label>
@@ -84,11 +85,17 @@ if ($id) {
             </div>
             <div style="flex: 1;">
                 <div class="ns-form-group">
+                    <label class="ns-label">Location *</label>
+                    <?php echo render_select_dropdown('location_id', 'location', $data['location_id'] ?? get_user_default_location_id(), null, 'class="ns-select" required'); ?>
+                </div>
+            </div>
+            <div style="flex: 1;">
+                <div class="ns-form-group">
                     <label class="ns-label">Counter/Shift</label>
                     <select name="party_id" class="ns-select">
-                        <option value="Main" <?php echo ($data['party_id'] == 'Main') ? 'selected' : ''; ?>>Main Counter</option>
-                        <option value="Shift_A" <?php echo ($data['party_id'] == 'Shift_A') ? 'selected' : ''; ?>>Morning Shift</option>
-                        <option value="Shift_B" <?php echo ($data['party_id'] == 'Shift_B') ? 'selected' : ''; ?>>Evening Shift</option>
+                        <option value="Main" <?php echo (($data['party_id'] ?? '') == 'Main') ? 'selected' : ''; ?>>Main Counter</option>
+                        <option value="Shift_A" <?php echo (($data['party_id'] ?? '') == 'Shift_A') ? 'selected' : ''; ?>>Morning Shift</option>
+                        <option value="Shift_B" <?php echo (($data['party_id'] ?? '') == 'Shift_B') ? 'selected' : ''; ?>>Evening Shift</option>
                     </select>
                 </div>
             </div>
