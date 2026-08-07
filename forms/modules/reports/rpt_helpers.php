@@ -500,33 +500,44 @@ function rpt_location_sql(string $alias = 'h'): string {
     return "";
 }
 
-function get_customer_aging_summary($db, string $customer_id, ?string $as_of_date = null): array {
+function get_customer_aging_summary($db, string $customer_id, ?string $as_of_date = null, ?string $location_id = null): array {
     if (!$as_of_date) $as_of_date = date('Y-m-d');
+    $today = date('Y-m-d');
+    if ($as_of_date > $today) {
+        $as_of_date = $today;
+    }
+
+    $loc_sql = "";
+    if ($location_id !== null && $location_id !== '' && $location_id !== 'all') {
+        $loc_sql = " AND th.location_id = " . $db->getConnection()->quote($location_id) . " ";
+    } else {
+        $loc_sql = rpt_location_sql('th');
+    }
     
     // 1. Calculate Total Customer Net Balance as of date (Opening Balances + Invoices + Debit Journals + Customer Refunds - Received Payments - Credit Memos - Credit Journals)
     $inv_total = (float)($db->fetchOne("
         SELECT COALESCE(SUM(ci.total_amount), 0) as total 
         FROM customer_invoices ci 
         JOIN transaction_headers th ON ci.header_id = th.id 
-        WHERE ci.customer_id = ? AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+        WHERE ci.customer_id = ? AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}
     ", [$customer_id, $as_of_date])['total'] ?? 0);
     
     $jour_debits = (float)($db->fetchOne("
         SELECT COALESCE(SUM(j.amount), 0) as total 
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id 
-        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+        WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
           AND j.entry_type = 'debit'
-          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}
     ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
 
     $jour_credits = (float)($db->fetchOne("
         SELECT COALESCE(SUM(j.amount), 0) as total 
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id 
-        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+        WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
           AND j.entry_type = 'credit'
-          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}
     ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
 
     // Payments Received (Money IN)
@@ -534,7 +545,7 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         SELECT COALESCE(SUM(p.amount), 0) as total 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
           AND th.id NOT IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -547,7 +558,7 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         SELECT COALESCE(SUM(p.amount), 0) as total 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+        WHERE p.customer_id = ? AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
           AND th.id IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -559,9 +570,9 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0) as total 
         FROM transaction_headers th
         LEFT JOIN credit_memos cm ON cm.header_id = th.id 
-        WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+        WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
           AND th.txn_type IN ('credit_memo', 'Credit Memo')
-          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}
     ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
 
     // Fetch opening balance entries before or on as_of_date
@@ -569,9 +580,9 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as total 
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id 
-        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+        WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
           AND th.txn_type IN ('Opening Balance', 'Opening_Balance', 'opening_balance')
-          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}
     ", [$customer_id, $customer_id, $as_of_date])['total'] ?? 0);
 
     $net_customer_balance = ($jour_op + $inv_total + $jour_debits + $refund_total) - ($pay_total + $cm_total + $jour_credits);
@@ -593,10 +604,11 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
     $debit_docs = [];
 
     $invoices = $db->fetchAll("
-        SELECT th.txn_date as doc_date, ci.total_amount as amount
+        SELECT th.txn_date as doc_date, GREATEST(0, ci.total_amount - ci.amount_paid) as amount
         FROM customer_invoices ci
         JOIN transaction_headers th ON ci.header_id = th.id
         WHERE ci.customer_id = ? AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+          AND (ci.total_amount - ci.amount_paid) > 0.001 {$loc_sql}
         ORDER BY th.txn_date DESC
     ", [$customer_id, $as_of_date]);
     foreach ($invoices as $i) { $debit_docs[] = ['doc_date' => $i['doc_date'], 'amount' => (float)$i['amount']]; }
@@ -605,10 +617,10 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         SELECT th.txn_date as doc_date, j.amount
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
+        WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL)
           AND j.entry_type = 'debit'
           AND th.txn_type IN ('Journal', 'journal_entry')
-          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0
+          AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}
         ORDER BY th.txn_date DESC
     ", [$customer_id, $customer_id, $as_of_date]);
     foreach ($journals as $j) { $debit_docs[] = ['doc_date' => $j['doc_date'], 'amount' => (float)$j['amount']]; }
@@ -648,6 +660,61 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
         'aging7' => $aging7,
         'aging30' => $aging30,
         'total_due' => round($net_customer_balance, 2)
+    ];
+}
+
+function get_vendor_aging_summary($db, string $vendor_id, ?string $as_of_date = null): array {
+    if (!$as_of_date) $as_of_date = date('Y-m-d');
+    $today = date('Y-m-d');
+    if ($as_of_date > $today) {
+        $as_of_date = $today;
+    }
+    
+    $bills_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(vb.total_amount), 0) as total
+        FROM vendor_bills vb
+        JOIN transaction_headers th ON vb.header_id = th.id
+        WHERE vb.vendor_id = ? AND th.txn_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ", [$vendor_id, $as_of_date])['total'] ?? 0);
+
+    $jour_credits = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(j.amount), 0) as total
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+          AND j.entry_type = 'credit'
+          AND th.txn_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+    ", [$vendor_id, $vendor_id, $as_of_date])['total'] ?? 0);
+
+    $jour_debits = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(j.amount), 0) as total
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+          AND j.entry_type = 'debit'
+          AND th.txn_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+    ", [$vendor_id, $vendor_id, $as_of_date])['total'] ?? 0);
+
+    $jour_op = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as total
+        FROM journal_entries j
+        JOIN transaction_headers th ON j.header_id = th.id
+        WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+          AND th.txn_type IN ('Opening Balance', 'Opening_Balance', 'opening_balance')
+          AND th.txn_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ", [$vendor_id, $vendor_id, $as_of_date])['total'] ?? 0);
+
+    $pay_total = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE (p.vendor_id = ? OR th.party_id = ?) AND p.payment_date <= ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    ", [$vendor_id, $vendor_id, $as_of_date])['total'] ?? 0);
+
+    $net_vendor_balance = ($jour_op + $bills_total + $jour_credits) - ($pay_total + $jour_debits);
+
+    return [
+        'total_due' => round($net_vendor_balance, 2)
     ];
 }
 ?>

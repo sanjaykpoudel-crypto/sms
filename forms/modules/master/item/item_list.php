@@ -15,8 +15,8 @@ $items = $db->fetchAll("SELECT i.*, r.name as category_name, r2.name as unit_nam
      WHERE l.item_id = i.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     ) as current_stock
 FROM items i 
-LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category' 
-LEFT JOIN reference_codes r2 ON i.unit_type = r2.id AND r2.type IN ('unit', 'units') 
+LEFT JOIN reference_codes r ON (i.item_category = CAST(r.id AS CHAR) OR i.item_category = r.name OR i.item_category = r.code) AND r.type = 'category' 
+LEFT JOIN reference_codes r2 ON (i.unit_type = CAST(r2.id AS CHAR) OR i.unit_type = r2.name OR i.unit_type = r2.code) AND r2.type IN ('unit', 'units') 
 WHERE i.is_deleted = 0 $status_filter
 ORDER BY i.item_name ASC");
 ?>

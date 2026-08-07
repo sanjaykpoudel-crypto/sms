@@ -482,13 +482,79 @@ try {
             }
         }
     }
-    else if($type === 'transactions') {
-        // This type is not supported via this legacy handler.
-        // Use the main api/import_handler.php for vendor_bills / customer_invoices.
-        throw new Exception('For transaction imports (Vendor Bills, Customer Invoices), please use the dedicated import buttons on their respective list pages.');
-    }
     else {
-        throw new Exception('Invalid import type');
+        // Generic Dynamic Table Importer for all database entities
+        $allowed_tables = [
+            'users'               => 'users',
+            'locations'           => 'locations',
+            'reference_codes'     => 'reference_codes',
+            'roles'               => 'roles',
+            'fiscal_years'        => 'fiscal_years',
+            'pos_entry'           => 'pos_entry',
+            'credit_memos'        => 'credit_memos',
+            'vendor_credits'      => 'vendor_credits',
+            'payments'            => 'payments',
+            'expenses'            => 'expenses',
+            'journal_entries'     => 'journal_entries',
+            'account_transfers'   => 'account_transfers',
+            'cash_denominations'  => 'cash_denominations',
+            'inventory_transfers' => 'inventory_transfers',
+            'activities'          => 'activities',
+            'vendor_bills'        => 'vendor_bills',
+            'customer_invoices'   => 'customer_invoices',
+        ];
+
+        if (!isset($allowed_tables[$type])) {
+            throw new Exception("Unsupported import type: {$type}");
+        }
+
+        $target_table = $allowed_tables[$type];
+
+        // Fetch valid columns for target table
+        $table_cols_raw = $db->fetchAll("DESCRIBE `{$target_table}`");
+        $valid_cols = array_map(fn($c) => $c['Field'], $table_cols_raw);
+
+        while (($row = fgetcsv($handle)) !== false) {
+            $current_row++;
+            update_progress($progress_file, $current_row, $total_rows);
+
+            if (empty(array_filter($row))) continue;
+            if (count($row) < count($headers)) continue;
+
+            $rawRow = array_combine($headers, array_slice($row, 0, count($headers)));
+            $data = [];
+            foreach ($rawRow as $k => $v) {
+                $cleanKey = strtolower(trim($k));
+                if (in_array($cleanKey, $valid_cols)) {
+                    $data[$cleanKey] = is_string($v) ? trim($v) : $v;
+                }
+            }
+
+            if (empty($data)) continue;
+
+            // If id is empty or non-numeric placeholder (e.g. template sample), unset it so MySQL AUTO_INCREMENT assigns it
+            if (isset($data['id']) && (!is_numeric($data['id']) || empty($data['id']))) {
+                unset($data['id']);
+            }
+
+            try {
+                $cols = array_keys($data);
+                $placeholders = implode(',', array_fill(0, count($cols), '?'));
+                $col_str = implode('`, `', $cols);
+
+                $updates = [];
+                foreach ($cols as $col) {
+                    $updates[] = "`{$col}` = VALUES(`{$col}`)";
+                }
+                $update_str = implode(', ', $updates);
+
+                $sql = "INSERT INTO `{$target_table}` (`{$col_str}`) VALUES ({$placeholders}) ON DUPLICATE KEY UPDATE {$update_str}";
+                $db->execute($sql, array_values($data));
+                $imported++;
+            } catch (Exception $e) {
+                $errors[] = "Row {$current_row}: " . $e->getMessage();
+            }
+        }
     }
     
     $pdo = $db->getConnection();

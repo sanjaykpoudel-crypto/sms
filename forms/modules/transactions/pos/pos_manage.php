@@ -3,15 +3,20 @@ require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 $db = db();
 
-$user_id = $_SESSION['user_id'] ?? '';
-$user_info = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$user_id]);
+$user_id = $_SESSION['user_id'] ?? ($_SESSION['userdata']['id'] ?? '');
+$session_role = strtolower($_SESSION['role'] ?? ($_SESSION['userdata']['role'] ?? ''));
+
+$user_info = null;
+if ($user_id) {
+    $user_info = $db->fetchOne("SELECT * FROM users WHERE id = CAST(? AS CHAR) OR username = ? LIMIT 1", [$user_id, $user_id]);
+}
+if (!$user_info) {
+    $user_info = $db->fetchOne("SELECT * FROM users WHERE is_deleted = 0 ORDER BY id ASC LIMIT 1");
+}
 
 $is_admin = false;
-if ($user_info) {
-    $role = strtolower($user_info['role'] ?? '');
-    if ($role === 'admin') {
-        $is_admin = true;
-    }
+if ($session_role === 'admin' || strtolower($user_info['role'] ?? '') === 'admin') {
+    $is_admin = true;
 }
 
 // User default location
@@ -33,9 +38,8 @@ $items = $db->fetchAll("
         CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
-    LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = ?
-    WHERE i.is_active = 1 AND i.is_deleted = 0
-      AND COALESCE(ib.quantity_on_hand, 0) > 0
+    LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = ?
+    WHERE i.is_active = 1 AND i.is_deleted = 0 AND COALESCE(ib.quantity_on_hand, 0) > 0
     ORDER BY i.item_name ASC
 ", [$pos_location_id]);
 
@@ -362,17 +366,20 @@ function renderGrid(search = '') {
         const itemCat = i.category_name || 'Other';
         const matchCat = (activeCat === 'all' || itemCat === activeCat);
         const matchSearch = i.item_name.toLowerCase().includes(search.toLowerCase()) || (i.sku && i.sku.toLowerCase().includes(search.toLowerCase()));
-        return matchCat && matchSearch;
+        const totalStock = parseFloat(i.current_stock || 0);
+        const inCart = getCartQty(i.id);
+        const availStock = totalStock - inCart;
+        return matchCat && matchSearch && availStock > 0;
     });
 
     filtered.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'pos-card';
-        div.onclick = () => addToCart(item);
-        
         const totalStock = parseFloat(item.current_stock || 0);
         const inCart = getCartQty(item.id);
         const availStock = totalStock - inCart;
+
+        const div = document.createElement('div');
+        div.className = 'pos-card';
+        div.onclick = () => addToCart(item);
         const stockColor = availStock <= 0 ? '#ef4444' : (availStock <= 5 ? '#f59e0b' : '#10b981');
         const costPrice = parseFloat(item.cost_price || 0);
         const sellPrice = parseFloat(item.selling_price || 0);
@@ -730,5 +737,9 @@ function completeSale() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
 </script>

@@ -4,7 +4,7 @@ if (!isset($_SESSION['user_id'])) {
     die("Unauthorized access.");
 }
 
-require_once '../database/DBConnection.php';
+require_once __DIR__ . '/../database/DBConnection.php';
 
 $type = $_GET['type'] ?? '';
 $isTemplate = isset($_GET['template']);
@@ -158,6 +158,123 @@ switch ($type) {
         }
         break;
 
+    case 'users':
+        $columns = ['id', 'username', 'full_name', 'role', 'email', 'phone', 'is_active'];
+        if (!$isTemplate) {
+            $query = "SELECT id, username, full_name, role, email, phone, is_active FROM users WHERE is_deleted = 0 ORDER BY full_name ASC";
+        }
+        break;
+
+    case 'locations':
+        $columns = ['id', 'name', 'address', 'phone', 'is_default', 'is_active'];
+        if (!$isTemplate) {
+            $query = "SELECT id, name, address, phone, is_default, is_active FROM locations WHERE is_deleted = 0 ORDER BY name ASC";
+        }
+        break;
+
+    case 'reference_codes':
+        $columns = ['id', 'type', 'name', 'code', 'symbol', 'is_active'];
+        if (!$isTemplate) {
+            $query = "SELECT id, type, name, code, symbol, is_active FROM reference_codes ORDER BY type ASC, name ASC";
+        }
+        break;
+
+    case 'roles':
+        $columns = ['id', 'role_code', 'role_name', 'description', 'access_level', 'is_active'];
+        if (!$isTemplate) {
+            $query = "SELECT id, role_code, role_name, description, access_level, is_active FROM roles ORDER BY role_name ASC";
+        }
+        break;
+
+    case 'fiscal_years':
+        $columns = ['id', 'name', 'start_date', 'end_date', 'status'];
+        if (!$isTemplate) {
+            $query = "SELECT id, name, start_date, end_date, status FROM fiscal_years ORDER BY start_date DESC";
+        }
+        break;
+
+    case 'pos_entry':
+        $columns = ['invoice_no', 'date_time', 'net_amount', 'discount_amount', 'tax_amount', 'status'];
+        if (!$isTemplate) {
+            $query = "SELECT invoice_no, date_time, net_amount, discount_amount, tax_amount, status FROM pos_entry WHERE is_deleted = 0";
+            if ($from) { $query .= " AND DATE(date_time) >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND DATE(date_time) <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'credit_memos':
+        $columns = ['txn_number', 'memo_date', 'customer_code', 'total_amount', 'balance_due', 'reason'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, cm.memo_date, c.customer_code, cm.total_amount, cm.balance_due, cm.reason 
+                      FROM credit_memos cm JOIN transaction_headers h ON cm.header_id = h.id 
+                      JOIN customers c ON cm.customer_id = c.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND cm.memo_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND cm.memo_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'vendor_credits':
+        $columns = ['txn_number', 'credit_date', 'vendor_code', 'total_amount', 'balance_due', 'reason'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, vc.credit_date, v.vendor_code, vc.total_amount, vc.balance_due, vc.reason 
+                      FROM vendor_credits vc JOIN transaction_headers h ON vc.header_id = h.id 
+                      JOIN vendors v ON vc.vendor_id = v.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND vc.credit_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND vc.credit_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'payments':
+        $columns = ['txn_number', 'payment_date', 'payment_type', 'amount', 'payment_mode', 'reference_no'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, p.payment_date, p.payment_type, p.amount, p.payment_mode, p.reference_no 
+                      FROM payments p JOIN transaction_headers h ON p.header_id = h.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND p.payment_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND p.payment_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'account_transfers':
+        $columns = ['txn_number', 'transfer_date', 'from_account_code', 'to_account_code', 'amount', 'reference_no', 'memo'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, t.transfer_date, REPLACE(a1.id, 'acc-', '') as from_account_code, REPLACE(a2.id, 'acc-', '') as to_account_code, t.amount, t.reference_no, h.memo 
+                      FROM account_transfers t JOIN transaction_headers h ON t.header_id = h.id 
+                      JOIN accounts a1 ON t.from_account_id = a1.id 
+                      JOIN accounts a2 ON t.to_account_id = a2.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND t.transfer_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND t.transfer_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'cash_denominations':
+        $columns = ['txn_number', 'denomination_date', 'denomination_type', 'total_cash', 'difference', 'notes'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, cd.denomination_date, cd.denomination_type, cd.total_cash, cd.difference, cd.notes 
+                      FROM cash_denominations cd JOIN transaction_headers h ON cd.header_id = h.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND cd.denomination_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND cd.denomination_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'inventory_transfers':
+        $columns = ['txn_number', 'transfer_date', 'from_location', 'to_location', 'memo'];
+        if (!$isTemplate) {
+            $query = "SELECT h.txn_number, it.transfer_date, l1.name as from_location, l2.name as to_location, h.memo 
+                      FROM inventory_transfers it JOIN transaction_headers h ON it.header_id = h.id 
+                      LEFT JOIN locations l1 ON it.from_location_id = l1.id 
+                      LEFT JOIN locations l2 ON it.to_location_id = l2.id WHERE h.is_deleted = 0";
+            if ($from) { $query .= " AND it.transfer_date >= ?"; $params[] = $from; }
+            if ($to) { $query .= " AND it.transfer_date <= ?"; $params[] = $to; }
+        }
+        break;
+
+    case 'activities':
+        $columns = ['id', 'title', 'description', 'activity_date', 'priority', 'status'];
+        if (!$isTemplate) {
+            $query = "SELECT id, title, description, activity_date, priority, status FROM activities ORDER BY activity_date DESC";
+        }
+        break;
+
     default:
         die("Unsupported type: " . $type);
 }
@@ -165,62 +282,26 @@ switch ($type) {
 // Write header
 fputcsv($output, $columns);
 
-// Write 2 sample rows for template downloads so users understand the format
+// Write 2 sample rows for template downloads matching all columns
 if ($isTemplate) {
-    $sampleRows = [];
-    switch ($type) {
-        case 'items':
-            $sampleRows = [
-                ['JD-001', 'Jack Daniels Whisky', 'spirits', 'Jack Daniels', '750', 'bottle', '12', '3500', '5000', '13', '10', '24', '5100', '4100', '1200'],
-                ['CB-001', 'Carlsberg Premium Lager', 'beer', 'Carlsberg', '650', 'bottle', '12', '250', '350', '13', '50', '100', '5110', '4110', '1200'],
-            ];
-            break;
-        case 'customers':
-            $sampleRows = [
-                ['C-001', 'Yeti Lounge Bar', 'bar', '9851000001', 'accounts@yetilounge.com', '600000001', '100000', '30'],
-                ['C-002', 'Everest View Hotel', 'hotel', '9851000002', 'purchase@everestview.com', '600000002', '300000', '45'],
-            ];
-            break;
-        case 'vendors':
-            $sampleRows = [
-                ['V-001', 'Global Spirits Distributors', 'Rajesh Sharma', '9841000001', 'info@globalspirits.com', 'Lazimpat Kathmandu', '300000001', '', '30', '500000'],
-                ['V-002', 'Himalayan Breweries Pvt Ltd', 'Sita Thapa', '9841000002', 'sales@himalayanbrew.com', 'Pokhara Nepal', '300000002', '', '45', '200000'],
-            ];
-            break;
-        case 'accounts':
-            $sampleRows = [
-                ['7100', 'Staff Welfare Expense', 'expense', 'other', 'debit', 'NPR'],
-                ['4200', 'Other Operating Income', 'income', 'other', 'credit', 'NPR'],
-            ];
-            break;
-        case 'vendor_bills':
-            $sampleRows = [
-                ['BILL-0001', date('Y-m-d'), date('Y-m-d', strtotime('+30 days')), 'V-001', 'INV-2026-001', 'Monthly stock purchase', 'JD-001', 'Jack Daniels 750ml x 12', '2', '3500', '0', '13'],
-                ['BILL-0001', date('Y-m-d'), date('Y-m-d', strtotime('+30 days')), 'V-001', 'INV-2026-001', 'Monthly stock purchase', 'CB-001', 'Carlsberg 650ml x 24', '5', '250', '0', '13'],
-            ];
-            break;
-        case 'customer_invoices':
-            $sampleRows = [
-                ['INV-0001', date('Y-m-d'), date('Y-m-d', strtotime('+30 days')), 'C-001', 'SI-2026-001', 'Supply to Yeti Lounge', 'JD-001', 'Jack Daniels 750ml', '10', '5000', '0', '13', 'wholesale'],
-                ['INV-0001', date('Y-m-d'), date('Y-m-d', strtotime('+30 days')), 'C-001', 'SI-2026-001', 'Supply to Yeti Lounge', 'CB-001', 'Carlsberg 650ml', '24', '350', '0', '13', 'wholesale'],
-            ];
-            break;
-        case 'journal_entries':
-            $sampleRows = [
-                ['JE-0001', date('Y-m-d'), 'Opening balance adjustment', '1010', 'debit', '50000', 'Cash on hand opening'],
-                ['JE-0001', date('Y-m-d'), 'Opening balance adjustment', '3100', 'credit', '50000', 'Owner equity contra'],
-            ];
-            break;
-        case 'expenses':
-            $sampleRows = [
-                ['EXP-0001', date('Y-m-d'), '7100', '1010', 'V-001', 'Staff lunch expenses for May', '5000', '0', 'staff_welfare'],
-                ['EXP-0002', date('Y-m-d'), '7200', '1010', '', 'Office insurance premium', '12000', '0', 'insurance'],
-            ];
-            break;
+    $sample1 = [];
+    $sample2 = [];
+    foreach ($columns as $col) {
+        if ($col === 'id') { $sample1[] = 'UUID-0001'; $sample2[] = 'UUID-0002'; }
+        elseif (strpos($col, 'code') !== false) { $sample1[] = 'REF-001'; $sample2[] = 'REF-002'; }
+        elseif (strpos($col, 'date') !== false || strpos($col, 'time') !== false) { $sample1[] = date('Y-m-d'); $sample2[] = date('Y-m-d'); }
+        elseif (strpos($col, 'name') !== false) { $sample1[] = 'Sample Name 1'; $sample2[] = 'Sample Name 2'; }
+        elseif (strpos($col, 'phone') !== false) { $sample1[] = '9800000001'; $sample2[] = '9800000002'; }
+        elseif (strpos($col, 'email') !== false) { $sample1[] = 'info@example.com'; $sample2[] = 'sales@example.com'; }
+        elseif (strpos($col, 'price') !== false || strpos($col, 'amount') !== false || strpos($col, 'mrp') !== false || strpos($col, 'cash') !== false || strpos($col, 'limit') !== false || strpos($col, 'due') !== false) { $sample1[] = '1000.00'; $sample2[] = '2500.00'; }
+        elseif (strpos($col, 'tax') !== false || strpos($col, 'rate') !== false || strpos($col, 'pct') !== false) { $sample1[] = '13.00'; $sample2[] = '13.00'; }
+        elseif (strpos($col, 'qty') !== false || strpos($col, 'quantity') !== false || strpos($col, 'stock') !== false || strpos($col, 'level') !== false) { $sample1[] = '10'; $sample2[] = '50'; }
+        elseif ($col === 'status') { $sample1[] = 'active'; $sample2[] = 'active'; }
+        elseif ($col === 'is_active' || $col === 'is_default') { $sample1[] = '1'; $sample2[] = '1'; }
+        else { $sample1[] = 'Sample Data'; $sample2[] = 'Sample Data'; }
     }
-    foreach ($sampleRows as $row) {
-        fputcsv($output, $row);
-    }
+    fputcsv($output, $sample1);
+    fputcsv($output, $sample2);
 }
 
 // Write actual data rows when exporting (not template)

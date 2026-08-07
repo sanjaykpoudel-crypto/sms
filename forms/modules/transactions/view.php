@@ -194,9 +194,9 @@ $payments = $db->fetchAll("
 
 // Audit Logs
 $audit_logs = $db->fetchAll("
-    SELECT al.*, u.full_name as updated_by_name
+    SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
     FROM audit_logs al
-    LEFT JOIN users u ON al.user_id = u.id
+    LEFT JOIN users u ON (al.user_id = CAST(u.id AS CHAR) OR al.user_id = u.username)
     WHERE al.record_id = :id
     ORDER BY al.created_at DESC
 ", ['id' => $id]);

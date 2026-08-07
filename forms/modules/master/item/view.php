@@ -25,8 +25,8 @@ $item = $db->fetchOne("
     LEFT JOIN accounts a1 ON i.inventory_account_id = a1.id
     LEFT JOIN accounts a2 ON i.cogs_account_id = a2.id
     LEFT JOIN accounts a3 ON i.income_account_id = a3.id
-    LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
-    LEFT JOIN reference_codes r2 ON i.unit_type = r2.id AND r2.type IN ('unit', 'units')
+    LEFT JOIN reference_codes r ON (i.item_category = CAST(r.id AS CHAR) OR i.item_category = r.name OR i.item_category = r.code) AND r.type = 'category'
+    LEFT JOIN reference_codes r2 ON (i.unit_type = CAST(r2.id AS CHAR) OR i.unit_type = r2.name OR i.unit_type = r2.code) AND r2.type IN ('unit', 'units')
     WHERE i.id = ?
 ", [$id]);
 
@@ -58,9 +58,9 @@ $movements = $db->fetchAll("
 ", [$id]);
 // Fetch Audit Logs
 $audit_logs = $db->fetchAll("
-    SELECT al.*, u.full_name as updated_by_name
+    SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
     FROM audit_logs al
-    LEFT JOIN users u ON al.user_id = u.id
+    LEFT JOIN users u ON (al.user_id = CAST(u.id AS CHAR) OR al.user_id = u.username)
     WHERE al.record_id = :id AND al.table_name = 'items'
     ORDER BY al.created_at DESC
 ", ['id' => $id]);

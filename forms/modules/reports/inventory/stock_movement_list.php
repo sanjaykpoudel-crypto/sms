@@ -16,7 +16,7 @@ $date_to   = $_GET['date_to']   ?? $fy['end_date'];
 $items = $db->fetchAll("
     SELECT i.id, i.item_name, i.sku as item_code, i.cost_price, COALESCE(SUM(ib.quantity_on_hand), 0) as current_stock
     FROM items i
-    LEFT JOIN inventory_balances ib ON i.id = ib.item_id
+    LEFT JOIN inventory_balances ib ON ib.item_id = i.id
     WHERE i.is_active = 1 AND i.is_deleted = 0
     GROUP BY i.id, i.item_name, i.sku, i.cost_price
     ORDER BY i.item_name ASC

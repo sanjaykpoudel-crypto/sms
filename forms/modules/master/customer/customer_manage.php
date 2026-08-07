@@ -137,6 +137,16 @@ $curr_loc_id = $data['location_id'] ?? get_user_default_location_id();
             }
         });
         data['is_active'] = form.querySelector('[name="is_inactive"]').checked ? 0 : 1;
+        if (!data['payment_terms_days'] || String(data['payment_terms_days']).trim() === '') {
+            data['payment_terms_days'] = null;
+        } else {
+            data['payment_terms_days'] = parseInt(data['payment_terms_days'], 10);
+        }
+        if (!data['credit_limit'] || String(data['credit_limit']).trim() === '') {
+            data['credit_limit'] = 0.00;
+        } else {
+            data['credit_limit'] = parseFloat(data['credit_limit']);
+        }
 
         const payload = {
             action: data.id ? 'update' : 'save',

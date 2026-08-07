@@ -8,23 +8,27 @@ require_once 'api/reference_helper.php';
 
 $db = db();
 
-$fy        = rpt_get_current_fiscal_year_dates();
-$today     = date('Y-m-d');
-$date_to   = $_GET['date_to'] ?? $today;
+$today   = date('Y-m-d');
+$date_to = $_GET['date_to'] ?? $today;
 
-$vendor_balances = $db->fetchAll("
-    SELECT v.id, v.company_name as name, COALESCE(SUM(vb.balance_due), 0.00) as balance
-    FROM vendors v
-    JOIN vendor_bills vb ON v.id = vb.vendor_id
-    JOIN transaction_headers h ON vb.header_id = h.id
-    WHERE v.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date <= ?
-    GROUP BY v.id, v.company_name
-    HAVING balance > 0.01
-    ORDER BY v.company_name ASC
-", [$date_to]);
+$vendors = $db->fetchAll("SELECT id, vendor_code, company_name FROM vendors WHERE is_deleted = 0 ORDER BY company_name ASC");
 
-$total_ap_balance = array_sum(array_column($vendor_balances, 'balance'));
+$vendor_balances = [];
+$total_ap_balance = 0.0;
+
+foreach ($vendors as $v) {
+    $ag = get_vendor_aging_summary($db, $v['id'], $date_to);
+    $net_bal = (float)($ag['total_due'] ?? 0.0);
+
+    if (abs($net_bal) > 0.005) {
+        $vendor_balances[] = [
+            'id'      => $v['vendor_code'] ?: $v['id'],
+            'name'    => $v['company_name'],
+            'balance' => $net_bal
+        ];
+        $total_ap_balance += $net_bal;
+    }
+}
 ?>
 
 <?php rpt_filter_bar('Vendor AP Balance Summary', [
@@ -36,7 +40,7 @@ $total_ap_balance = array_sum(array_column($vendor_balances, 'balance'));
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding:14px 18px; background:#fff5f5; border:1px solid #fed7d7; border-radius:8px;">
             <div style="font-size:13px; font-weight:700; color:#9b2c2c;">
-                <i class="fas fa-building"></i> Total Accounts Payable Outstanding Balance
+                <i class="fas fa-building"></i> Total Accounts Payable Outstanding Balance (As of <?= rpt_date($date_to) ?>)
             </div>
             <div style="font-size:20px; font-weight:800; color:#c53030;">
                 <?= rpt_currency($total_ap_balance) ?>
@@ -74,3 +78,4 @@ $total_ap_balance = array_sum(array_column($vendor_balances, 'balance'));
 
     </div>
 </div>
+

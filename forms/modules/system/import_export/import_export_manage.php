@@ -32,17 +32,30 @@ if (!isset($_SESSION['user_id'])) {
                     <div class="form-group" style="margin-top:20px;">
                         <label>What would you like to import?</label>
                         <select id="import_type" class="ns-input" style="width:100%;" onchange="updateTemplateLink()">
-                            <optgroup label="Master Records">
-                                <option value="items">Items (Products)</option>
+                            <optgroup label="Master & System Records">
+                                <option value="items">Items (Products & Location Stock)</option>
                                 <option value="customers">Customers</option>
-                                <option value="vendors">Vendors</option>
+                                <option value="vendors">Vendors / Suppliers</option>
                                 <option value="accounts">Chart of Accounts</option>
+                                <option value="users">Users & Employees</option>
+                                <option value="locations">Locations & Warehouses</option>
+                                <option value="reference_codes">Categories, Brands & Reference Codes</option>
+                                <option value="roles">Roles & Security Permissions</option>
+                                <option value="fiscal_years">Fiscal Years & Accounting Periods</option>
                             </optgroup>
-                            <optgroup label="Transactions">
-                                <option value="vendor_bills">Vendor Bills</option>
-                                <option value="customer_invoices">Customer Invoices</option>
-                                <option value="journal_entries">Journal Entries</option>
+                            <optgroup label="Transactions & Operational Entries">
+                                <option value="customer_invoices">Sales Invoices</option>
+                                <option value="pos_entry">POS Counter Sales</option>
+                                <option value="credit_memos">Credit Memos (Sales Returns)</option>
+                                <option value="vendor_bills">Vendor Bills (Purchases)</option>
+                                <option value="vendor_credits">Vendor Credits (Purchase Returns)</option>
+                                <option value="payments">Payments (Receipts & Disbursements)</option>
                                 <option value="expenses">Expenses</option>
+                                <option value="journal_entries">Journal Entries (Manual JV)</option>
+                                <option value="account_transfers">Bank / Fund Transfers</option>
+                                <option value="cash_denominations">Cash Till Counts & Reconciliations</option>
+                                <option value="inventory_transfers">Location Stock Transfers</option>
+                                <option value="activities">Activities & Tasks</option>
                             </optgroup>
                         </select>
                     </div>
@@ -123,19 +136,30 @@ if (!isset($_SESSION['user_id'])) {
                     <div class="form-group" style="margin-top:25px;">
                         <label>Select Data to Export</label>
                         <select id="export_type" class="ns-input" style="width:100%;">
-                            <optgroup label="Master Records">
-                                <option value="items">Items (Products)</option>
+                            <optgroup label="Master & System Records">
+                                <option value="items">Items (Products & Location Stock)</option>
                                 <option value="customers">Customers</option>
-                                <option value="vendors">Vendors</option>
+                                <option value="vendors">Vendors / Suppliers</option>
                                 <option value="accounts">Chart of Accounts</option>
                                 <option value="users">Users & Employees</option>
+                                <option value="locations">Locations & Warehouses</option>
+                                <option value="reference_codes">Categories, Brands & Reference Codes</option>
+                                <option value="roles">Roles & Security Permissions</option>
+                                <option value="fiscal_years">Fiscal Years & Accounting Periods</option>
                             </optgroup>
-                            <optgroup label="Transactions">
-                                <option value="vendor_bills">Vendor Bills</option>
-                                <option value="customer_invoices">Customer Invoices</option>
-                                <option value="payments">Payments</option>
-                                <option value="journal_entries">Journal Entries</option>
+                            <optgroup label="Transactions & Operational Entries">
+                                <option value="customer_invoices">Sales Invoices</option>
+                                <option value="pos_entry">POS Counter Sales</option>
+                                <option value="credit_memos">Credit Memos (Sales Returns)</option>
+                                <option value="vendor_bills">Vendor Bills (Purchases)</option>
+                                <option value="vendor_credits">Vendor Credits (Purchase Returns)</option>
+                                <option value="payments">Payments (Receipts & Disbursements)</option>
                                 <option value="expenses">Expenses</option>
+                                <option value="journal_entries">Journal Entries (Manual JV)</option>
+                                <option value="account_transfers">Bank / Fund Transfers</option>
+                                <option value="cash_denominations">Cash Till Counts & Reconciliations</option>
+                                <option value="inventory_transfers">Location Stock Transfers</option>
+                                <option value="activities">Activities & Tasks</option>
                             </optgroup>
                         </select>
                     </div>

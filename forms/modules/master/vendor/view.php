@@ -25,12 +25,12 @@ $bills = $db->fetchAll("
     SELECT 'Bill' as doc_type, vb.id, vb.header_id, vb.vendor_invoice_number as doc_number, vb.bill_date as doc_date, vb.total_amount, vb.balance_due, vb.payment_status 
     FROM vendor_bills vb 
     JOIN transaction_headers th ON vb.header_id = th.id
-    WHERE vb.vendor_id = ? AND th.is_deleted = 0
+    WHERE vb.vendor_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(CASE WHEN (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
         (
-            SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(CASE WHEN (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
             - COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
@@ -44,13 +44,15 @@ $bills = $db->fetchAll("
         h.status as payment_status
     FROM journal_entries j
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE j.party_id = ? 
-      AND (j.party_type = 'vendor' OR j.party_type IS NULL) 
+    WHERE (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) 
+      AND (j.party_type = 'vendor' OR j.party_type IS NULL OR h.party_type = 'vendor') 
       AND h.is_deleted = 0 
+      AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_type IN ('Journal', 'journal_entry')
     GROUP BY h.id, h.txn_number, h.txn_date, h.status
     ORDER BY doc_date DESC LIMIT 50
-", [$id, $id, $id, $id]);
+", [$id, $id, $id, $id, $id, $id, $id]);
+
 // Fetch related records (Payments)
 $payments = $db->fetchAll("
     SELECT th.id as header_id, th.txn_number, th.txn_date, th.created_at,
@@ -62,15 +64,21 @@ $payments = $db->fetchAll("
     LEFT JOIN transaction_links tl ON tl.parent_id = th.id
     LEFT JOIN transaction_headers th_child ON tl.child_id = th_child.id
     LEFT JOIN vendor_bills vb ON tl.child_id = vb.header_id
-    WHERE p.vendor_id = ? AND th.is_deleted = 0
+    WHERE p.vendor_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     GROUP BY th.id
     ORDER BY th.txn_date DESC, th.created_at DESC LIMIT 50
 ", [$id]);
+
+// Summary Computations
+$total_bills_sum = array_sum(array_column($bills, 'total_amount'));
+$total_vendor_payments_sum = array_sum(array_column($payments, 'total_amount'));
+$total_vendor_remaining = $total_bills_sum - $total_vendor_payments_sum;
+
 // Fetch Audit Logs
 $audit_logs = $db->fetchAll("
-    SELECT al.*, u.full_name as updated_by_name
+    SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
     FROM audit_logs al
-    LEFT JOIN users u ON al.user_id = u.id
+    LEFT JOIN users u ON (al.user_id = CAST(u.id AS CHAR) OR al.user_id = u.username)
     WHERE al.record_id = :id AND al.table_name = 'vendors'
     ORDER BY al.created_at DESC
 ", ['id' => $id]);
@@ -116,17 +124,10 @@ if (!function_exists('getDiff')) {
         align-items: center;
         gap: 10px;
     }
-    .view-subtitle {
-        margin-top: 5px;
-        color: #666;
-        font-size: 14px;
-    }
     .view-actions {
         display: flex;
         gap: 10px;
     }
-    
-    /* Tabs System */
     .ns-tabs {
         display: flex;
         border-bottom: 2px solid #e2e8f0;
@@ -158,7 +159,6 @@ if (!function_exists('getDiff')) {
     .ns-tab-content.active {
         display: block;
     }
-    
     .detail-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -179,6 +179,26 @@ if (!function_exists('getDiff')) {
         color: #1e293b;
         font-weight: 500;
     }
+    .summary-kpi-card {
+        flex: 1;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .summary-kpi-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+    .summary-kpi-val {
+        font-size: 20px;
+        font-weight: 800;
+    }
 </style>
 
 <div class="view-header">
@@ -190,6 +210,27 @@ if (!function_exists('getDiff')) {
     <div class="view-actions">
         <a href="?page=master/vendor/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
         <a href="?page=master/vendor" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
+    </div>
+</div>
+
+<!-- Summary KPI Cards matching Vendor List -->
+<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Total Purchase (Bills & Journals)</div>
+        <div class="summary-kpi-val" style="color: #16a34a;">Rs <?php echo number_format($total_bills_sum, 2); ?></div>
+    </div>
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Total Paid</div>
+        <div class="summary-kpi-val" style="color: #2563eb;">Rs <?php echo number_format($total_vendor_payments_sum, 2); ?></div>
+    </div>
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Remaining Amount</div>
+        <div class="summary-kpi-val" style="color: <?php echo $total_vendor_remaining > 0 ? '#dc2626' : ($total_vendor_remaining < 0 ? '#2563eb' : '#334155'); ?>;">
+            Rs <?php echo number_format($total_vendor_remaining, 2); ?>
+            <?php if ($total_vendor_remaining < 0): ?>
+                <span style="font-size: 10px; font-weight: normal; color: #2563eb; display: block;">(Advance Paid)</span>
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -234,10 +275,6 @@ if (!function_exists('getDiff')) {
                 <div class="detail-label">PAN/VAT Number</div>
                 <div class="detail-value"><?php echo htmlspecialchars($vendor['pan_number'] ?: 'N/A'); ?></div>
             </div>
-            <div class="detail-group">
-                <div class="detail-label">Address</div>
-                <div class="detail-value"><?php echo nl2br(htmlspecialchars($vendor['address'] ?: 'N/A')); ?></div>
-            </div>
         </div>
         <!-- Column 3 -->
         <div>
@@ -264,27 +301,39 @@ if (!function_exists('getDiff')) {
             <tr>
                 <th>Type</th>
                 <th>Date</th>
-                <th>Reference #</th>
+                <th>Document #</th>
                 <th style="text-align: right;">Total Amount</th>
                 <th style="text-align: right;">Balance Due</th>
                 <th>Status</th>
             </tr>
         </thead>
         <tbody>
-            <?php foreach($bills as $bill): 
-                $isJournal = ($bill['doc_type'] === 'Journal');
-                $typeBadge = $isJournal ? '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-weight:700;">JOURNAL</span>' : '<span style="font-size:10px; background:#fff7ed; color:#c2410c; padding:2px 6px; border-radius:4px; font-weight:700;">BILL</span>';
+            <?php 
+            $tab_bill_total = 0;
+            $tab_bill_bal = 0;
+            foreach($bills as $b): 
+                $tab_bill_total += floatval($b['total_amount']);
+                $tab_bill_bal += floatval($b['balance_due']);
+                $isJournal = ($b['doc_type'] === 'Journal');
+                $typeBadge = $isJournal ? '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-weight:700;">JOURNAL</span>' : '<span style="font-size:10px; background:#f0fdf4; color:#15803d; padding:2px 6px; border-radius:4px; font-weight:700;">BILL</span>';
             ?>
             <tr>
                 <td><?php echo $typeBadge; ?></td>
-                <td><?php echo date('M d, Y', strtotime($bill['doc_date'])); ?></td>
-                <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($bill['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($bill['doc_number']); ?></a></td>
-                <td style="text-align: right;">Rs <?php echo number_format($bill['total_amount'], 2); ?></td>
-                <td style="text-align: right; color: <?php echo $bill['balance_due'] > 0.01 ? '#c00' : '#28a745'; ?>;">Rs <?php echo number_format($bill['balance_due'], 2); ?></td>
-                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo in_array(strtolower($bill['payment_status']), ['paid', 'posted']) ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($bill['payment_status']); ?></span></td>
+                <td><?php echo date('M d, Y', strtotime($b['doc_date'])); ?></td>
+                <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($b['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($b['doc_number']); ?></a></td>
+                <td style="text-align: right;">Rs <?php echo number_format($b['total_amount'], 2); ?></td>
+                <td style="text-align: right; color: <?php echo $b['balance_due'] > 0.01 ? '#c00' : '#28a745'; ?>;">Rs <?php echo number_format($b['balance_due'], 2); ?></td>
+                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo in_array(strtolower($b['payment_status']), ['paid', 'posted']) ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($b['payment_status']); ?></span></td>
             </tr>
             <?php endforeach; ?>
         </tbody>
+        <tfoot>
+            <tr style="background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                <td colspan="3" style="text-align: right; padding: 10px 12px; font-size: 13px;">SUM TOTAL PURCHASE:</td>
+                <td style="text-align: right; color: #16a34a; font-size: 13px;">Rs <?php echo number_format($tab_bill_total, 2); ?></td>
+                <td colspan="2"></td>
+            </tr>
+        </tfoot>
     </table>
 </div>
 
@@ -301,7 +350,11 @@ if (!function_exists('getDiff')) {
             </tr>
         </thead>
         <tbody>
-            <?php foreach($payments as $p): ?>
+            <?php 
+            $tab_vpay_total = 0;
+            foreach($payments as $p): 
+                $tab_vpay_total += floatval($p['total_amount']);
+            ?>
             <tr>
                 <td><?php echo date('M d, Y', strtotime($p['txn_date'])); ?></td>
                 <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($p['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($p['txn_number']); ?></a></td>
@@ -311,6 +364,12 @@ if (!function_exists('getDiff')) {
             </tr>
             <?php endforeach; ?>
         </tbody>
+        <tfoot>
+            <tr style="background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                <td colspan="4" style="text-align: right; padding: 10px 12px; font-size: 13px;">SUM TOTAL:</td>
+                <td style="text-align: right; color: #2563eb; font-size: 13px;">Rs <?php echo number_format($tab_vpay_total, 2); ?></td>
+            </tr>
+        </tfoot>
     </table>
 </div>
 

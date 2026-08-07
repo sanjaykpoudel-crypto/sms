@@ -123,6 +123,22 @@ $logo_src  = ($logo_abs && file_exists($logo_abs)) ? ($logo_db . '?v=' . time())
                         </div>
                     </div>
 
+                    <div class="ns-section-title" style="margin-top:16px;">Licenses & Break-Even Target</div>
+                    <div class="ns-form-row">
+                        <div class="ns-form-group">
+                            <label class="ns-label">Excise Retail License Expiry</label>
+                            <input type="date" name="excise_license_expiry" class="ns-input" value="<?php echo htmlspecialchars($sys['excise_license_expiry'] ?? (date('Y') . '-08-16')); ?>">
+                        </div>
+                        <div class="ns-form-group">
+                            <label class="ns-label">Sanitation / Safety Permit Expiry</label>
+                            <input type="date" name="sanitation_permit_expiry" class="ns-input" value="<?php echo htmlspecialchars($sys['sanitation_permit_expiry'] ?? (date('Y') . '-10-15')); ?>">
+                        </div>
+                        <div class="ns-form-group">
+                            <label class="ns-label">Annual Break-Even Target (Rs)</label>
+                            <input type="number" step="0.01" name="break_even_target" class="ns-input" value="<?php echo htmlspecialchars($sys['break_even_target'] ?? '1070000.00'); ?>">
+                        </div>
+                    </div>
+
                     <div class="ns-section-title" style="margin-top:16px;">Payment QR Code (Invoice Print)</div>
                     <div class="ns-form-row">
                         <div class="ns-form-group">

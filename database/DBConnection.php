@@ -32,6 +32,19 @@ class DBConnection
             );
             // Set session-level optimizations
             $this->conn->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO';");
+
+            // Dynamically synchronize PHP timezone with the host machine's system timezone
+            try {
+                $sysTz = $this->conn->query("SELECT @@system_time_zone")->fetchColumn();
+                if ($sysTz) {
+                    if ($sysTz === 'Asia/Katmandu') {
+                        $sysTz = 'Asia/Kathmandu';
+                    }
+                    @date_default_timezone_set($sysTz);
+                }
+            } catch (\Throwable $t) {
+                // Fallback gracefully
+            }
         } catch (PDOException $e) {
             die("Connection failed: " . $e->getMessage());
         }
@@ -274,7 +287,7 @@ class DBConnection
             // Auto-assign default location to unassigned legacy transactions
             $defLocRow = $this->conn->query("SELECT id FROM `locations` WHERE `is_default` = 1 AND `is_deleted` = 0 LIMIT 1")->fetch();
             $defaultLocId = $defLocRow['id'] ?? 'loc-main-retail';
-            $this->conn->exec("UPDATE `transaction_headers` SET `location_id` = '{$defaultLocId}' WHERE `location_id` IS NULL OR `location_id` = ''");
+            $this->conn->exec("UPDATE `transaction_headers` SET `location_id` = '{$defaultLocId}' WHERE `location_id` IS NULL OR `location_id` = 0 OR CAST(`location_id` AS CHAR) = ''");
         } catch (Exception $e) {
             error_log("initLocationMaster error: " . $e->getMessage());
         }

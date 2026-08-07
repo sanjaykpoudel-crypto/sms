@@ -5,8 +5,8 @@ if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
     exit;
 }
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
 
 // Get JSON input
 $json = $GLOBALS['mock_pos_payload'] ?? file_get_contents('php://input');
@@ -82,20 +82,15 @@ try {
         $pos_id = generate_uuid();
     }
 
-    $user_id = $_SESSION['user_id'] ?? '';
-    $user_info = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$user_id]);
+    $user_id = $_SESSION['user_id'] ?? ($_SESSION['userdata']['id'] ?? '');
+    $user_info = $db->fetchOne("SELECT * FROM users WHERE id = CAST(? AS CHAR) OR username = ? LIMIT 1", [$user_id, $user_id]);
     $is_admin = ($user_info && strtolower($user_info['role'] ?? '') === 'admin');
 
-    $location_id = $data['location_id'] ?? ($_POST['location_id'] ?? '');
-    if (!$is_admin || empty($location_id)) {
-        $user_loc = $user_info['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '');
-        if (!empty($user_loc)) {
-            $location_id = $user_loc;
-        }
+    $raw_location = $data['location_id'] ?? ($_POST['location_id'] ?? '');
+    if (!$is_admin || empty($raw_location)) {
+        $raw_location = $user_info['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : '1');
     }
-    if (empty($location_id)) {
-        $location_id = get_user_default_location_id();
-    }
+    $location_id = resolve_location_id($raw_location);
 
     // Generate unique POS invoice number for individual POS log
     if ($is_update && $old_invoice_no) {
@@ -113,10 +108,11 @@ try {
         );
     } else {
         $db->execute(
-            "INSERT INTO pos_entry (id, invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by, location_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)",
-            [$pos_id, $txn_number, $txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $_SESSION['user_id'], $location_id]
+            "INSERT INTO pos_entry (invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by, location_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)",
+            [$txn_number, $txn_date_time, $customer_id, $gross_amount, $discount_type, $discount_value, $discount_total, $tax_amount, $net_amount, $user_id, $location_id]
         );
+        $pos_id = $pdo->lastInsertId();
     }
 
     // 4. Save items & deduct stock
@@ -148,9 +144,9 @@ try {
 
         // pos_items
         $db->execute(
-            "INSERT INTO pos_items (id, pos_id, item_id, quantity, rate, amount, discount, tax, net_amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [generate_uuid(), $pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
+            "INSERT INTO pos_items (pos_id, item_id, quantity, rate, amount, discount, tax, net_amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [$pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
         );
 
         // Directly deduct stock from inventory_balances for this specific location
@@ -165,8 +161,8 @@ try {
         } else {
             // Create a balance row for this location (negative stock — records the deduction)
             $db->execute(
-                "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, NOW())",
-                [generate_uuid(), $item_id, $location_id, -$qty, -$qty]
+                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, last_updated) VALUES (?, ?, ?, ?, 0, 0, 0, NOW())",
+                [(int)$item_id, (int)$location_id, -$qty, -$qty]
             );
         }
 
@@ -197,9 +193,9 @@ try {
 
         // pos_payments
         $db->execute(
-            "INSERT INTO pos_payments (id, pos_id, payment_mode, account_id, amount, reference_no)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            [generate_uuid(), $pos_id, $mapped_mode, $pay['account_id'], $pay_amount, $pay['reference'] ?? null]
+            "INSERT INTO pos_payments (pos_id, payment_mode, account_id, amount, reference_no)
+             VALUES (?, ?, ?, ?, ?)",
+            [$pos_id, $mapped_mode, $pay['account_id'], $pay_amount, $pay['reference'] ?? null]
         );
     }
 
@@ -210,22 +206,20 @@ try {
 
         // Insert negative cash change payment in pos_payments
         $db->execute(
-            "INSERT INTO pos_payments (id, pos_id, payment_mode, account_id, amount, reference_no)
-             VALUES (?, ?, 'cash', ?, ?, 'Change Return')",
-            [generate_uuid(), $pos_id, $change_account, -$change_due]
+            "INSERT INTO pos_payments (pos_id, payment_mode, account_id, amount, reference_no)
+             VALUES (?, 'cash', ?, ?, 'Change Return')",
+            [$pos_id, $change_account, -$change_due]
         );
     }
 
-    $pdo->commit();
-    clear_dashboard_cache();
-
-    // 7. Regenerate Daily Summary Invoices and Payments
-    // We synchronize the summary for the transaction date.
-    // If it's an update and the date changed, we also synchronize the old date.
+    // 7. Regenerate Daily Summary Invoices and Payments (INSIDE transaction block)
     $dates_to_sync = array_unique(array_filter([$txn_date, $old_date]));
     foreach ($dates_to_sync as $sync_date) {
         sync_daily_pos_summary($sync_date);
     }
+
+    $pdo->commit();
+    clear_dashboard_cache();
 
     // Look up the daily summary invoice header ID to return in response
     $today_str = date('Ymd', strtotime($txn_date));

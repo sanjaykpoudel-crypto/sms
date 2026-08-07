@@ -17,18 +17,27 @@ $date_to   = $_GET['date_to']   ?? $fy['end_date'];
 $fy_start_date = get_report_start_date($date_from);
 $loc_sql       = rpt_location_sql('h');
 
-// Strict Cash & Bank Accounts WHERE clause
-$cash_where = "(a.id IN ('acc-1010', 'acc-1020') OR (a.account_type = 'asset' AND (a.account_name LIKE '%cash%' OR a.account_name LIKE '%bank%') AND a.account_name NOT LIKE '%receivable%'))";
+// Strict Cash & Bank Accounts WHERE clause (Includes all Bank subtype accounts, digital wallets & cash)
+$cash_where = "(a.account_subtype IN ('Bank', 'cash', 'Cash', 'bank', 'Bank Account', 'Cash & Bank') OR a.id IN ('acc-1010', 'acc-1020', 'acc-1030') OR (a.account_type = 'asset' AND (a.account_name LIKE '%cash%' OR a.account_name LIKE '%bank%' OR a.account_name LIKE '%esewa%' OR a.account_name LIKE '%khalti%' OR a.account_name LIKE '%fonepay%') AND a.account_name NOT LIKE '%receivable%'))";
+
+// Base static opening balances defined on Cash & Bank accounts
+$acct_op_balance = (float) ($db->fetchOne("
+    SELECT SUM(COALESCE(a.opening_balance, 0)) as bal
+    FROM accounts a
+    WHERE {$cash_where} AND a.is_deleted = 0
+")['bal'] ?? 0);
 
 // 1. Opening Cash & Bank Balance prior to date_from
-$opening_cash = (float) ($db->fetchOne("
+$opening_cash_txns = (float) ($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
     FROM accounts a
     JOIN journal_entries j ON a.id = j.account_id
     JOIN transaction_headers h ON j.header_id = h.id
     WHERE {$cash_where}
-      AND h.txn_date >= ? AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-", [$fy_start_date, $date_from])['bal'] ?? 0);
+      AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+", [$date_from])['bal'] ?? 0);
+
+$opening_cash = $acct_op_balance + $opening_cash_txns;
 
 // 2. Operating Activities
 // Cash Received from Customers & Sales
@@ -100,10 +109,9 @@ $capital_outflows = (float) ($db->fetchOne("
 $financing_cash = $capital_inflows - $capital_outflows;
 
 $net_cash_change = $net_operating_cash + $investing_cash + $financing_cash;
-$ending_cash     = $opening_cash + $net_cash_change;
 
-// Verify actual GL cash balance as of date_to
-$gl_ending_cash = (float) ($db->fetchOne("
+// Verify actual GL cash & bank balance as of date_to (including static opening balances)
+$gl_ending_cash_txns = (float) ($db->fetchOne("
     SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
     FROM accounts a
     JOIN journal_entries j ON a.id = j.account_id
@@ -111,6 +119,9 @@ $gl_ending_cash = (float) ($db->fetchOne("
     WHERE {$cash_where}
       AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['bal'] ?? 0);
+
+$gl_ending_cash = $acct_op_balance + $gl_ending_cash_txns;
+$ending_cash     = $gl_ending_cash;
 ?>
 
 <style>

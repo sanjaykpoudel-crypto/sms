@@ -165,8 +165,8 @@ try {
         $link_type_str = !empty($line_id) ? "payment:{$line_id}:{$apply_amt}" : "payment:{$apply_amt}";
 
         // Record link (parent=payment, child=invoice/bill/journal header, link_type encodes line_id and amount)
-        $db->execute("INSERT INTO transaction_links (id, parent_id, child_id, link_type) VALUES (?, ?, ?, ?)", [
-            generate_uuid(), $id, $header_id, $link_type_str
+        $db->execute("INSERT INTO transaction_links (parent_id, child_id, link_type) VALUES (?, ?, ?)", [
+            $id, $header_id, $link_type_str
         ]);
     }
 

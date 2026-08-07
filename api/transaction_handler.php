@@ -55,6 +55,23 @@ function handleTransaction($json, $pdo, $db)
         throw new Exception("Action and Table Name are required");
     }
 
+    if ($tableName === 'vendors') {
+        if (array_key_exists('payment_terms_days', $data) && ($data['payment_terms_days'] === '' || $data['payment_terms_days'] === null)) {
+            $data['payment_terms_days'] = null;
+        }
+        if (array_key_exists('credit_limit', $data) && ($data['credit_limit'] === '' || $data['credit_limit'] === null)) {
+            $data['credit_limit'] = 0.00;
+        }
+    }
+    if ($tableName === 'customers') {
+        if (array_key_exists('payment_terms_days', $data) && ($data['payment_terms_days'] === '' || $data['payment_terms_days'] === null)) {
+            $data['payment_terms_days'] = null;
+        }
+        if (array_key_exists('credit_limit', $data) && ($data['credit_limit'] === '' || $data['credit_limit'] === null)) {
+            $data['credit_limit'] = 0.00;
+        }
+    }
+
     $pdo->beginTransaction();
 
     try {
@@ -548,7 +565,7 @@ function logAudit($table, $action, $old, $new, $refId, $userId, $pdo)
         $action = 'create';
     $pdo->prepare(
         "INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES (?, ?, ?, ?, ?, ?)"
-    )->execute([$table, $action, $refId, json_encode($old), json_encode($new), $userId]);
+    )->execute([$table, $action, (string)$refId, json_encode($old), json_encode($new), $userId !== null ? (string)$userId : null]);
 }
 
 /**

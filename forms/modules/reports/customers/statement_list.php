@@ -14,23 +14,24 @@ $customer_info = null;
 
 if ($customer_id) {
     $customer_info = $db->fetchOne("SELECT * FROM customers WHERE id = ?", [$customer_id]);
+    $loc_sql = rpt_location_sql('th');
     
     // 1. Get Opening Balance (Invoices + Tagged Journals - Payments before from_date)
-    $inv_before = $db->fetchOne("SELECT SUM(total_amount) as total FROM customer_invoices ci 
+    $inv_before = $db->fetchOne("SELECT SUM(ci.total_amount) as total FROM customer_invoices ci 
                                 JOIN transaction_headers th ON ci.header_id = th.id 
-                                WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date])['total'] ?? 0;
+                                WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date])['total'] ?? 0;
     
     $jour_before = $db->fetchOne("SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total 
                                  FROM journal_entries j
                                  JOIN transaction_headers th ON j.header_id = th.id 
-                                 WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
-                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+                                 WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
 
     $pay_before = $db->fetchOne("
         SELECT COALESCE(SUM(p.amount), 0) as total 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0
+        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0 {$loc_sql}
           AND th.id NOT IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -42,7 +43,7 @@ if ($customer_id) {
         SELECT COALESCE(SUM(p.amount), 0) as total 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0
+        WHERE p.customer_id = ? AND p.payment_date < ? AND th.is_deleted = 0 {$loc_sql}
           AND th.id IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -53,11 +54,11 @@ if ($customer_id) {
     $cm_before = $db->fetchOne("SELECT SUM(COALESCE(cm.total_amount, th.net_amount)) as total 
                                 FROM transaction_headers th
                                 LEFT JOIN credit_memos cm ON cm.header_id = th.id 
-                                WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
                                   AND th.txn_type IN ('credit_memo', 'Credit Memo')
                                   AND th.txn_date < ? 
                                   AND th.status NOT IN ('void', 'voided', 'draft') 
-                                  AND th.is_deleted = 0", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+                                  AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
 
     $opening_balance = ($inv_before + $jour_before + $refund_before) - $pay_before - $cm_before;
 
@@ -65,7 +66,7 @@ if ($customer_id) {
     $invoices = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Invoice' as type, ci.total_amount as debit, 0 as credit, th.memo
                                FROM customer_invoices ci 
                                JOIN transaction_headers th ON ci.header_id = th.id 
-                               WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0", [$customer_id, $from_date, $to_date]);
+                               WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date, $to_date]);
 
     // 2b. Get Tagged Journals in range
     $journals = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Journal' as type,
@@ -74,8 +75,8 @@ if ($customer_id) {
                                       th.memo
                                FROM journal_entries j
                                JOIN transaction_headers th ON j.header_id = th.id
-                               WHERE (j.party_id = ? OR th.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-                                 AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry')
+                               WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL)
+                                 AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}
                                GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $customer_id, $from_date, $to_date]);
 
     // 3. Get Payments in range (Money IN from customer)
@@ -84,7 +85,7 @@ if ($customer_id) {
                0 as debit, p.amount as credit, th.memo, '' as applied_to_ref
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0
+        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0 {$loc_sql}
           AND th.id NOT IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -104,7 +105,7 @@ if ($customer_id) {
                ) as applied_to_ref
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id
-        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0
+        WHERE p.customer_id = ? AND p.payment_date BETWEEN ? AND ? AND th.is_deleted = 0 AND p.amount > 0 {$loc_sql}
           AND th.id IN (
               SELECT tl.parent_id FROM transaction_links tl
               JOIN transaction_headers ch ON tl.child_id = ch.id
@@ -124,11 +125,11 @@ if ($customer_id) {
                                           ) as applied_to_ref
                                    FROM transaction_headers th
                                    LEFT JOIN credit_memos cm ON cm.header_id = th.id
-                                   WHERE (cm.customer_id = ? OR (th.party_id = ? AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                   WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
                                      AND th.txn_type IN ('credit_memo', 'Credit Memo')
                                      AND th.txn_date BETWEEN ? AND ? 
                                      AND th.status NOT IN ('void', 'voided', 'draft') 
-                                     AND th.is_deleted = 0", [$customer_id, $customer_id, $from_date, $to_date]);
+                                     AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $customer_id, $from_date, $to_date]);
 
     $statement_data = array_merge($invoices, $journals, $payments, $refund_payments, $credit_memos);
     usort($statement_data, function($a, $b) {
@@ -136,7 +137,7 @@ if ($customer_id) {
     });
 
     // 4. Aging Data
-    $aging_res = get_customer_aging_summary($db, $customer_id, $to_date);
+    $aging_res = get_customer_aging_summary($db, $customer_id, $to_date, $_GET['location_id'] ?? null);
     $aging7    = $aging_res['aging7'];
 
     $new_charges = array_sum(array_column($statement_data, 'debit'));

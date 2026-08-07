@@ -73,13 +73,13 @@ try {
     $sale_type = 'credit';
 
     if (!$id) {
-        $id = generate_uuid();
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, memo, created_by, location_id) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            $id, $txn_number, 'customer_invoice', $txn_date,
+        $db->execute("INSERT INTO transaction_headers (txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, memo, created_by, location_id) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            $txn_number, 'customer_invoice', $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
             $status, $memo, $_SESSION['user_id'], $location_id
         ]);
+        $id = $pdo->lastInsertId();
         incrementTransactionNumber('customer_invoice');
     } else {
         // Fetch old sale_type before deleting
@@ -285,9 +285,9 @@ try {
         $db->execute("UPDATE transaction_headers SET net_amount = ?, party_id = ?, party_type = 'customer' WHERE id = ?", [$grand_total, $party_id, $id]);
     }
 
-    $db->execute("INSERT INTO customer_invoices (id, header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-        generate_uuid(), $id, $party_id, $txn_date, $due_date, $txn_number, $subtotal, $discount_amount, $tax_total, $grand_total, $amount_paid, $balance_due, $payment_status, $sale_type
+    $db->execute("INSERT INTO customer_invoices (header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        $id, $party_id, $txn_date, $due_date, $txn_number, $subtotal, $discount_amount, $tax_total, $grand_total, $amount_paid, $balance_due, $payment_status, $sale_type
     ]);
 
     // If it's a POS daily summary invoice, we need to update/recreate the underlying POS transactions.
@@ -302,12 +302,10 @@ try {
         }
 
         // 2. Create new consolidated POS entry matching the updated invoice
-        $consolidated_pos_id = generate_uuid();
         $db->execute(
-            "INSERT INTO pos_entry (id, invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by)
-             VALUES (?, ?, ?, ?, ?, 'fixed', ?, ?, ?, ?, 'completed', ?)",
+            "INSERT INTO pos_entry (invoice_no, date_time, customer_id, gross_amount, discount_type, discount_value, discount_amount, tax_amount, net_amount, status, created_by)
+             VALUES (?, ?, ?, ?, 'fixed', ?, ?, ?, ?, 'completed', ?)",
             [
-                $consolidated_pos_id,
                 $txn_number,
                 $txn_date . ' ' . date('H:i:s'),
                 $party_id,
@@ -319,6 +317,7 @@ try {
                 $_SESSION['user_id']
             ]
         );
+        $consolidated_pos_id = $pdo->lastInsertId();
 
         // 3. Create POS items
         foreach ($item_ids as $idx => $item_id) {
@@ -337,10 +336,9 @@ try {
             $line_net = $line_amount - $line_discount + $tax_amount;
 
             $db->execute(
-                "INSERT INTO pos_items (id, pos_id, item_id, quantity, rate, amount, discount, tax, net_amount)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO pos_items (pos_id, item_id, quantity, rate, amount, discount, tax, net_amount)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
-                    generate_uuid(),
                     $consolidated_pos_id,
                     $item_id,
                     $qty,
@@ -409,38 +407,38 @@ try {
 
         // Dr Accounts Receivable
         if ($grand_total > 0) {
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $ar_account, $grand_total, 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
+                $id, $ar_account, $grand_total, 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
             ]);
         }
         // Dr Discount (if any)
         if ($discount_amount > 0) {
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $discount_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
+                $id, $discount_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
             ]);
         }
         // Cr Sales Revenue (per item)
         foreach ($gl_items as $gi) {
             if ($gi['sales_amount'] > 0) {
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $gi['sales_acc'], $gi['item_id'], $gi['sales_amount'], 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
+                    $id, $gi['sales_acc'], $gi['item_id'], $gi['sales_amount'], 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
                 ]);
             }
         }
         // Cr Tax Payable
         if ($tax_total > 0) {
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $tax_account, $tax_total, 'VAT ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
+                $id, $tax_account, $tax_total, 'VAT ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
             ]);
         }
         // COGS and Inventory (per item)
         foreach ($gl_items as $gi) {
             if ($gi['cogs_amount'] > 0) {
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $gi['cogs_acc'], $gi['item_id'], $gi['cogs_amount'], 'COGS ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
+                    $id, $gi['cogs_acc'], $gi['item_id'], $gi['cogs_amount'], 'COGS ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
                 ]);
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $gi['inv_acc'], $gi['item_id'], $gi['cogs_amount'], 'Inventory Out ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
+                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
+                    $id, $gi['inv_acc'], $gi['item_id'], $gi['cogs_amount'], 'Inventory Out ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
                 ]);
             }
         }

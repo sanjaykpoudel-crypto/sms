@@ -1,5 +1,6 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
 $show_all = isset($_GET['show_all']) && $_GET['show_all'] == '1';
@@ -17,42 +18,48 @@ $customers = $db->fetchAll(
         SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (j.party_id = c.id OR th.party_id = c.id) AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
+        WHERE ((j.party_id = CAST(c.id AS CHAR) AND (j.party_type = 'customer' OR j.party_type IS NULL OR j.party_type = '')) OR (th.party_id = CAST(c.id AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL OR th.party_type = '')))
+          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')
+    ) + (
+        SELECT COALESCE(SUM(p.amount), 0)
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id
+        WHERE p.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND th.id IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ) - (
+        SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0)
+        FROM transaction_headers th
+        LEFT JOIN credit_memos cm ON cm.header_id = th.id
+        WHERE (cm.customer_id = c.id OR (th.party_id = CAST(c.id AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL OR th.party_type = '')))
+          AND th.txn_type IN ('credit_memo', 'Credit Memo')
+          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     )) AS total_sales,
     (
         SELECT COALESCE(SUM(p.amount), 0) 
         FROM payments p
         JOIN transaction_headers th ON p.header_id = th.id 
-        WHERE p.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ) AS total_paid,
-    ((
-        SELECT COALESCE(SUM(ci.balance_due), 0) 
-        FROM customer_invoices ci 
-        JOIN transaction_headers th ON ci.header_id = th.id 
-        WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ) + COALESCE((
-        SELECT SUM(
-            CASE WHEN j.party_id = c.id THEN (CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) ELSE 0 END
-        ) - COALESCE((
-            SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
-            FROM transaction_links tl
-            JOIN transaction_headers ph ON tl.parent_id = ph.id
-            JOIN payments p ON ph.id = p.header_id
-            WHERE tl.child_id = th.id 
-              AND tl.link_type LIKE 'payment:%'
-              AND p.customer_id = c.id
-              AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
-        ), 0.00)
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE j.party_id = c.id AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
-    ), 0.00)) AS total_due
+        WHERE p.customer_id = c.id
+          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND th.id NOT IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ) AS total_paid
     FROM customers c 
     LEFT JOIN locations loc ON c.location_id = loc.id
     WHERE c.is_deleted = 0 $status_filter
     ORDER BY c.full_name ASC
 "
 );
+
+$grand_sales = 0;
+$grand_paid = 0;
+$grand_remaining = 0;
 ?>
 <style>
     .ns-portlet, .ns-portlet-content {
@@ -147,7 +154,13 @@ $customers = $db->fetchAll(
             </thead>
             <tbody>
                 <?php $sn = 1; foreach ($customers as $row): 
-                    $remaining = $row['total_due'];
+                    $sales = floatval($row['total_sales']);
+                    $paid = floatval($row['total_paid']);
+                    $remaining = $sales - $paid;
+
+                    $grand_sales += $sales;
+                    $grand_paid += $paid;
+                    $grand_remaining += $remaining;
                 ?>
                 <tr>
                     <td style="text-align: center; color: #888; font-weight: 600;"><?php echo $sn++; ?></td>
@@ -156,9 +169,14 @@ $customers = $db->fetchAll(
                     <td><?php echo htmlspecialchars(ucfirst($row['customer_type'])); ?></td>
                     <td><?php echo htmlspecialchars($row['phone']); ?></td>
                     <td><?php echo htmlspecialchars($row['email']); ?></td>
-                    <td style="text-align: center; font-weight: 600; color: #080;">Rs <?php echo number_format($row['total_sales'], 2); ?></td>
-                    <td style="text-align: center; color: #2563eb;">Rs <?php echo number_format($row['total_paid'], 2); ?></td>
-                    <td style="text-align: center; font-weight: 600; color: <?php echo $remaining > 0 ? '#c00' : '#333'; ?>">Rs <?php echo number_format($remaining, 2); ?></td>
+                    <td style="text-align: center; font-weight: 600; color: #080;">Rs <?php echo number_format($sales, 2); ?></td>
+                    <td style="text-align: center; color: #2563eb;">Rs <?php echo number_format($paid, 2); ?></td>
+                    <td style="text-align: center; font-weight: 600; color: <?php echo $remaining > 0 ? '#c00' : ($remaining < 0 ? '#2563eb' : '#333'); ?>;">
+                        Rs <?php echo number_format($remaining, 2); ?>
+                        <?php if ($remaining < 0): ?>
+                            <span style="font-size: 10px; font-weight: normal; color: #2563eb; display: block;">(Advance)</span>
+                        <?php endif; ?>
+                    </td>
                     <td>
                         <span style="color: <?php echo $row['is_active'] ? '#080' : '#c00'; ?>">
                             <?php echo $row['is_active'] ? 'Active' : 'Inactive'; ?>
@@ -186,6 +204,20 @@ $customers = $db->fetchAll(
                 </tr>
                 <?php endforeach; ?>
             </tbody>
+            <tfoot>
+                <tr style="background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                    <td colspan="6" style="text-align: right; padding: 10px 12px; font-size: 13px;">TOTAL:</td>
+                    <td style="text-align: center; color: #080; font-size: 13px;">Rs <?php echo number_format($grand_sales, 2); ?></td>
+                    <td style="text-align: center; color: #2563eb; font-size: 13px;">Rs <?php echo number_format($grand_paid, 2); ?></td>
+                    <td style="text-align: center; color: <?php echo $grand_remaining > 0 ? '#c00' : ($grand_remaining < 0 ? '#2563eb' : '#333'); ?>; font-size: 13px;">
+                        Rs <?php echo number_format($grand_remaining, 2); ?>
+                        <?php if ($grand_remaining < 0): ?>
+                            <span style="font-size: 10px; font-weight: normal; color: #2563eb; display: block;">(Net Advance)</span>
+                        <?php endif; ?>
+                    </td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
         </table>
     </div>
 </div>

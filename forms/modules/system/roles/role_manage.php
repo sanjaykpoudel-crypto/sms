@@ -92,6 +92,57 @@ $menu_sections = [
         ]
     ],
 ];
+
+// --- Dynamic Auto-Discovery of New Transaction, Master & Report Modules ---
+$base_mod_dir = dirname(__DIR__, 2) . '/'; // forms/modules/
+
+// 1. Auto-discover any newly created Transaction subdirectories
+$tx_path = realpath($base_mod_dir . 'transactions');
+if ($tx_path && is_dir($tx_path)) {
+    foreach (scandir($tx_path) as $folder) {
+        if ($folder === '.' || $folder === '..' || !is_dir($tx_path . '/' . $folder)) continue;
+        if (!isset($menu_sections['transactions']['items'][$folder])) {
+            $label = ucwords(str_replace(['_', '-'], ' ', $folder));
+            $menu_sections['transactions']['items'][$folder] = "{$label} (Auto-Discovered Transaction)";
+        }
+    }
+}
+
+// 2. Auto-discover any newly created Master subdirectories
+$m_path = realpath($base_mod_dir . 'master');
+if ($m_path && is_dir($m_path)) {
+    foreach (scandir($m_path) as $folder) {
+        if ($folder === '.' || $folder === '..' || !is_dir($m_path . '/' . $folder)) continue;
+        $m_key = $folder;
+        if (!isset($menu_sections['master_lists']['items'][$m_key]) && !isset($menu_sections['master_lists']['items'][$m_key . 's'])) {
+            $label = ucwords(str_replace(['_', '-'], ' ', $folder));
+            $menu_sections['master_lists']['items'][$m_key] = "{$label} Master (Auto-Discovered)";
+        }
+    }
+}
+
+// 3. Auto-discover any newly created Report subdirectories / standalone report files
+$r_path = realpath($base_mod_dir . 'reports');
+if ($r_path && is_dir($r_path)) {
+    foreach (scandir($r_path) as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $full = $r_path . '/' . $item;
+        if (is_dir($full)) {
+            $rep_key = 'rep_' . $item;
+            if (!isset($menu_sections['reports']['items'][$rep_key])) {
+                $label = ucwords(str_replace(['_', '-'], ' ', $item));
+                $menu_sections['reports']['items'][$rep_key] = "{$label} Reports (Auto-Discovered Category)";
+            }
+        } elseif (is_file($full) && strpos($item, '.php') !== false && !in_array($item, ['reports_list.php', 'rpt_helpers.php', 'pos_summary.php'])) {
+            $clean = str_replace(['.php', '_list'], '', $item);
+            $single_key = 'rep_' . $clean;
+            if (!isset($menu_sections['reports']['items'][$single_key])) {
+                $label = ucwords(str_replace(['_', '-'], ' ', $clean));
+                $menu_sections['reports']['items'][$single_key] = "{$label} Report (Auto-Discovered)";
+            }
+        }
+    }
+}
 ?>
 
 <style>

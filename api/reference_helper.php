@@ -349,17 +349,11 @@ function get_effective_account($master_id, $type)
 if (!function_exists('generate_uuid')) {
     function generate_uuid()
     {
-        return sprintf(
-            '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0x0fff) | 0x4000,
-            mt_rand(0, 0x3fff) | 0x8000,
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff)
-        );
+        static $seq = null;
+        if ($seq === null) {
+            $seq = time() % 1000000 + rand(1000, 9999);
+        }
+        return (string)(++$seq);
     }
 }
 
@@ -759,7 +753,8 @@ function sync_daily_pos_summary($date)
         return;
     }
 
-    $user_id = $_SESSION['user_id'] ?? 'usr-admin-001';
+    $raw_u = $_SESSION['user_id'] ?? ($_SESSION['userdata']['id'] ?? 2);
+    $user_id = (is_numeric($raw_u) && (int)$raw_u > 0) ? (int)$raw_u : 2;
     $def_location_id = get_user_default_location_id();
 
     // Resolve non-null customer_id
@@ -782,7 +777,7 @@ function sync_daily_pos_summary($date)
             // User has manually edited and saved this invoice — preserve manual edits
             return;
         }
-        $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = '')")->execute([$def_location_id, $invoice_header_id]);
+        $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = 0 OR CAST(location_id AS CHAR) = '')")->execute([$def_location_id, $invoice_header_id]);
     } else {
         $invoice_header_id = generate_uuid();
         $pdo->prepare("
@@ -793,7 +788,7 @@ function sync_daily_pos_summary($date)
 
     if ($existing_pay) {
         $payment_header_id = $existing_pay['id'];
-        $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = '')")->execute([$def_location_id, $payment_header_id]);
+        $pdo->prepare("UPDATE transaction_headers SET location_id = ? WHERE id = ? AND (location_id IS NULL OR location_id = 0 OR CAST(location_id AS CHAR) = '')")->execute([$def_location_id, $payment_header_id]);
     } else {
         $payment_header_id = generate_uuid();
         $pdo->prepare("
@@ -804,7 +799,7 @@ function sync_daily_pos_summary($date)
 
     // Clear child details (rebuild them dynamically)
     $pdo->prepare("DELETE FROM transaction_lines WHERE header_id = ?")->execute([$invoice_header_id]);
-    $pdo->prepare("DELETE FROM customer_invoices WHERE header_id = ?")->execute([$invoice_header_id]);
+    $pdo->prepare("DELETE FROM customer_invoices WHERE header_id = ? OR invoice_number = ?")->execute([$invoice_header_id, $summary_invoice_no]);
     $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$invoice_header_id]);
 
     $pdo->prepare("DELETE FROM payments WHERE header_id = ?")->execute([$payment_header_id]);
@@ -869,9 +864,9 @@ function sync_daily_pos_summary($date)
         $unit_price_full = $qty > 0 ? $gross / $qty : 0;
         $gross_profit_excl_tax = ($net - $tax) - $cogs; // true margin, tax excluded
         $pdo->prepare("
-            INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ")->execute([generate_uuid(), $invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit_price_full, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $gross, $qty > 0 ? $cogs / $qty : 0, $gross_profit_excl_tax, $user_id]);
+            INSERT INTO transaction_lines (header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit_price_full, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $gross, $qty > 0 ? $cogs / $qty : 0, $gross_profit_excl_tax, $user_id]);
     }
 
     // Write customer_invoices record
@@ -879,9 +874,9 @@ function sync_daily_pos_summary($date)
         $customer_id = get_default_pos_customer_id();
     }
     $pdo->prepare("
-        INSERT INTO customer_invoices (id, header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'paid', 'cash')
-    ")->execute([generate_uuid(), $invoice_header_id, $customer_id, $date, $date, $summary_invoice_no, $summary_subtotal, $summary_discount, $summary_tax, $summary_total, $summary_total]);
+        INSERT INTO customer_invoices (header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'paid', 'cash')
+    ")->execute([$invoice_header_id, $customer_id, $date, $date, $summary_invoice_no, $summary_subtotal, $summary_discount, $summary_tax, $summary_total, $summary_total]);
 
     // 2. Aggregate Payments
     $agg_payments = $db->fetchAll("
@@ -900,47 +895,50 @@ function sync_daily_pos_summary($date)
         $mapped_method = resolve_payment_method($acc_info['account_name'] ?? '');
 
         $pdo->prepare("
-            INSERT INTO payments (id, header_id, payment_type, customer_id, payment_method, bank_account_id, amount, payment_date, created_by, applied_to_txn_id)
-            VALUES (?, ?, 'customer_payment', ?, ?, ?, ?, ?, ?, ?)
-        ")->execute([generate_uuid(), $payment_header_id, $customer_id, $mapped_method, $acc_id, $pay_amount, $date, $user_id, $invoice_header_id]);
+            INSERT INTO payments (header_id, payment_type, customer_id, payment_method, bank_account_id, amount, payment_date, created_by, applied_to_txn_id)
+            VALUES (?, 'customer_payment', ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$payment_header_id, $customer_id, $mapped_method, $acc_id, $pay_amount, $date, $user_id, $invoice_header_id]);
     }
 
     // Insert link
     $pdo->prepare("
-        INSERT INTO transaction_links (id, parent_id, child_id, link_type)
-        VALUES (?, ?, ?, ?)
-    ")->execute([generate_uuid(), $payment_header_id, $invoice_header_id, 'payment:' . $summary_total]);
+        INSERT INTO transaction_links (parent_id, child_id, link_type)
+        VALUES (?, ?, ?)
+    ")->execute([$payment_header_id, $invoice_header_id, 'payment:' . $summary_total]);
 
     // 3. Invoice GL
-    $ar_account = get_accounting_preference('default_ar_account') ?: 'acc-1100';
-    $tax_account = get_accounting_preference('default_tax_account') ?: 'acc-2200';
-    $disc_account = get_accounting_preference('default_discount_account') ?: 'acc-6160';
+    $ar_account = 6;  // Accounts Receivable
+    $tax_account = 13; // VAT Payable (13%)
+    $disc_account = 36; // Discounts Given
 
-    $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-        ->execute([generate_uuid(), $invoice_header_id, $ar_account, $summary_total, 'Daily POS Sales Invoice ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+    $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
+        ->execute([$invoice_header_id, $ar_account, $summary_total, 'Daily POS Sales Invoice ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
 
     if ($summary_discount > 0) {
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $invoice_header_id, $disc_account, $summary_discount, 'Daily POS Invoice Discount ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $disc_account, $summary_discount, 'Daily POS Invoice Discount ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
 
     foreach ($sales_distributions as $inc_acct => $amt) {
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $invoice_header_id, $inc_acct, $amt, 'Daily POS Invoice Sales ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $inc_acct_id = is_numeric($inc_acct) ? (int)$inc_acct : 25; // 25 = Sales Income
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $inc_acct_id, $amt, 'Daily POS Invoice Sales ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
 
     if ($summary_tax > 0) {
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $invoice_header_id, $tax_account, $summary_tax, 'Daily POS Invoice VAT ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $tax_account, $summary_tax, 'Daily POS Invoice VAT ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
 
     foreach ($cogs_distributions as $cogs_acct => $amt) {
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $invoice_header_id, $cogs_acct, $amt, 'Daily POS Invoice COGS ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $cogs_acct_id = is_numeric($cogs_acct) ? (int)$cogs_acct : 26; // 26 = COGS
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $cogs_acct_id, $amt, 'Daily POS Invoice COGS ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
     foreach ($inv_distributions as $inv_acct => $amt) {
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $invoice_header_id, $inv_acct, $amt, 'Daily POS Invoice Inventory Out ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $inv_acct_id = is_numeric($inv_acct) ? (int)$inv_acct : 7; // 7 = Inventory Asset
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $inv_acct_id, $amt, 'Daily POS Invoice Inventory Out ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
 
     // 4. Payment GL
@@ -954,21 +952,22 @@ function sync_daily_pos_summary($date)
         $entry_type = ($pay['total_amount'] >= 0) ? 'debit' : 'credit';
         $abs_amount = abs($pay['total_amount']);
         if ($abs_amount > 0) {
-            $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                ->execute([generate_uuid(), $payment_header_id, $pay['account_id'], $entry_type, $abs_amount, 'Daily POS Invoice Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+            $pay_acct_id = is_numeric($pay['account_id']) ? (int)$pay['account_id'] : 2; // 2 = Cash
+            $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                ->execute([$payment_header_id, $pay_acct_id, $entry_type, $abs_amount, 'Daily POS Invoice Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
         }
     }
 
     if (abs($discrepancy) > 0.005) {
-        $misc_expense_acct = 'acc-6170'; // Miscellaneous Expenses
+        $misc_expense_acct = 37; // Miscellaneous Expenses ID: 37
         $entry_type = ($discrepancy > 0) ? 'debit' : 'credit'; // Positive is shortage (debit expense), negative is overage (credit)
         $abs_discrepancy = abs($discrepancy);
-        $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            ->execute([generate_uuid(), $payment_header_id, $misc_expense_acct, $entry_type, $abs_discrepancy, 'POS Daily Cash Discrepancy ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            ->execute([$payment_header_id, $misc_expense_acct, $entry_type, $abs_discrepancy, 'POS Daily Cash Discrepancy ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
 
-    $pdo->prepare("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-        ->execute([generate_uuid(), $payment_header_id, $ar_account, $summary_total, 'POS Daily Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+    $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
+        ->execute([$payment_header_id, $ar_account, $summary_total, 'POS Daily Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
 
     // 5. Update transaction_headers with the correct net_amount and customer
     $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ? WHERE id = ?")
@@ -1229,6 +1228,17 @@ function resolve_page_permission_key($page)
         $key = 'import_export';
     } elseif (strpos($p, 'system/backup') !== false) {
         $key = 'backup_restore';
+    }
+
+    // --- Dynamic Auto-Resolution Fallbacks for any new transaction, report, or master page ---
+    if (empty($key) && count($parts) >= 2) {
+        if ($parts[0] === 'transactions' && !in_array($parts[1], ['transactions_list', 'view', 'print'])) {
+            $key = $parts[1];
+        } elseif ($parts[0] === 'reports' && !in_array($parts[1], ['reports_list', 'rpt_helpers'])) {
+            $key = 'rep_' . str_replace(['.php', '_list'], '', $parts[1]);
+        } elseif ($parts[0] === 'master' && !in_array($parts[1], ['master_list'])) {
+            $key = $parts[1];
+        }
     }
 
     return [$key, $is_edit];
@@ -1621,43 +1631,57 @@ if (!function_exists('render_dropdown_options')) {
     }
 }
 
+function resolve_location_id($loc_id) {
+    if (is_numeric($loc_id) && (int)$loc_id > 0) {
+        return (int)$loc_id;
+    }
+    if (empty($loc_id)) {
+        return 1;
+    }
+    $str = strtolower((string)$loc_id);
+    if ($str === 'loc-main-retail' || strpos($str, 'retail') !== false || strpos($str, 'gokarna') !== false) {
+        return 1;
+    }
+    if ($str === 'loc-main-wh' || strpos($str, 'wh') !== false || strpos($str, 'house') !== false) {
+        return 2;
+    }
+    try {
+        $db = db();
+        $row = $db->fetchOne("SELECT id FROM locations WHERE id = CAST(? AS CHAR) OR code = ? OR name LIKE ? LIMIT 1", [$loc_id, $loc_id, "%$loc_id%"]);
+        if ($row && is_numeric($row['id'])) {
+            return (int)$row['id'];
+        }
+    } catch (\Throwable $e) {}
+    return 1;
+}
+
 if (!function_exists('get_user_default_location_id')) {
     function get_user_default_location_id(): string
     {
         if (session_status() === PHP_SESSION_NONE) {
             session_start();
         }
-        if (!empty($_SESSION['location_id'])) {
-            return $_SESSION['location_id'];
+        if (!empty($_SESSION['location_id']) && is_numeric($_SESSION['location_id'])) {
+            return (string)$_SESSION['location_id'];
         }
-        $user_id = $_SESSION['user_id'] ?? null;
+        $user_id = $_SESSION['user_id'] ?? ($_SESSION['userdata']['id'] ?? null);
         if ($user_id) {
             $db = db();
-            $user_loc = $db->fetchOne("SELECT location_id FROM users WHERE id = ?", [$user_id]);
+            $user_loc = $db->fetchOne("SELECT location_id FROM users WHERE id = CAST(? AS CHAR) OR username = ? LIMIT 1", [$user_id, $user_id]);
             if (!empty($user_loc['location_id'])) {
-                $_SESSION['location_id'] = $user_loc['location_id'];
-                return $_SESSION['location_id'];
+                $resolved = resolve_location_id($user_loc['location_id']);
+                $_SESSION['location_id'] = $resolved;
+                return (string)$resolved;
             }
         }
-        // Fallback to system accounting preference
-        if (function_exists('get_accounting_preference')) {
-            $def = get_accounting_preference('default_location_id');
-            if (!empty($def)) {
-                $_SESSION['location_id'] = $def;
-                return $_SESSION['location_id'];
-            }
-        }
+        // Fallback to system default location
         $loc = db()->fetchOne("SELECT id FROM locations WHERE is_default = 1 AND is_deleted = 0 LIMIT 1");
         if ($loc) {
-            $_SESSION['location_id'] = $loc['id'];
-            return $_SESSION['location_id'];
+            $resolved = resolve_location_id($loc['id']);
+            $_SESSION['location_id'] = $resolved;
+            return (string)$resolved;
         }
-        $loc2 = db()->fetchOne("SELECT id FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY name ASC LIMIT 1");
-        $fallback = $loc2['id'] ?? '';
-        if ($fallback) {
-            $_SESSION['location_id'] = $fallback;
-        }
-        return $fallback;
+        return "1";
     }
 }
 
@@ -1668,28 +1692,32 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
         $cost_price = (float)($item['cost_price'] ?? 0.00);
 
         foreach ($locations as $loc) {
-            $loc_id = $loc['id'];
+            $loc_id = (int)$loc['id'];
 
             // 1. Calculate live stock on hand for this location (including inventory transfers)
+            $is_loc = "(COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?)";
+            $is_party = "(h.party_id = ?)";
+
             $hdr_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN -l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND h.party_id = ? THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? THEN -l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND $is_loc THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND $is_loc THEN -l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND $is_party THEN l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND $is_loc THEN -l.quantity 
                     ELSE 0 END), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
                 WHERE l.item_id = ? 
-                  AND (COALESCE(NULLIF(l.location_id, ''), h.location_id) = ? OR (h.txn_type = 'inventory_transfer' AND h.party_id = ?))
+                  AND ($is_loc OR (h.txn_type = 'inventory_transfer' AND $is_party))
                   AND h.is_deleted = 0 
                   AND h.status NOT IN ('void', 'voided', 'draft')
-            ", [$loc_id, $loc_id, $loc_id, $loc_id, $item_id, $loc_id, $loc_id])['qty'] ?? 0);
+            ", [
+                $loc_id, $loc_id, $loc_id, $loc_id,
+                $item_id,
+                $loc_id, $loc_id
+            ])['qty'] ?? 0);
 
             // Add POS Entries if matched by location
-            // IMPORTANT: Only include POS entries whose items are NOT already in transaction_lines
-            // (INV-POS-* consolidated invoices already capture daily POS items in hdr_stock above)
-            // Match: pos_entry for same date/location where item appears in transaction_lines of an INV-POS header
             $pos_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(-pi.quantity), 0) as qty
                 FROM pos_items pi
@@ -1710,7 +1738,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             $on_hand = $hdr_stock + $pos_stock;
 
-            // 2. Committed Qty (open sales invoices / orders not completed)
+            // 2. Committed Qty
             $committed = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(l.quantity), 0) as qty
                 FROM transaction_lines l
@@ -1718,7 +1746,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
                 WHERE l.item_id = ? AND h.location_id = ? AND h.txn_type IN ('customer_invoice', 'sales_order') AND h.status = 'draft' AND h.is_deleted = 0
             ", [$item_id, $loc_id])['qty'] ?? 0);
 
-            // 3. On Order Qty (open purchase orders / vendor bills in draft or pending)
+            // 3. On Order Qty
             $on_order = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(l.quantity), 0) as qty
                 FROM transaction_lines l
@@ -1728,7 +1756,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             $available = max(0, $on_hand - $committed);
 
-            // Upsert into inventory_balances table
+            // Upsert into inventory_balances table using pure INT keys
             $existing = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $loc_id]);
             if ($existing) {
                 $db->execute("
@@ -1737,11 +1765,10 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
                     WHERE id = ?
                 ", [$on_hand, $available, $committed, $on_order, $cost_price, $existing['id']]);
             } else {
-                $rec_id = generate_uuid();
                 $db->execute("
-                    INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ", [$rec_id, $item_id, $loc_id, $on_hand, $available, $committed, $on_order, $cost_price]);
+                    INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ", [(int)$item_id, (int)$loc_id, $on_hand, $available, $committed, $on_order, $cost_price]);
             }
         }
 

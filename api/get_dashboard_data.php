@@ -85,9 +85,22 @@ if ($active_fy) {
     }
 }
 
-// Get default cash account from system_info
-$default_cash = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'default_cash_account'");
-$default_cash_acct = $default_cash ? $default_cash['meta_value'] : 'acc-1010';
+// Get default cash account using the same helper as save_cash_denom / save_invoice
+// get_accounting_preference() returns the stored meta value (e.g. 'acc-1010' or a numeric ID)
+$default_cash_acct_key = get_accounting_preference('default_cash_account') ?: 'acc-1010';
+// Resolve to the real numeric account ID stored in journal_entries.account_id
+// The stored key may be a numeric id already, or a legacy 'acc-XXXX' string
+$cash_acct_row = $db->fetchOne(
+    "SELECT id FROM accounts WHERE id = ? AND is_deleted = 0 LIMIT 1",
+    [(int)$default_cash_acct_key]
+);
+if (!$cash_acct_row) {
+    // Fallback: find the first active Cash/asset account
+    $cash_acct_row = $db->fetchOne(
+        "SELECT id FROM accounts WHERE (account_name LIKE '%Cash%' OR account_subtype = 'Cash') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1"
+    );
+}
+$default_cash_acct = $cash_acct_row ? (int)$cash_acct_row['id'] : 2;
 
 // ─── Helpers ─────────────────────────────────────────────────────
 function make_kpi($val, $prev) {
@@ -270,7 +283,7 @@ function get_balances($db, $as_of) {
     $loc_sql_th = dash_loc_sql('th');
     $loc_sql_h  = dash_loc_sql('h');
 
-    // AR total: Invoices + open Customer Journals
+    // AR total: Invoices (balance_due) + open Customer Opening Balance Journals
     $ar = (float)($db->fetchOne("
         SELECT 
         ((
@@ -279,23 +292,17 @@ function get_balances($db, $as_of) {
             JOIN transaction_headers th ON ci.header_id = th.id
             WHERE th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql_th}
         ) + (
-            SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0) - COALESCE((
-                SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
-                FROM transaction_links tl
-                JOIN transaction_headers ph ON tl.parent_id = ph.id
-                JOIN payments p ON ph.id = p.header_id
-                WHERE tl.child_id = th.id 
-                  AND tl.link_type LIKE 'payment:%'
-                  AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
-            ), 0.00)
+            -- Opening balance journals tagged as customer receivables
+            SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
             FROM journal_entries j
             JOIN transaction_headers th ON j.header_id = th.id
-            WHERE (j.party_type = 'customer' OR j.party_id IN (SELECT id FROM customers) OR th.party_id IN (SELECT id FROM customers))
-              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
+            WHERE j.party_type = 'customer'
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+              AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
         )) as total
     ", [$as_of, $as_of])['total'] ?? 0);
 
-    // AP total: Bills + open Vendor Journals
+    // AP total: Bills (balance_due) + open Vendor Opening Balance Journals
     $ap = (float)($db->fetchOne("
         SELECT 
         (
@@ -307,24 +314,19 @@ function get_balances($db, $as_of) {
             ), 0.00) 
             + 
             COALESCE((
-                SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) - COALESCE((
-                    SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
-                    FROM transaction_links tl
-                    JOIN transaction_headers ph ON tl.parent_id = ph.id
-                    WHERE tl.child_id = th.id 
-                      AND tl.link_type LIKE 'payment:%'
-                      AND ph.txn_type = 'vendor_payment'
-                      AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
-                ), 0.00)
+                -- Opening balance journals tagged as vendor payables
+                SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END)
                 FROM journal_entries j
                 JOIN transaction_headers th ON j.header_id = th.id
-                WHERE (j.party_type = 'vendor' OR j.party_id IN (SELECT id FROM vendors))
-                  AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
+                WHERE j.party_type = 'vendor'
+                  AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+                  AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
             ), 0.00)
         ) as total
     ", [$as_of, $as_of])['total'] ?? 0);
 
-    // Cash and Bank totals (excluding Fixed Deposit account)
+
+    // Cash and Bank totals (excluding Fixed Deposit accounts)
     $cash_bank_rows = $db->fetchAll("
         SELECT 
             LOWER(a.account_subtype) as bt,
@@ -334,7 +336,7 @@ function get_balances($db, $as_of) {
         LEFT JOIN transaction_headers h ON je.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
         WHERE a.account_type = 'asset'
           AND a.account_subtype IN ('Cash', 'Bank')
-          AND a.id != 'acc-1040' AND LOWER(a.account_name) NOT LIKE '%fixed deposit%'
+          AND LOWER(a.account_name) NOT LIKE '%fixed deposit%'
           AND a.is_active = 1 AND a.is_deleted = 0
         GROUP BY bt HAVING bt IS NOT NULL
     ", [$as_of]);
@@ -380,7 +382,7 @@ if (!empty($selected_location_id)) {
             SUM(CASE WHEN i.is_active = 1 AND i.reorder_level IS NOT NULL AND COALESCE(ib.quantity_on_hand, 0) > (i.reorder_level * 3) THEN 1 ELSE 0 END) as overstock,
             COALESCE(SUM(COALESCE(ib.quantity_on_hand, 0) * i.cost_price), 0) as inventory_value
         FROM items i
-        LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = '$selected_location_id'
+        LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = '$selected_location_id'
         WHERE i.is_deleted = 0
     ");
 } else {
@@ -429,22 +431,22 @@ if ($closing_cash <= 0) {
 }
 
 // Total Cash In (debits to cash account today from journal entries)
-// Note: POS cash payments are already included in journal entries, so we don't double-count
+// Uses the resolved numeric account ID — not the 'acc-XXXX' string alias
 $loc_sql_h = dash_loc_sql('h');
 $cash_in = (float)($db->fetchOne("
     SELECT COALESCE(SUM(je.amount), 0) as amount FROM journal_entries je
     JOIN transaction_headers h ON je.header_id = h.id
-    WHERE je.account_id = ? AND je.entry_type = 'debit'
+    WHERE CAST(je.account_id AS UNSIGNED) = ? AND je.entry_type = 'debit'
       AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$default_cash_acct, $today])['amount'] ?? 0);
+", [(int)$default_cash_acct, $today])['amount'] ?? 0);
 
 // Total Cash Out (credits to cash account today from journal entries)
 $cash_out = (float)($db->fetchOne("
     SELECT COALESCE(SUM(je.amount), 0) as amount FROM journal_entries je
     JOIN transaction_headers h ON je.header_id = h.id
-    WHERE je.account_id = ? AND je.entry_type = 'credit'
+    WHERE CAST(je.account_id AS UNSIGNED) = ? AND je.entry_type = 'credit'
       AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$default_cash_acct, $today])['amount'] ?? 0);
+", [(int)$default_cash_acct, $today])['amount'] ?? 0);
 
 // Cash difference (closing - opening - in + out = surplus/shortage)
 $expected_closing = $opening_cash + $cash_in - $cash_out;
@@ -598,81 +600,52 @@ function get_daily_sales($db, $from, $to) {
     return $map;
 }
 
-// ── 2b. Sales by Payment Method / Bank Account (Transactions only) ──
-$bank_accounts = $db->fetchAll("
-    SELECT id, account_name, account_subtype
-    FROM accounts
-    WHERE (account_subtype IN ('Bank') OR LOWER(account_name) LIKE '%cash%' OR LOWER(account_name) LIKE '%bank%')
-      AND is_active = 1 AND is_deleted = 0
-    ORDER BY account_name ASC
-");
-
+// ── 2b. Sales by Payment Method / Bank Account (POS + Manual Invoices, excluding POS shadow sync duplicates) ──
 $pay_methods = [];
 $loc_sql_pe = dash_loc_sql('pe');
 $loc_sql_h  = dash_loc_sql('h');
 
-// POS payments today
-$pos_pay = $db->fetchAll("
+$bank_coa_rows = $db->fetchAll("
     SELECT 
-        CASE 
-            WHEN LOWER(pp.payment_mode) = 'cash' THEN 'Cash'
-            WHEN LOWER(pp.payment_mode) = 'esewa' THEN 'Esewa'
-            WHEN LOWER(pp.payment_mode) = 'fonepay' THEN 'Fonepay'
-            WHEN LOWER(pp.payment_mode) = 'khalti' THEN 'Khalti'
-            WHEN LOWER(pp.payment_mode) = 'card' THEN 'Card'
-            WHEN LOWER(pp.payment_mode) = 'bank' THEN 'Bank Transfer'
-            ELSE UPPER(pp.payment_mode)
-        END as pay_mode,
-        SUM(pp.amount) as total
-    FROM pos_payments pp
-    JOIN pos_entry pe ON pp.pos_id = pe.id
-    WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 {$loc_sql_pe}
-    GROUP BY pay_mode
-", [$today]);
+        a.account_name as pay_mode,
+        (
+            COALESCE((
+                SELECT SUM(pp.amount)
+                FROM pos_payments pp
+                JOIN pos_entry pe ON pp.pos_id = pe.id
+                WHERE pp.account_id = a.id AND DATE(pe.date_time) = ? AND pe.is_deleted = 0 {$loc_sql_pe}
+            ), 0)
+            +
+            COALESCE((
+                SELECT SUM(p.amount)
+                FROM payments p
+                JOIN transaction_headers h ON p.header_id = h.id
+                WHERE p.bank_account_id = a.id AND p.payment_date = ? AND p.payment_type = 'customer_payment'
+                  AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+                  AND COALESCE(h.source, '') != 'pos_sync'
+                  AND h.txn_number NOT LIKE 'PAY-POS%'
+                  AND h.txn_number NOT LIKE 'INV-POS%'
+                  AND h.txn_number NOT LIKE 'POS-SUM%' {$loc_sql_h}
+            ), 0)
+        ) as total
+    FROM accounts a
+    WHERE a.account_subtype = 'Bank' AND a.is_active = 1 AND a.is_deleted = 0
+    ORDER BY a.account_name ASC
+", [$today, $today]);
 
-foreach ($pos_pay as $pp) {
-    $mode = $pp['pay_mode'];
-    $amt  = (float)$pp['total'];
-    if ($amt > 0) {
-        $pay_methods[$mode] = ($pay_methods[$mode] ?? 0.0) + $amt;
-    }
+foreach ($bank_coa_rows as $bcr) {
+    $pay_methods[$bcr['pay_mode']] = (float)$bcr['total'];
 }
 
-// Invoice payments today
-$ip = $db->fetchAll("
-    SELECT 
-        COALESCE(a.account_name, 
-            CASE 
-                WHEN p.payment_method = 'cash' THEN 'Cash'
-                WHEN p.payment_method = 'esewa' THEN 'Esewa'
-                WHEN p.payment_method = 'khalti' THEN 'Khalti'
-                WHEN p.payment_method = 'card' THEN 'Card'
-                WHEN p.payment_method = 'bank_transfer' THEN 'Bank Transfer'
-                ELSE 'Other'
-            END
-        ) as acc_name,
-        SUM(p.amount) as total
-    FROM payments p
-    JOIN transaction_headers h ON p.header_id = h.id
-    LEFT JOIN accounts a ON p.bank_account_id = a.id
-    WHERE p.payment_date = ? AND p.payment_type = 'customer_payment'
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql_h}
-    GROUP BY acc_name
-", [$today]);
-
-foreach ($ip as $p) {
-    $name = $p['acc_name'];
-    $amt = (float)$p['total'];
-    if ($amt > 0) {
-        $pay_methods[$name] = ($pay_methods[$name] ?? 0.0) + $amt;
-    }
-}
-
-// Credit sales today
+// Credit sales today (Invoices only, excluding POS)
 $credit_today = (float)($db->fetchOne("
     SELECT COALESCE(SUM(ci.balance_due), 0) as balance_due FROM customer_invoices ci
     JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE h.txn_date = ? AND ci.sale_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql_h}
+    WHERE h.txn_date = ? AND ci.sale_type = 'credit' 
+      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+      AND COALESCE(h.source, '') != 'pos_sync' 
+      AND h.txn_number NOT LIKE 'INV-POS%' 
+      AND h.txn_number NOT LIKE 'POS-SUM%' {$loc_sql_h}
 ", [$today])['balance_due'] ?? 0);
 
 if ($credit_today > 0) {
@@ -684,32 +657,23 @@ if (empty($pay_methods)) {
     $pay_methods = ['Cash' => 0.00];
 }
 
-// ── 2c. Sales by Beverage Category (This Month - POS + Invoices) ──
+// ── 2c. Sales by Beverage Category (This Month - POS + Invoices, matching Sales by Item Report) ──
 $cat_sales_data = $db->fetchAll("
     SELECT 
         rc.name as category_name,
-        COALESCE(SUM(sl.amount), 0) as total_amount
+        COALESCE(SUM(l.line_total), 0) as total_amount
     FROM reference_codes rc
-    LEFT JOIN (
-        SELECT pi.net_amount as amount, i.item_category
-        FROM pos_items pi
-        JOIN pos_entry pe ON pi.pos_id = pe.id
-        JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
-        WHERE DATE(pe.date_time) BETWEEN ? AND ? AND pe.is_deleted = 0 {$loc_sql_pe}
-        UNION ALL
-        SELECT l.line_total as amount, i.item_category
-        FROM transaction_lines l
-        JOIN transaction_headers h ON l.header_id = h.id
-        JOIN items i ON l.item_id = i.id AND i.is_deleted = 0
-        WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.txn_type = 'customer_invoice'
-          AND COALESCE(h.source, '') != 'pos_sync' AND h.txn_number NOT LIKE 'INV-POS%' AND h.txn_number NOT LIKE 'POS-SUM%'
-          {$loc_sql_h}
-    ) sl ON rc.id = sl.item_category
+    JOIN items i ON rc.id = i.item_category AND i.is_deleted = 0
+    JOIN transaction_lines l ON l.item_id = i.id
+    JOIN transaction_headers h ON l.header_id = h.id
     WHERE rc.type = 'category' AND rc.is_active = 1
+      AND h.txn_date BETWEEN ? AND ? 
+      AND h.is_deleted = 0 
+      AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.txn_type IN ('customer_invoice', 'POS') {$loc_sql_h}
     GROUP BY rc.id, rc.name
     ORDER BY total_amount DESC
-", [$month_start, $today, $month_start, $today]);
+", [$month_start, $today]);
 
 $sales_by_category = [];
 foreach ($cat_sales_data as $row) {
@@ -958,28 +922,25 @@ $top_cust = $db->fetchAll("
 
 $out_ar = $db->fetchAll("
     SELECT c.id, c.full_name, c.phone, c.customer_type,
-        ((
-            SELECT COALESCE(SUM(ci.balance_due), 0) 
-            FROM customer_invoices ci 
-            JOIN transaction_headers th ON ci.header_id = th.id 
-            WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
-        ) + COALESCE((
-            SELECT SUM(
-                CASE WHEN j.party_id = c.id THEN (CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) ELSE 0 END
-            ) - COALESCE((
-                SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
-                FROM transaction_links tl
-                JOIN transaction_headers ph ON tl.parent_id = ph.id
-                JOIN payments p ON ph.id = p.header_id
-                WHERE tl.child_id = th.id 
-                  AND tl.link_type LIKE 'payment:%'
-                  AND p.customer_id = c.id
-                  AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
-            ), 0.00)
-            FROM journal_entries j
-            JOIN transaction_headers th ON j.header_id = th.id
-            WHERE j.party_id = c.id AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql_th}
-        ), 0.00)) as balance,
+        (
+            -- Invoice balance due (open invoices not fully paid)
+            COALESCE((
+                SELECT SUM(ci.balance_due) 
+                FROM customer_invoices ci 
+                JOIN transaction_headers th ON ci.header_id = th.id 
+                WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
+            ), 0)
+            +
+            -- Opening balance journal entries tagged as customer receivables
+            COALESCE((
+                SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END)
+                FROM journal_entries j
+                JOIN transaction_headers th ON j.header_id = th.id
+                WHERE j.party_id = c.id AND j.party_type = 'customer'
+                  AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+                  AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql_th}
+            ), 0)
+        ) as balance,
         (
             SELECT MAX(th.txn_date)
             FROM transaction_headers th
@@ -1013,6 +974,7 @@ $out_ap = $db->fetchAll("
                     WHERE tl.child_id = th.id 
                       AND tl.link_type LIKE 'payment:%'
                       AND ph.txn_type = 'vendor_payment'
+                      AND ph.party_id = v.id
                       AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
                 ), 0.00)
                 FROM journal_entries j
@@ -1143,22 +1105,32 @@ foreach ($pending as $p) {
 }
 
 // Liquor Store Specific: License & Permit Reminders
-$excise_expiry = date('Y') . '-08-16'; // Expires August 16
-$sanitation_expiry = date('Y') . '-10-15'; // Expires October 15
+$excise_expiry = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'excise_license_expiry'")['meta_value'] ?? (date('Y') . '-08-16');
+$sanitation_expiry = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'sanitation_permit_expiry'")['meta_value'] ?? (date('Y') . '-10-15');
+
+$excise_days = (int)ceil((strtotime($excise_expiry) - time()) / 86400);
+$excise_desc = $excise_days < 0 
+    ? "Your Excise Retail Liquor License EXPIRED on {$excise_expiry} (" . abs($excise_days) . " days ago). Please submit renewal documents immediately."
+    : "Your Excise Retail Liquor License is expiring on {$excise_expiry} (in {$excise_days} days). Please submit renewal documents.";
 
 $alerts[] = [
-    'type' => 'license_expiry', 'severity' => 'danger',
-    'icon' => 'fa-certificate', 'icon_bg' => '#dc2626',
+    'type' => 'license_expiry', 'severity' => $excise_days < 15 ? 'danger' : 'warning',
+    'icon' => 'fa-certificate', 'icon_bg' => $excise_days < 15 ? '#dc2626' : '#f59e0b',
     'title' => 'Excise Retail License Expiry',
-    'desc' => "Your Excise Retail Liquor License is expiring on {$excise_expiry} (in 32 days). Please submit renewal documents.",
+    'desc' => $excise_desc,
     'link' => '?page=system/company/manage'
 ];
 
+$sanitation_days = (int)ceil((strtotime($sanitation_expiry) - time()) / 86400);
+$sanitation_desc = $sanitation_days < 0 
+    ? "Food & Beverage Safety Permit EXPIRED on {$sanitation_expiry} (" . abs($sanitation_days) . " days ago)."
+    : "Food & Beverage Safety Permit is active. Renewal due on {$sanitation_expiry} (in {$sanitation_days} days).";
+
 $alerts[] = [
-    'type' => 'permit_expiry', 'severity' => 'info',
-    'icon' => 'fa-shield-halved', 'icon_bg' => '#3b82f6',
+    'type' => 'permit_expiry', 'severity' => $sanitation_days < 15 ? 'danger' : 'info',
+    'icon' => 'fa-shield-halved', 'icon_bg' => $sanitation_days < 15 ? '#dc2626' : '#3b82f6',
     'title' => 'Sanitation & Safety Permit Active',
-    'desc' => "Food & Beverage Safety Permit is active. Renewal due on {$sanitation_expiry}.",
+    'desc' => $sanitation_desc,
     'link' => '?page=system/company/manage'
 ];
 
@@ -1475,12 +1447,18 @@ $response = [
     ],
 
     // New: Break-Even Tracker Data
-    'break_even' => [
-        'target'      => 1070000.00,
-        'recovered'   => (float)($fy_profit > 0 ? $fy_profit : 0),
-        'unrecovered' => max(0, 1070000.00 - (float)($fy_profit > 0 ? $fy_profit : 0)),
-        'progress_pct'=> round(min(100, max(0, (((float)($fy_profit > 0 ? $fy_profit : 0)) / 1070000.00) * 100)), 2)
-    ],
+    // Dynamic Break-Even Tracker Data
+    'break_even' => (function() use ($db, $fy_expenses, $fy_profit) {
+        $db_be_target = (float)($db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'break_even_target'")['meta_value'] ?? 0);
+        $be_target = $db_be_target > 0 ? $db_be_target : ($fy_expenses > 0 ? round($fy_expenses * 1.2, 2) : 1070000.00);
+        $rec = (float)($fy_profit > 0 ? $fy_profit : 0);
+        return [
+            'target'      => $be_target,
+            'recovered'   => $rec,
+            'unrecovered' => max(0, $be_target - $rec),
+            'progress_pct'=> round(min(100, max(0, ($rec / max(1, $be_target)) * 100)), 2)
+        ];
+    })(),
 
     // Row 2: Sales Analytics
     'sales_trend'   => $trend_data,

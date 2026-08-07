@@ -11,12 +11,9 @@ require_once __DIR__ . '/reference_helper.php';
 
 $db = db();
 
-$user_id = $_SESSION['user_id'] ?? '';
-$location_id = $_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
-
-if (empty($location_id) && $user_id) {
-    $user = $db->fetchOne("SELECT location_id FROM users WHERE id = ?", [$user_id]);
-    $location_id = $user['location_id'] ?? '';
+$location_id = (int)($_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : 1)));
+if ($location_id > 0) {
+    $_SESSION['location_id'] = $location_id;
 }
 
 $query = "
@@ -30,9 +27,8 @@ $query = "
         CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
-    LEFT JOIN inventory_balances ib ON i.id = ib.item_id AND ib.location_id = ?
-    WHERE i.is_active = 1 AND i.is_deleted = 0
-      AND COALESCE(ib.quantity_on_hand, 0) > 0
+    LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = ?
+    WHERE i.is_active = 1 AND i.is_deleted = 0 AND COALESCE(ib.quantity_on_hand, 0) > 0
     ORDER BY i.item_name ASC
 ";
 

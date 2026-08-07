@@ -20,17 +20,17 @@ if (!$customer) {
     exit;
 }
 
-// Fetch related records (Invoices & Tagged Journals)
+// Fetch related records (Invoices, Tagged Journals, Credit Memos & Customer Refunds)
 $invoices = $db->fetchAll("
     SELECT 'Invoice' as doc_type, ci.id, ci.header_id, ci.invoice_number as doc_number, ci.invoice_date as doc_date, ci.total_amount, ci.balance_due, ci.payment_status 
     FROM customer_invoices ci 
     JOIN transaction_headers th ON ci.header_id = th.id
-    WHERE ci.customer_id = ? AND th.is_deleted = 0
+    WHERE ci.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(CASE WHEN (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
         (
-            SUM(CASE WHEN j.party_id = ? THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(CASE WHEN (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
             - COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
@@ -38,21 +38,47 @@ $invoices = $db->fetchAll("
                 JOIN payments p ON ph.id = p.header_id
                 WHERE tl.child_id = h.id 
                   AND tl.link_type LIKE 'payment:%'
-                  AND p.customer_id = ?
+                  AND (p.customer_id = ? OR ph.party_id = CAST(? AS CHAR))
                   AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
             ), 0.00)
         ) as balance_due,
         h.status as payment_status
     FROM journal_entries j
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE j.party_id = ? 
-      AND (j.party_type = 'customer' OR j.party_type IS NULL) 
+    WHERE (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) 
+      AND (j.party_type = 'customer' OR j.party_type IS NULL OR h.party_type = 'customer') 
       AND h.is_deleted = 0 
-      AND h.txn_type IN ('Journal', 'journal_entry')
+      AND h.status NOT IN ('void', 'voided', 'draft')
+      AND h.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')
     GROUP BY h.id, h.txn_number, h.txn_date, h.status
+    UNION ALL
+    SELECT 'Customer Refund' as doc_type, th.id, th.id as header_id, th.txn_number as doc_number, th.txn_date as doc_date,
+        p.amount as total_amount,
+        0 as balance_due,
+        th.status as payment_status
+    FROM payments p
+    JOIN transaction_headers th ON p.header_id = th.id
+    WHERE p.customer_id = ?
+      AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+      AND th.id IN (
+          SELECT tl.parent_id FROM transaction_links tl
+          JOIN transaction_headers ch ON tl.child_id = ch.id
+          WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+      )
+    UNION ALL
+    SELECT 'Credit Memo' as doc_type, th.id, th.id as header_id, th.txn_number as doc_number, th.txn_date as doc_date,
+        -COALESCE(cm.total_amount, th.net_amount) as total_amount,
+        0 as balance_due,
+        th.status as payment_status
+    FROM transaction_headers th
+    LEFT JOIN credit_memos cm ON cm.header_id = th.id
+    WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+      AND th.txn_type IN ('credit_memo', 'Credit Memo')
+      AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ORDER BY doc_date DESC LIMIT 50
-", [$id, $id, $id, $id, $id]);
-// Fetch related records (Payments)
+", [$id, $id, $id, $id, $id, $id, $id, $id, $id, $id, $id, $id]);
+
+// Fetch related records (Payments - Customer Receipts only)
 $payments = $db->fetchAll("
     SELECT th.id as header_id, th.txn_number, th.txn_date, th.created_at,
            SUM(DISTINCT p.amount) as total_amount,
@@ -63,15 +89,40 @@ $payments = $db->fetchAll("
     LEFT JOIN transaction_links tl ON tl.parent_id = th.id
     LEFT JOIN transaction_headers th_child ON tl.child_id = th_child.id
     LEFT JOIN customer_invoices ci ON tl.child_id = ci.header_id
-    WHERE p.customer_id = ? AND th.is_deleted = 0
+    WHERE p.customer_id = ?
+      AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+      AND th.id NOT IN (
+          SELECT tl.parent_id FROM transaction_links tl
+          JOIN transaction_headers ch ON tl.child_id = ch.id
+          WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+      )
     GROUP BY th.id
     ORDER BY th.txn_date DESC, th.created_at DESC LIMIT 50
 ", [$id]);
+
+// Fetch Credit Memos sum
+$credit_memos_sum = $db->fetchOne("
+    SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0) as total
+    FROM transaction_headers th
+    LEFT JOIN credit_memos cm ON cm.header_id = th.id
+    WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+      AND th.txn_type IN ('credit_memo', 'Credit Memo')
+      AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+", [$id, $id])['total'] ?? 0;
+
+// Summary Computations
+// Total Sales = Invoices + Journal Debits + Customer Refunds - Credit Memos
+// Total Paid  = Payments Received (Money IN)
+// Remaining   = Total Sales - Total Paid
+$total_invoices_sum = array_sum(array_column($invoices, 'total_amount')); // already includes negative CM rows & positive refunds
+$total_payments_sum = array_sum(array_column($payments, 'total_amount'));
+$total_remaining_balance = $total_invoices_sum - $total_payments_sum;
+
 // Fetch Audit Logs
 $audit_logs = $db->fetchAll("
-    SELECT al.*, u.full_name as updated_by_name
+    SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
     FROM audit_logs al
-    LEFT JOIN users u ON al.user_id = u.id
+    LEFT JOIN users u ON (al.user_id = CAST(u.id AS CHAR) OR al.user_id = u.username)
     WHERE al.record_id = :id AND al.table_name = 'customers'
     ORDER BY al.created_at DESC
 ", ['id' => $id]);
@@ -117,17 +168,10 @@ if (!function_exists('getDiff')) {
         align-items: center;
         gap: 10px;
     }
-    .view-subtitle {
-        margin-top: 5px;
-        color: #666;
-        font-size: 14px;
-    }
     .view-actions {
         display: flex;
         gap: 10px;
     }
-    
-    /* Tabs System */
     .ns-tabs {
         display: flex;
         border-bottom: 2px solid #e2e8f0;
@@ -159,7 +203,6 @@ if (!function_exists('getDiff')) {
     .ns-tab-content.active {
         display: block;
     }
-    
     .detail-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -180,6 +223,26 @@ if (!function_exists('getDiff')) {
         color: #1e293b;
         font-weight: 500;
     }
+    .summary-kpi-card {
+        flex: 1;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .summary-kpi-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+    .summary-kpi-val {
+        font-size: 20px;
+        font-weight: 800;
+    }
 </style>
 
 <div class="view-header">
@@ -191,6 +254,27 @@ if (!function_exists('getDiff')) {
     <div class="view-actions">
         <a href="?page=master/customer/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
         <a href="?page=master/customer" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
+    </div>
+</div>
+
+<!-- Summary Cards matching Customer List -->
+<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Net Sales (Invoices & Journals - Returns)</div>
+        <div class="summary-kpi-val" style="color: #16a34a;">Rs <?php echo number_format($total_invoices_sum, 2); ?></div>
+    </div>
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Total Paid</div>
+        <div class="summary-kpi-val" style="color: #2563eb;">Rs <?php echo number_format($total_payments_sum, 2); ?></div>
+    </div>
+    <div class="summary-kpi-card">
+        <div class="summary-kpi-title">Remaining Amount</div>
+        <div class="summary-kpi-val" style="color: <?php echo $total_remaining_balance > 0 ? '#dc2626' : ($total_remaining_balance < 0 ? '#2563eb' : '#334155'); ?>;">
+            Rs <?php echo number_format($total_remaining_balance, 2); ?>
+            <?php if ($total_remaining_balance < 0): ?>
+                <span style="font-size: 10px; font-weight: normal; color: #2563eb; display: block;">(Advance Credit)</span>
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -268,20 +352,45 @@ if (!function_exists('getDiff')) {
             </tr>
         </thead>
         <tbody>
-            <?php foreach($invoices as $inv): 
-                $isJournal = ($inv['doc_type'] === 'Journal');
-                $typeBadge = $isJournal ? '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-weight:700;">JOURNAL</span>' : '<span style="font-size:10px; background:#f0fdf4; color:#15803d; padding:2px 6px; border-radius:4px; font-weight:700;">INVOICE</span>';
+            <?php 
+            $tab_inv_total = 0;
+            foreach($invoices as $inv): 
+                $tab_inv_total += floatval($inv['total_amount']);
+                $docType = $inv['doc_type'];
+                $isCM = ($docType === 'Credit Memo');
+                $isJournal = ($docType === 'Journal');
+                if ($isCM) {
+                    $typeBadge = '<span style="font-size:10px; background:#fff3e0; color:#e65100; padding:2px 6px; border-radius:4px; font-weight:700;">CREDIT MEMO</span>';
+                } elseif ($isJournal) {
+                    $typeBadge = '<span style="font-size:10px; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-weight:700;">JOURNAL</span>';
+                } else {
+                    $typeBadge = '<span style="font-size:10px; background:#f0fdf4; color:#15803d; padding:2px 6px; border-radius:4px; font-weight:700;">INVOICE</span>';
+                }
+                $amtColor = $isCM ? '#dc2626' : 'inherit';
+                $amtPrefix = $isCM ? '-' : '';
+                $displayAmt = $isCM ? abs($inv['total_amount']) : $inv['total_amount'];
             ?>
-            <tr>
+            <tr style="<?php echo $isCM ? 'background:#fff8f6;' : ''; ?>">
                 <td><?php echo $typeBadge; ?></td>
                 <td><?php echo date('M d, Y', strtotime($inv['doc_date'])); ?></td>
                 <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($inv['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($inv['doc_number']); ?></a></td>
-                <td style="text-align: right;">Rs <?php echo number_format($inv['total_amount'], 2); ?></td>
+                <td style="text-align: right; color: <?php echo $amtColor; ?>; font-weight: <?php echo $isCM ? '700' : 'normal'; ?>;"><?php echo $amtPrefix; ?>Rs <?php echo number_format($displayAmt, 2); ?></td>
+                <?php if (!$isCM): ?>
                 <td style="text-align: right; color: <?php echo $inv['balance_due'] > 0.01 ? '#c00' : '#28a745'; ?>;">Rs <?php echo number_format($inv['balance_due'], 2); ?></td>
-                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo in_array(strtolower($inv['payment_status']), ['paid', 'posted']) ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($inv['payment_status']); ?></span></td>
+                <td><span style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: <?php echo in_array(strtolower($inv['payment_status']), ['paid', 'posted', 'closed']) ? '#080' : '#c00'; ?>;"><?php echo htmlspecialchars($inv['payment_status']); ?></span></td>
+                <?php else: ?>
+                <td colspan="2" style="text-align:center; color:#999; font-size:11px;">Return / Credit Applied</td>
+                <?php endif; ?>
             </tr>
             <?php endforeach; ?>
         </tbody>
+        <tfoot>
+            <tr style="background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                <td colspan="3" style="text-align: right; padding: 10px 12px; font-size: 13px;">NET TOTAL (after returns):</td>
+                <td style="text-align: right; color: <?php echo $tab_inv_total >= 0 ? '#16a34a' : '#dc2626'; ?>; font-size: 13px;">Rs <?php echo number_format($tab_inv_total, 2); ?></td>
+                <td colspan="2"></td>
+            </tr>
+        </tfoot>
     </table>
 </div>
 
@@ -298,7 +407,11 @@ if (!function_exists('getDiff')) {
             </tr>
         </thead>
         <tbody>
-            <?php foreach($payments as $p): ?>
+            <?php 
+            $tab_pay_total = 0;
+            foreach($payments as $p): 
+                $tab_pay_total += floatval($p['total_amount']);
+            ?>
             <tr>
                 <td><?php echo date('M d, Y', strtotime($p['txn_date'])); ?></td>
                 <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($p['header_id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($p['txn_number']); ?></a></td>
@@ -308,6 +421,12 @@ if (!function_exists('getDiff')) {
             </tr>
             <?php endforeach; ?>
         </tbody>
+        <tfoot>
+            <tr style="background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                <td colspan="4" style="text-align: right; padding: 10px 12px; font-size: 13px;">SUM TOTAL:</td>
+                <td style="text-align: right; color: #2563eb; font-size: 13px;">Rs <?php echo number_format($tab_pay_total, 2); ?></td>
+            </tr>
+        </tfoot>
     </table>
 </div>
 

@@ -8,23 +8,29 @@ require_once 'api/reference_helper.php';
 
 $db = db();
 
-$fy        = rpt_get_current_fiscal_year_dates();
-$today     = date('Y-m-d');
-$date_to   = $_GET['date_to'] ?? $today;
+$today   = date('Y-m-d');
+$date_to = $_GET['date_to'] ?? $today;
 
-$cust_balances = $db->fetchAll("
-    SELECT c.id, c.full_name, c.credit_limit, COALESCE(SUM(ci.balance_due), 0.00) as balance
-    FROM customers c
-    JOIN customer_invoices ci ON c.id = ci.customer_id
-    JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE c.is_active = 1 AND c.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date <= ?
-    GROUP BY c.id, c.full_name, c.credit_limit
-    HAVING balance > 0.01
-    ORDER BY c.full_name ASC
-", [$date_to]);
+$customers = $db->fetchAll("SELECT id, customer_code, full_name, credit_limit FROM customers WHERE is_deleted = 0 ORDER BY full_name ASC");
 
-$total_ar_balance = array_sum(array_column($cust_balances, 'balance'));
+$cust_balances = [];
+$total_ar_balance = 0.0;
+
+foreach ($customers as $c) {
+    // Calculate customer outstanding balance as of $date_to
+    $ag = get_customer_aging_summary($db, $c['id'], $date_to);
+    $bal = (float)($ag['total_due'] ?? 0.0);
+    
+    if (abs($bal) > 0.005) {
+        $cust_balances[] = [
+            'id'           => $c['customer_code'] ?: $c['id'],
+            'full_name'    => $c['full_name'],
+            'credit_limit' => $c['credit_limit'],
+            'balance'      => $bal
+        ];
+        $total_ar_balance += $bal;
+    }
+}
 ?>
 
 <?php rpt_filter_bar('Customer AR Balance Summary', [
@@ -36,7 +42,7 @@ $total_ar_balance = array_sum(array_column($cust_balances, 'balance'));
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding:14px 18px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px;">
             <div style="font-size:13px; font-weight:700; color:#0369a1;">
-                <i class="fas fa-users"></i> Total Accounts Receivable Outstanding Balance
+                <i class="fas fa-users"></i> Total Accounts Receivable Outstanding Balance (As of <?= rpt_date($date_to) ?>)
             </div>
             <div style="font-size:20px; font-weight:800; color:#003087;">
                 <?= rpt_currency($total_ar_balance) ?>
@@ -78,3 +84,4 @@ $total_ar_balance = array_sum(array_column($cust_balances, 'balance'));
 
     </div>
 </div>
+

@@ -69,15 +69,15 @@ try {
     if (!$id) {
         $id = generate_uuid();
         $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, party_type, party_id, created_by, location_id) 
-                      VALUES (?, ?, 'account_transfer', ?, ?, ?, ?, ?, ?, ?, ?, 'location', ?, ?, ?)", [
+                      VALUES (?, ?, 'account_transfer', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)", [
             $id, $txn_number, $txn_date,
             $fiscal['year'], $fiscal['month'], $fiscal['period'],
-            $status, $txn_number, $memo, $amount, $to_location_id, $_SESSION['user_id'], $from_location_id
+            $status, $txn_number, $memo, $amount, $_SESSION['user_id'], $from_location_id
         ]);
         incrementTransactionNumber('account_transfer', $from_location_id);
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_type = 'location', party_id = ?, location_id = ? WHERE id = ?", [
-            $txn_date, $memo, $amount, $to_location_id, $from_location_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_type = NULL, party_id = NULL, location_id = ? WHERE id = ?", [
+            $txn_date, $memo, $amount, $from_location_id, $id
         ]);
         
         $db->execute("DELETE FROM account_transfers WHERE header_id = ?", [$id]);
@@ -92,13 +92,13 @@ try {
 
     // Insert Journal Entries (Double-Entry Impact)
     // Dr Destination Bank Account (Increase Asset)
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?, ?, 'location')", [
-        generate_uuid(), $id, $to_account_id, $amount, 'Transfer IN - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $to_location_id
+    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?, NULL, NULL)", [
+        generate_uuid(), $id, $to_account_id, $amount, 'Transfer IN - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
     ]);
 
     // Cr Source Bank Account (Decrease Asset)
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?, ?, 'location')", [
-        generate_uuid(), $id, $from_account_id, $amount, 'Transfer OUT - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $from_location_id
+    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?, NULL, NULL)", [
+        generate_uuid(), $id, $from_account_id, $amount, 'Transfer OUT - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
     ]);
 
     $pdo->commit();
