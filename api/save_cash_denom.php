@@ -26,7 +26,9 @@ try {
 
     $id = $data['id'] ?? null;
     $txn_date = $data['txn_date'] ?? date('Y-m-d');
-    $party_id = $data['party_id'] ?? 'Main';
+    $shift = $data['party_id'] ?? $data['reference_number'] ?? 'Main';
+    $party_id = (isset($data['party_id']) && is_numeric($data['party_id'])) ? (int)$data['party_id'] : null;
+    $ref_no = $shift;
     $fiscal = calculate_fiscal_info($txn_date);
 
     $note_1000 = (int)($data['note_1000'] ?? 0);
@@ -58,23 +60,23 @@ try {
         $id = generate_uuid();
         $txn_number = 'CD-' . date('Ymd', strtotime($txn_date)) . '-' . rand(1000, 9999);
         
-        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, net_amount, location_id) 
-                      VALUES (?, ?, 'cash_denomination', ?, ?, ?, ?, 'posted', ?, ?, ?, ?)", [
+        $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, created_by, party_id, reference_number, net_amount, location_id) 
+                      VALUES (?, ?, 'cash_denomination', ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?)", [
             $id, $txn_number, $txn_date, 
             $fiscal['year'], $fiscal['month'], $fiscal['period'], 
-            $_SESSION['user_id'], $party_id, $net_amount, $location_id
+            $_SESSION['user_id'], $party_id, $ref_no, $net_amount, $location_id
         ]);
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, party_id = ?, net_amount = ?, location_id = ?, txn_type = 'cash_denomination' WHERE id = ?", [
-            $txn_date, $party_id, $net_amount, $location_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, party_id = ?, reference_number = ?, net_amount = ?, location_id = ?, txn_type = 'cash_denomination' WHERE id = ?", [
+            $txn_date, $party_id, $ref_no, $net_amount, $location_id, $id
         ]);
         $db->execute("DELETE FROM cash_denominations WHERE header_id = ?", [$id]);
     }
 
-    $denom_type = ($party_id === 'Shift_A') ? 'opening' : 'closing';
+    $denom_type = ($shift === 'Shift_A') ? 'opening' : 'closing';
 
     // Compute system cash balance from the default cash account's journal balance
-    $cash_account = get_accounting_preference('default_cash_account') ?: 'acc-1010';
+    $cash_account = AccountingEngine::getInstance()->resolveAccount('default_cash_account');
     $cash_bal_row = $db->fetchOne("
         SELECT COALESCE(SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END), 0) AS bal
         FROM journal_entries je

@@ -24,8 +24,8 @@ if ($customer_id) {
     $jour_before = $db->fetchOne("SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total 
                                  FROM journal_entries j
                                  JOIN transaction_headers th ON j.header_id = th.id 
-                                 WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL) 
-                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+                                 WHERE j.party_id = ? AND j.party_type = 'customer'
+                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}", [$customer_id, $from_date])['total'] ?? 0;
 
     $pay_before = $db->fetchOne("
         SELECT COALESCE(SUM(p.amount), 0) as total 
@@ -53,12 +53,12 @@ if ($customer_id) {
 
     $cm_before = $db->fetchOne("SELECT SUM(COALESCE(cm.total_amount, th.net_amount)) as total 
                                 FROM transaction_headers th
-                                LEFT JOIN credit_memos cm ON cm.header_id = th.id 
-                                WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                JOIN credit_memos cm ON cm.header_id = th.id 
+                                WHERE cm.customer_id = ?
                                   AND th.txn_type IN ('credit_memo', 'Credit Memo')
                                   AND th.txn_date < ? 
                                   AND th.status NOT IN ('void', 'voided', 'draft') 
-                                  AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $customer_id, $from_date])['total'] ?? 0;
+                                  AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date])['total'] ?? 0;
 
     $opening_balance = ($inv_before + $jour_before + $refund_before) - $pay_before - $cm_before;
 
@@ -75,9 +75,9 @@ if ($customer_id) {
                                       th.memo
                                FROM journal_entries j
                                JOIN transaction_headers th ON j.header_id = th.id
-                               WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL)
+                               WHERE j.party_id = ? AND j.party_type = 'customer'
                                  AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}
-                               GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $customer_id, $from_date, $to_date]);
+                               GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $from_date, $to_date]);
 
     // 3. Get Payments in range (Money IN from customer)
     $payments = $db->fetchAll("
@@ -124,12 +124,12 @@ if ($customer_id) {
                                               WHERE tl.parent_id = th.id AND tl.link_type LIKE 'credit_memo_apply:%'
                                           ) as applied_to_ref
                                    FROM transaction_headers th
-                                   LEFT JOIN credit_memos cm ON cm.header_id = th.id
-                                   WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+                                   JOIN credit_memos cm ON cm.header_id = th.id
+                                   WHERE cm.customer_id = ?
                                      AND th.txn_type IN ('credit_memo', 'Credit Memo')
                                      AND th.txn_date BETWEEN ? AND ? 
                                      AND th.status NOT IN ('void', 'voided', 'draft') 
-                                     AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $customer_id, $from_date, $to_date]);
+                                     AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date, $to_date]);
 
     $statement_data = array_merge($invoices, $journals, $payments, $refund_payments, $credit_memos);
     usort($statement_data, function($a, $b) {

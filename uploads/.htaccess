@@ -1,0 +1,6 @@
+# Security: Block direct execution of PHP scripts in uploads directory
+<FilesMatch "\.(php|php5|php7|phps|phtml|exe|sh)$">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch>
+Options -Indexes

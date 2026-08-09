@@ -44,7 +44,8 @@ $items = $db->fetchAll("
 ", [$pos_location_id]);
 
 // Fetch bank/cash accounts for payment
-$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE account_subtype IN ('Bank') AND is_active = 1 ORDER BY account_name ASC");
+$payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE (account_type_id = 1 OR account_subtype IN ('Bank', 'Cash')) AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+$default_cash_account_id = get_accounting_preference('default_cash_account') ?: (AccountingEngine::getInstance()->resolveAccount('default_cash_account') ?: '');
 
 // Get unique categories (names, not IDs)
 $categories = [];
@@ -290,6 +291,7 @@ $txn_date = date('Y-m-d');
 <script>
 const items = <?php echo json_encode($items); ?>;
 const accounts = <?php echo json_encode($payment_accounts); ?>;
+const defaultCashAccountId = <?php echo json_encode((string)$default_cash_account_id); ?>;
 let cart = [];
 let payments = [];
 let activeCat = 'all';
@@ -590,11 +592,8 @@ function removePayLine(idx) {
 
 function hasNonCashPayment() {
     return payments.some(p => {
-        const acc = accounts.find(a => a.id === p.account_id);
-        if (!acc) return false;
-        const sub = (acc.account_subtype || '').toLowerCase();
-        const name = (acc.account_name || '').toLowerCase();
-        return sub !== 'cash' || (!name.includes('cash') && (name.includes('bank') || name.includes('qr') || name.includes('esewa') || name.includes('fonepay') || name.includes('online')));
+        if (!p.account_id) return false;
+        return String(p.account_id) !== String(defaultCashAccountId);
     });
 }
 
@@ -618,18 +617,26 @@ function calculateChange() {
 
 function showPosQrModal() {
     const net = parseFloat(document.getElementById('txt-total').innerText.replace('Rs ', '')) || 0;
-    let qrAmount = 0;
+    let nonCashAmount = 0;
+    let cashAmount = 0;
     payments.forEach(p => {
-        const acc = accounts.find(a => a.id === p.account_id);
-        if (acc) {
-            const sub = (acc.account_subtype || '').toLowerCase();
-            const name = (acc.account_name || '').toLowerCase();
-            if (sub !== 'cash' || (!name.includes('cash') && (name.includes('bank') || name.includes('qr') || name.includes('esewa') || name.includes('fonepay')))) {
-                qrAmount += p.amount;
+        if (p.account_id) {
+            if (String(p.account_id) !== String(defaultCashAccountId)) {
+                nonCashAmount += (parseFloat(p.amount) || 0);
+            } else {
+                cashAmount += (parseFloat(p.amount) || 0);
             }
         }
     });
-    if (qrAmount <= 0) qrAmount = net;
+
+    let qrAmount = 0;
+    if (nonCashAmount > 0) {
+        qrAmount = nonCashAmount;
+    } else if (cashAmount > 0 && net > cashAmount) {
+        qrAmount = net - cashAmount;
+    } else {
+        qrAmount = net;
+    }
 
     const modal = document.getElementById('pos-qr-modal');
     document.getElementById('pos-qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=210x210&margin=0&data=Loading...';

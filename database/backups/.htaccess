@@ -1,0 +1,3 @@
+# Security: Protect database backup files from direct web access
+Order Deny,Allow
+Deny from all

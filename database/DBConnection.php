@@ -3,6 +3,9 @@
  * Database Connection and Helper Functions
  */
 
+require_once __DIR__ . '/../api/AccountingEngine.php';
+require_once __DIR__ . '/../api/TransactionService.php';
+
 class DBConnection
 {
     private $host = 'localhost';
@@ -16,6 +19,20 @@ class DBConnection
 
     private function __construct()
     {
+        $envFile = __DIR__ . '/../.env';
+        if (file_exists($envFile)) {
+            $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                if (strpos(trim($line), '#') === 0 || strpos($line, '=') === false) continue;
+                list($name, $value) = explode('=', $line, 2);
+                $_ENV[trim($name)] = trim(trim($value), '"\'');
+            }
+        }
+        $this->host = $_ENV['DB_HOST'] ?? (getenv('DB_HOST') ?: 'localhost');
+        $this->username = $_ENV['DB_USER'] ?? (getenv('DB_USER') ?: 'root');
+        $this->password = $_ENV['DB_PASS'] ?? (getenv('DB_PASS') ?: '');
+        $this->database = $_ENV['DB_NAME'] ?? (getenv('DB_NAME') ?: 'sms_db');
+
         try {
             $this->conn = new PDO(
                 "mysql:host={$this->host};dbname={$this->database};charset=utf8mb4",
@@ -75,6 +92,8 @@ class DBConnection
         $this->initItemMrpColumn();
         $this->initLocationPricingColumns();
         $this->initExpensesTableFix();
+        $this->initPerformanceIndexes();
+        $this->initInventoryMovementsTable();
 
         // Mark session so subsequent requests skip the boot entirely
         if (session_status() === PHP_SESSION_ACTIVE) {
@@ -379,6 +398,60 @@ class DBConnection
             $this->conn->exec("ALTER TABLE `expenses` MODIFY COLUMN `tax_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00");
         } catch (Exception $e) {
             error_log("initExpensesTableFix error: " . $e->getMessage());
+        }
+    }
+
+    public function initPerformanceIndexes()
+    {
+        try {
+            $indexes = [
+                "CREATE INDEX `idx_th_lookup` ON `transaction_headers` (`txn_type`, `txn_date`, `location_id`, `is_deleted`, `status`)",
+                "CREATE INDEX `idx_je_hdr_acc` ON `journal_entries` (`header_id`, `account_id`, `party_id`)",
+                "CREATE INDEX `idx_tl_hdr_item` ON `transaction_lines` (`header_id`, `item_id`)",
+                "CREATE INDEX `idx_p_hdr_cust_vend` ON `payments` (`header_id`, `customer_id`, `vendor_id`, `payment_date`)"
+            ];
+            foreach ($indexes as $sql) {
+                try {
+                    $this->conn->exec($sql);
+                } catch (Exception $ex) {
+                    // Index may already exist; safely ignore duplicate index errors
+                }
+            }
+        } catch (Exception $e) {
+            error_log("initPerformanceIndexes error: " . $e->getMessage());
+        }
+    }
+
+    public function initInventoryMovementsTable()
+    {
+        try {
+            $sqlCreateTable = "CREATE TABLE IF NOT EXISTS `inventory_movements` (
+              `id` INT AUTO_INCREMENT PRIMARY KEY,
+              `header_id` VARCHAR(50) NULL,
+              `line_id` VARCHAR(50) NULL,
+              `txn_number` VARCHAR(50) NULL,
+              `txn_type` VARCHAR(50) NOT NULL,
+              `movement_type` ENUM('OPENING', 'PURCHASE_RECEIPT', 'PURCHASE_RETURN', 'SALES_ISSUE', 'SALES_RETURN', 'POS_ISSUE', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT', 'TRANSFER_OUT', 'TRANSFER_IN', 'REVERSAL') NOT NULL,
+              `item_id` INT NOT NULL,
+              `location_id` VARCHAR(50) NOT NULL,
+              `qty_in` DECIMAL(14,4) NOT NULL DEFAULT 0.0000,
+              `qty_out` DECIMAL(14,4) NOT NULL DEFAULT 0.0000,
+              `net_qty` DECIMAL(14,4) NOT NULL DEFAULT 0.0000,
+              `unit_cost` DECIMAL(14,4) NOT NULL DEFAULT 0.0000,
+              `total_cost` DECIMAL(14,4) NOT NULL DEFAULT 0.0000,
+              `movement_date` DATE NOT NULL,
+              `reversal_of_id` INT NULL,
+              `reason` VARCHAR(255) NULL,
+              `created_by` VARCHAR(50) NULL,
+              `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              KEY `idx_im_hdr_line` (`header_id`, `line_id`),
+              KEY `idx_im_item_loc_date` (`item_id`, `location_id`, `movement_date`),
+              KEY `idx_im_type_date` (`movement_type`, `movement_date`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+
+            $this->conn->exec($sqlCreateTable);
+        } catch (Exception $e) {
+            error_log("initInventoryMovementsTable error: " . $e->getMessage());
         }
     }
 

@@ -168,12 +168,13 @@ try {
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
     }
 
-    // Default GL accounts
-    $ar_account_id      = 'acc-1100'; // Accounts Receivable
-    $sales_ret_account  = 'acc-4100'; // Sales Return / Revenue Account
-    $tax_account_id     = 'acc-2200'; // Sales Tax / VAT Payable
-    $inv_account_id     = 'acc-1200'; // Inventory Asset
-    $cogs_account_id    = 'acc-5100'; // Cost of Goods Sold
+    // Dynamic GL accounts resolution
+    $engine = AccountingEngine::getInstance();
+    $ar_account_id      = $engine->resolveAccount('default_ar_account');
+    $sales_ret_account  = $engine->resolveAccount('default_sales_return_account');
+    $tax_account_id     = $engine->resolveAccount('default_tax_account');
+    $inv_account_id     = $engine->resolveAccount('default_inventory_asset_account');
+    $cogs_account_id    = $engine->resolveAccount('default_cogs_account');
 
     $total_cogs_valuation = 0;
 

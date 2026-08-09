@@ -7,6 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/InventoryEngine.php';
 
 // Get JSON input
 $json = $GLOBALS['mock_pos_payload'] ?? file_get_contents('php://input');
@@ -66,11 +67,8 @@ try {
             $old_invoice_no = $old_pos['invoice_no'];
             $old_date = date('Y-m-d', strtotime($old_pos['date_time']));
             
-            // Revert Stock
-            $old_items = $db->fetchAll("SELECT item_id, quantity FROM pos_items WHERE pos_id = ?", [$pos_id]);
-            foreach ($old_items as $oi) {
-                $db->execute("UPDATE items SET current_stock = current_stock + ? WHERE id = ?", [$oi['quantity'], $oi['item_id']]);
-            }
+            // Revert Stock via InventoryEngine
+            InventoryEngine::getInstance()->reverseMovementsForHeader($pos_id, 'POS Sale Edit Reversal');
             
             // Delete child items and payments of this entry
             $db->execute("DELETE FROM pos_items WHERE pos_id = ?", [$pos_id]);
@@ -115,31 +113,35 @@ try {
         $pos_id = $pdo->lastInsertId();
     }
 
-    // 4. Save items & deduct stock
+    // 4. Save items & deduct stock via InventoryEngine
     foreach ($items as $item) {
-        $item_id = $item['id'];
-        $qty     = (float)$item['qty'];
-        $rate    = (float)$item['price'];
+        $item_id = $item['id'] ?? $item['item_id'] ?? null;
+        $qty     = (float)($item['qty'] ?? $item['quantity'] ?? 0);
+        $rate    = (float)($item['price'] ?? $item['unit_price'] ?? $item['rate'] ?? 0);
+        
+        if (empty($item_id) || $qty <= 0) {
+            continue;
+        }
+
         $line_amount = round($qty * $rate, 2);
-        $line_disc = (float)($item['discount'] ?? 0);
+        $line_disc = (float)($item['discount'] ?? $item['discount_amount'] ?? 0);
         if ($line_disc == 0 && $discount_total > 0 && $gross_amount > 0) {
             $line_disc = round(($line_amount / $gross_amount) * $discount_total, 2);
         }
 
-        $line_tax  = (float)($item['tax']      ?? 0);
+        $line_tax  = (float)($item['tax'] ?? $item['tax_amount'] ?? 0);
         if ($line_tax == 0 && $tax_amount > 0 && $gross_amount > 0) {
             $line_tax = round(($line_amount / $gross_amount) * $tax_amount, 2);
         }
 
         $line_net  = round($line_amount - $line_disc + $line_tax, 2);
 
-        $ib = $db->fetchOne("SELECT quantity_on_hand FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
-        $item_info  = $db->fetchOne("SELECT item_name FROM items WHERE id = ?", [$item_id]);
-        $available = (float)($ib['quantity_on_hand'] ?? 0);
-
-        // Stock Validation against user's location
+        // Stock Validation against user's location via InventoryEngine
+        $available = InventoryEngine::getInstance()->getAvailableStock($item_id, $location_id);
         if ($available < $qty && !isset($data['force_save'])) {
-            throw new Exception("Stock Warning: Item '" . $item_info['item_name'] . "' has only " . number_format($available, 2) . " available at this location.");
+            $item_info  = $db->fetchOne("SELECT item_name FROM items WHERE id = ?", [$item_id]);
+            $itemName = $item_info['item_name'] ?? ('Item #' . $item_id);
+            throw new Exception("Stock Warning: Item '" . $itemName . "' has only " . number_format($available, 2) . " available at this location.");
         }
 
         // pos_items
@@ -149,28 +151,11 @@ try {
             [$pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
         );
 
-        // Directly deduct stock from inventory_balances for this specific location
-        $bal_row = $db->fetchOne("SELECT id, quantity_on_hand, available_qty FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
-        if ($bal_row) {
-            $new_qty = max(0, (float)$bal_row['quantity_on_hand'] - $qty);
-            $new_avail = max(0, (float)$bal_row['available_qty'] - $qty);
-            $db->execute(
-                "UPDATE inventory_balances SET quantity_on_hand = ?, available_qty = ?, last_updated = NOW() WHERE id = ?",
-                [$new_qty, $new_avail, $bal_row['id']]
-            );
-        } else {
-            // Create a balance row for this location (negative stock — records the deduction)
-            $db->execute(
-                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, last_updated) VALUES (?, ?, ?, ?, 0, 0, 0, NOW())",
-                [(int)$item_id, (int)$location_id, -$qty, -$qty]
-            );
-        }
-
-        // Also update items.current_stock (global)
-        $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
-
-        // Real-time Stock Sync per Location (recomputes all-location figures from transaction history)
-        sync_and_get_item_inventory_balances($db, $item_id);
+        // Issue stock via InventoryEngine
+        InventoryEngine::getInstance()->issueStock($item_id, $location_id, $qty, $pos_id, null, 'POS', $rate, date('Y-m-d', strtotime($txn_date_time)), [
+            'txn_number' => $txn_number,
+            'force_issue' => isset($data['force_save'])
+        ]);
     }
 
     // 5. Save Payments
@@ -202,7 +187,7 @@ try {
     // 6. Handle Change Due (if any)
     $change_due = $total_tendered - $net_amount;
     if ($change_due > 0.01) {
-        $change_account = get_accounting_preference('default_change_account') ?: 'acc-1010';
+        $change_account = AccountingEngine::getInstance()->resolveAccount('default_cash_account');
 
         // Insert negative cash change payment in pos_payments
         $db->execute(

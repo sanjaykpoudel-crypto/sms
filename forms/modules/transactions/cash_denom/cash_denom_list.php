@@ -2,9 +2,10 @@
 require_once 'database/DBConnection.php';
 $db = db();
 $list = $db->fetchAll("
-    SELECT th.*, l.name as location_name 
+    SELECT th.*, l.name as location_name, COALESCE(u.full_name, u.username) as creator_name 
     FROM transaction_headers th 
     LEFT JOIN locations l ON th.location_id = l.id 
+    LEFT JOIN users u ON th.created_by = u.id
     WHERE th.txn_type = 'cash_denomination' AND th.is_deleted = 0 
     ORDER BY th.created_at DESC
 ");
@@ -90,7 +91,17 @@ $list = $db->fetchAll("
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($list as $row): ?>
+                <?php foreach ($list as $row): 
+                    $shift_val = $row['reference_number'] ?: $row['party_id'];
+                    $shift_name = 'Main Counter';
+                    if ($shift_val === 'Shift_A') {
+                        $shift_name = 'Shift_A';
+                    } elseif ($shift_val === 'Shift_B') {
+                        $shift_name = 'Shift_B';
+                    } elseif (!empty($shift_val) && $shift_val !== '1' && $shift_val !== 1 && $shift_val !== 'Main') {
+                        $shift_name = $shift_val;
+                    }
+                ?>
                 <tr>
                     <td><?php echo date('Y-m-d', strtotime($row['txn_date'])); ?></td>
                     <td style="font-weight: 600; color: #0055aa;"><?php echo htmlspecialchars($row['txn_number']); ?></td>
@@ -99,9 +110,9 @@ $list = $db->fetchAll("
                             <?php echo htmlspecialchars($row['location_name'] ?? 'Main Store'); ?>
                         </span>
                     </td>
-                    <td><?php echo htmlspecialchars($row['party_id'] ?: 'Main Counter'); ?></td>
+                    <td><?php echo htmlspecialchars($shift_name); ?></td>
                     <td style="text-align: right; font-weight: bold;">Rs. <?php echo number_format($row['net_amount'], 2); ?></td>
-                    <td><?php echo htmlspecialchars($row['created_by']); ?></td>
+                    <td><?php echo htmlspecialchars($row['creator_name'] ?? ('User #' . $row['created_by'])); ?></td>
                     <td style="text-align: center;">
                         <div style="position: relative; display: inline-block;">
                             <button type="button" class="ns-action-btn ns-dropdown-toggle">

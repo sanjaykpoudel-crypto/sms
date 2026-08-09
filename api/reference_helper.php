@@ -1,5 +1,10 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) {
+    @ini_set('session.cookie_httponly', '1');
+    @ini_set('session.cookie_samesite', 'Lax');
+    if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+        @ini_set('session.cookie_secure', '1');
+    }
     session_start();
 }
 // Only block direct access to this helper file, not when it's included
@@ -14,6 +19,35 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'reference_helper.php') {
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
 }
+
+/**
+ * Security: CSRF Protection Engine
+ */
+function generate_csrf_token(): string {
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function verify_csrf_token(?string $token): bool {
+    if (empty($_SESSION['csrf_token']) || empty($token)) {
+        return false;
+    }
+    return hash_equals($_SESSION['csrf_token'], $token);
+}
+
+function enforce_csrf_protection(): void {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? null);
+        if ($token !== null && !verify_csrf_token($token)) {
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 'error', 'message' => 'Security Error: CSRF token validation failed.']);
+            exit;
+        }
+    }
+}
+
 /**
  * Helper functions for auto-generated transaction numbering and payment QR codes
  */
@@ -47,6 +81,127 @@ function generate_static_qr_src($raw_text_or_image, $company_name = '')
     // 3. Fallback static payload
     $merchant = !empty($company_name) ? $company_name : 'Merchant';
     return "https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=0&data=" . urlencode("PAYMENT | Merchant: " . $merchant);
+}
+
+/**
+ * =========================================================================
+ * SINGLE SOURCE OF TRUTH SUBLEDGER BALANCE FUNCTIONS
+ * Guarantees 100% identical data across Dashboard KPI tiles, Customer Overview,
+ * Supplier Overview, Master Lists, and Financial Reports.
+ * =========================================================================
+ */
+function get_customer_net_balance($db, $customer_id, ?string $as_of = null, ?string $location_id = null): float {
+    if (!$as_of) $as_of = date('Y-m-d');
+
+    $loc_sql = "";
+    if (!empty($location_id) && $location_id !== 'all') {
+        $loc_sql = " AND th.location_id = " . $db->getConnection()->quote($location_id) . " ";
+    }
+
+    $sales = (float)($db->fetchOne("
+        SELECT ((
+            SELECT COALESCE(SUM(ci.total_amount), 0) 
+            FROM customer_invoices ci 
+            JOIN transaction_headers th ON ci.header_id = th.id 
+            WHERE ci.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql}
+        ) + (
+            SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
+            FROM journal_entries j
+            JOIN transaction_headers th ON j.header_id = th.id
+            WHERE j.party_id = ? AND j.party_type = 'customer'
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') 
+              AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance') AND th.txn_date <= ? {$loc_sql}
+        ) + (
+            SELECT COALESCE(SUM(p.amount), 0)
+            FROM payments p
+            JOIN transaction_headers th ON p.header_id = th.id
+            WHERE p.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND p.payment_date <= ? {$loc_sql}
+              AND th.id IN (
+                  SELECT tl.parent_id FROM transaction_links tl
+                  JOIN transaction_headers ch ON tl.child_id = ch.id
+                  WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+              )
+        ) - (
+            SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0)
+            FROM transaction_headers th
+            JOIN credit_memos cm ON cm.header_id = th.id
+            WHERE cm.customer_id = ?
+              AND th.txn_type IN ('credit_memo', 'Credit Memo')
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql}
+        )) as total
+    ", [$customer_id, $as_of, $customer_id, $as_of, $customer_id, $as_of, $customer_id, $as_of])['total'] ?? 0);
+
+    $paid = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id 
+        WHERE p.customer_id = ?
+          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND p.payment_date <= ? {$loc_sql}
+          AND th.id NOT IN (
+              SELECT tl.parent_id FROM transaction_links tl
+              JOIN transaction_headers ch ON tl.child_id = ch.id
+              WHERE ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%'
+          )
+    ", [$customer_id, $as_of])['total'] ?? 0);
+
+    return round($sales - $paid, 2);
+}
+
+function get_vendor_net_balance($db, $vendor_id, ?string $as_of = null, ?string $location_id = null): float {
+    if (!$as_of) $as_of = date('Y-m-d');
+
+    $loc_sql = "";
+    if (!empty($location_id) && $location_id !== 'all') {
+        $loc_sql = " AND th.location_id = " . $db->getConnection()->quote($location_id) . " ";
+    }
+
+    $purchases = (float)($db->fetchOne("
+        SELECT ((
+            SELECT COALESCE(SUM(vb.total_amount), 0) 
+            FROM vendor_bills vb 
+            JOIN transaction_headers th ON vb.header_id = th.id 
+            WHERE vb.vendor_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql}
+        ) + (
+            SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0)
+            FROM journal_entries j
+            JOIN transaction_headers th ON j.header_id = th.id
+            WHERE j.party_id = ? AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') 
+              AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance') AND th.txn_date <= ? {$loc_sql}
+        )) as total
+    ", [$vendor_id, $as_of, $vendor_id, $as_of])['total'] ?? 0);
+
+    $paid = (float)($db->fetchOne("
+        SELECT COALESCE(SUM(p.amount), 0) as total
+        FROM payments p
+        JOIN transaction_headers th ON p.header_id = th.id 
+        WHERE p.vendor_id = ?
+          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND p.payment_date <= ? {$loc_sql}
+    ", [$vendor_id, $as_of])['total'] ?? 0);
+
+    return round($purchases - $paid, 2);
+}
+
+function get_total_receivables_balance($db, ?string $as_of = null, ?string $location_id = null): float {
+    if (!$as_of) $as_of = date('Y-m-d');
+    $customers = $db->fetchAll("SELECT id FROM customers WHERE is_deleted = 0 AND is_active = 1");
+    $total = 0.0;
+    foreach ($customers as $c) {
+        $bal = get_customer_net_balance($db, $c['id'], $as_of, $location_id);
+        if ($bal > 0) $total += $bal;
+    }
+    return round($total, 2);
+}
+
+function get_total_payables_balance($db, ?string $as_of = null, ?string $location_id = null): float {
+    if (!$as_of) $as_of = date('Y-m-d');
+    $vendors = $db->fetchAll("SELECT id FROM vendors WHERE is_deleted = 0 AND is_active = 1");
+    $total = 0.0;
+    foreach ($vendors as $v) {
+        $bal = get_vendor_net_balance($db, $v['id'], $as_of, $location_id);
+        if ($bal > 0) $total += $bal;
+    }
+    return round($total, 2);
 }
 
 function generate_payment_qr_src($raw_text_or_image, $amount, $txn_no = '', $company_name = '')
@@ -720,6 +875,7 @@ function sync_daily_pos_summary($date)
 {
     $db = db();
     $pdo = $db->getConnection();
+    $engine = AccountingEngine::getInstance();
 
     $today_str = date('Ymd', strtotime($date));
     $summary_invoice_no = "INV-POS-" . $today_str;
@@ -907,9 +1063,9 @@ function sync_daily_pos_summary($date)
     ")->execute([$payment_header_id, $invoice_header_id, 'payment:' . $summary_total]);
 
     // 3. Invoice GL
-    $ar_account = 6;  // Accounts Receivable
-    $tax_account = 13; // VAT Payable (13%)
-    $disc_account = 36; // Discounts Given
+    $ar_account = $engine->resolveAccount('default_ar_account');
+    $tax_account = $engine->resolveAccount('default_tax_account');
+    $disc_account = $engine->resolveAccount('default_discount_account');
 
     $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
         ->execute([$invoice_header_id, $ar_account, $summary_total, 'Daily POS Sales Invoice ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
@@ -920,7 +1076,7 @@ function sync_daily_pos_summary($date)
     }
 
     foreach ($sales_distributions as $inc_acct => $amt) {
-        $inc_acct_id = is_numeric($inc_acct) ? (int)$inc_acct : 25; // 25 = Sales Income
+        $inc_acct_id = is_numeric($inc_acct) ? (int)$inc_acct : $engine->resolveAccount('default_sales_account');
         $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
             ->execute([$invoice_header_id, $inc_acct_id, $amt, 'Daily POS Invoice Sales ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
@@ -931,12 +1087,12 @@ function sync_daily_pos_summary($date)
     }
 
     foreach ($cogs_distributions as $cogs_acct => $amt) {
-        $cogs_acct_id = is_numeric($cogs_acct) ? (int)$cogs_acct : 26; // 26 = COGS
+        $cogs_acct_id = is_numeric($cogs_acct) ? (int)$cogs_acct : $engine->resolveAccount('default_cogs_account');
         $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
             ->execute([$invoice_header_id, $cogs_acct_id, $amt, 'Daily POS Invoice COGS ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }
     foreach ($inv_distributions as $inv_acct => $amt) {
-        $inv_acct_id = is_numeric($inv_acct) ? (int)$inv_acct : 7; // 7 = Inventory Asset
+        $inv_acct_id = is_numeric($inv_acct) ? (int)$inv_acct : $engine->resolveAccount('default_inventory_asset_account');
         $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
             ->execute([$invoice_header_id, $inv_acct_id, $amt, 'Daily POS Invoice Inventory Out ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
     }

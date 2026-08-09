@@ -132,7 +132,7 @@ $grand_remaining = 0;
                 <?php $sn = 1; foreach ($vendors as $row): 
                     $purchase = floatval($row['total_purchase']);
                     $paid = floatval($row['total_paid']);
-                    $remaining = $purchase - $paid;
+                    $remaining = get_vendor_net_balance($db, $row['id']);
 
                     $grand_purchase += $purchase;
                     $grand_paid += $paid;

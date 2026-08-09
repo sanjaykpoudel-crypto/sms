@@ -20,7 +20,7 @@ if ($id) {
     if ($source_header && $source_details) {
         $is_copy = true;
         // Auto-advance shift: Shift_A → Shift_B, Shift_B → Shift_A, Main → Main
-        $source_shift = $source_header['party_id'] ?? 'Main';
+        $source_shift = $source_header['reference_number'] ?? $source_header['party_id'] ?? 'Main';
         if ($source_shift === 'Shift_A') {
             $next_shift = 'Shift_B';
         } elseif ($source_shift === 'Shift_B') {
@@ -92,10 +92,11 @@ if ($id) {
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Counter/Shift</label>
+                    <?php $current_shift = $data['reference_number'] ?? $data['party_id'] ?? 'Main'; ?>
                     <select name="party_id" class="ns-select">
-                        <option value="Main" <?php echo (($data['party_id'] ?? '') == 'Main') ? 'selected' : ''; ?>>Main Counter</option>
-                        <option value="Shift_A" <?php echo (($data['party_id'] ?? '') == 'Shift_A') ? 'selected' : ''; ?>>Morning Shift</option>
-                        <option value="Shift_B" <?php echo (($data['party_id'] ?? '') == 'Shift_B') ? 'selected' : ''; ?>>Evening Shift</option>
+                        <option value="Main" <?php echo ($current_shift === 'Main') ? 'selected' : ''; ?>>Main Counter</option>
+                        <option value="Shift_A" <?php echo ($current_shift === 'Shift_A') ? 'selected' : ''; ?>>Morning Shift</option>
+                        <option value="Shift_B" <?php echo ($current_shift === 'Shift_B') ? 'selected' : ''; ?>>Evening Shift</option>
                     </select>
                 </div>
             </div>

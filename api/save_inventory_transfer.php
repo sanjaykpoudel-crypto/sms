@@ -7,6 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/InventoryEngine.php';
 
 header('Content-Type: application/json');
 
@@ -149,45 +150,16 @@ try {
             generate_uuid(), $id, $idx + 1, $item_id, $inv_account_id, $line['quantity'], $line['unit_cost'], $line['unit_cost'], $line['line_total']
         ]);
 
+        // Perform stock transfer between locations via InventoryEngine
+        InventoryEngine::getInstance()->transferStock($item_id, $from_location_id, $to_location_id, $line['quantity'], $id, null, $txn_date, [
+            'txn_number' => $txn_number
+        ]);
+
         // Update MRP on item master if provided
         if ($line['mrp'] !== null && $line['mrp'] > 0) {
             $db->execute("UPDATE items SET mrp = ? WHERE id = ?", [$line['mrp'], $item_id]);
+            $db->execute("UPDATE inventory_balances SET mrp = ? WHERE item_id = ? AND location_id IN (?, ?)", [$line['mrp'], $item_id, $from_location_id, $to_location_id]);
         }
-
-        // Update cost_price and MRP in inventory_balances for both from and to locations
-        $unit_cost = $line['unit_cost'];
-        foreach ([$from_location_id, $to_location_id] as $loc_id) {
-            $bal = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $loc_id]);
-            if ($bal) {
-                $mrp_update = ($line['mrp'] !== null && $line['mrp'] > 0) ? $line['mrp'] : null;
-                if ($mrp_update !== null) {
-                    $db->execute(
-                        "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, mrp = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
-                        [$unit_cost, $unit_cost, $mrp_update, $item_id, $loc_id]
-                    );
-                } else {
-                    $db->execute(
-                        "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
-                        [$unit_cost, $unit_cost, $item_id, $loc_id]
-                    );
-                }
-            } else if ($unit_cost > 0) {
-                // Create a balance record for this location if it doesn't exist
-                $mrp_val = ($line['mrp'] !== null && $line['mrp'] > 0) ? $line['mrp'] : null;
-                $db->execute(
-                    "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, mrp, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?, NOW())",
-                    [generate_uuid(), $item_id, $loc_id, $unit_cost, $unit_cost, $mrp_val]
-                );
-            }
-        }
-
-        // Also update the global items.cost_price to reflect transfer cost
-        if ($unit_cost > 0) {
-            $db->execute("UPDATE items SET cost_price = ? WHERE id = ?", [$unit_cost, $item_id]);
-        }
-
-        // Sync real-time inventory balances (stock quantities) for all locations
-        sync_and_get_item_inventory_balances($db, $item_id);
     }
 
     $pdo->commit();

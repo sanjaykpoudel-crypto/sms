@@ -622,10 +622,12 @@ if ($is_logged_in) {
                     <span
                         style="font-size:15px; font-weight:700; letter-spacing:0.3px;"><?php echo htmlspecialchars($sys_name); ?></span>
                 </div>
-                <div
-                    style="font-size: 11px; color: rgba(255,255,255,0.5); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 20px; cursor: pointer;">
-                    <i class="fas fa-search" style="margin-right: 5px;"></i> Global Search...
+                <div onclick="openGlobalSearchModal()" style="font-size: 11px; color: rgba(255,255,255,0.8); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 15px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                    <i class="fas fa-search"></i> Global Search...
                 </div>
+                <button onclick="openAIAssistantModal()" style="background: linear-gradient(135deg, #8e44ad, #3498db); border: none; color: white; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); transition: all 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    <i class="fas fa-magic"></i> AI Assistant
+                </button>
             </div>
             <div style="display: flex; align-items: center; gap: 20px;">
                 <div style="text-align: right; margin-right: 15px;">
@@ -720,6 +722,9 @@ if ($is_logged_in) {
                             <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
                             <a href="?page=transactions/payment/manage" class="ns-sub-dropdown-item"><i class="fas fa-hand-holding-usd"></i> Receive Customer Payment</a>
                             <?php endif; ?>
+                            <?php if (can_access_feature('payment')): ?>
+                            <a href="?page=transactions/payment/customer_payments" class="ns-sub-dropdown-item"><i class="fas fa-receipt"></i> Customer Payment Register</a>
+                            <?php endif; ?>
                             <?php if (can_access_feature('credit_memo') && can_edit_feature('credit_memo')): ?>
                             <a href="?page=transactions/credit_memo/manage" class="ns-sub-dropdown-item"><i class="fas fa-undo-alt"></i> New Credit Memo</a>
                             <?php endif; ?>
@@ -744,6 +749,9 @@ if ($is_logged_in) {
                             <?php endif; ?>
                             <?php if (can_access_feature('payment') && can_edit_feature('payment')): ?>
                             <a href="?page=transactions/payment/manage" class="ns-sub-dropdown-item"><i class="fas fa-money-bill-wave"></i> Pay Vendor Bill</a>
+                            <?php endif; ?>
+                            <?php if (can_access_feature('payment')): ?>
+                            <a href="?page=transactions/payment/vendor_payments" class="ns-sub-dropdown-item"><i class="fas fa-receipt"></i> Vendor Payment Register</a>
                             <?php endif; ?>
                             <?php if (can_access_feature('bill_credit') && can_edit_feature('bill_credit')): ?>
                             <a href="?page=transactions/bill_credit/manage" class="ns-sub-dropdown-item"><i class="fas fa-file-signature"></i> New Vendor Credit</a>
@@ -1010,6 +1018,24 @@ if ($is_logged_in) {
                     // Security: Sanitize page parameter to prevent path traversal
                     $page = str_replace(['../', '..\\'], '', $page);
                     $page = preg_replace('/[^a-zA-Z0-9\/_\-]/', '', $page);
+
+                    // Route Aliases Mapping
+                    $pageAliases = [
+                        'transactions_view' => 'transactions/view',
+                        'items_manage' => 'master/item/manage',
+                        'customers_manage' => 'master/customer/manage',
+                        'vendors_manage' => 'master/vendor/manage',
+                        'accounts_manage' => 'master/account/manage',
+                        'invoice_manage' => 'transactions/invoice/manage',
+                        'bill_manage' => 'transactions/bill/manage',
+                        'expense_manage' => 'transactions/expense/manage',
+                        'payment_manage' => 'transactions/payment/manage',
+                        'customer_payment_register' => 'transactions/payment/customer_payments',
+                        'vendor_payment_register' => 'transactions/payment/vendor_payments',
+                    ];
+                    if (isset($pageAliases[$page])) {
+                        $page = $pageAliases[$page];
+                    }
 
                     // Extract module parts
                     $parts = explode('/', $page);
@@ -1358,6 +1384,155 @@ if ($is_logged_in) {
             </div>
         </div>
     </div>
+
+    <!-- AI Assistant Modal -->
+    <div id="ai-assistant-modal" style="display: none; position: fixed; z-index: 10002; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; backdrop-filter: blur(4px);">
+        <div style="background: #ffffff; width: 560px; max-width: 92%; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); overflow: hidden; font-family: inherit;">
+            <div style="background: linear-gradient(135deg, #8e44ad, #2980b9); padding: 18px 24px; color: white; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-magic" style="font-size: 20px;"></i>
+                    <div>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 700;">ERP AI Assistant</h3>
+                        <p style="margin: 2px 0 0 0; font-size: 11px; opacity: 0.85;">Type natural language entries to auto-parse transactions</p>
+                    </div>
+                </div>
+                <button onclick="closeAIAssistantModal()" style="background: none; border: none; color: white; font-size: 18px; cursor: pointer;">&times;</button>
+            </div>
+            <div style="padding: 20px;">
+                <label style="font-size: 12px; font-weight: 600; color: #444; margin-bottom: 6px; display: block;">What transaction would you like to enter?</label>
+                <textarea id="ai-prompt-input" rows="3" class="form-input" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; resize: vertical;" placeholder="e.g. Bought 20 cases of Gorkha beer from ABC supplier for 45000 on credit"></textarea>
+                
+                <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">
+                    <span style="font-size: 11px; color: #777; width: 100%;">Quick Examples:</span>
+                    <button type="button" onclick="setAIPrompt(this.innerText)" style="background: #f0f3f6; border: 1px solid #dcdfe6; border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: #333;">Bought 20 cases of Gorkha beer from ABC supplier for 45000 on credit</button>
+                    <button type="button" onclick="setAIPrompt(this.innerText)" style="background: #f0f3f6; border: 1px solid #dcdfe6; border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: #333;">Paid electricity bill 8500 by bank</button>
+                    <button type="button" onclick="setAIPrompt(this.innerText)" style="background: #f0f3f6; border: 1px solid #dcdfe6; border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: #333;">Received 25000 from Ram through eSewa</button>
+                </div>
+
+                <div id="ai-response-area" style="margin-top: 15px; display: none; background: #f8f9fa; padding: 12px; border-radius: 6px; border-left: 4px solid #8e44ad; font-size: 12px;"></div>
+            </div>
+            <div style="background: #f1f3f5; padding: 12px 20px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button onclick="closeAIAssistantModal()" class="ns-btn" style="padding: 6px 16px;">Cancel</button>
+                <button id="btn-submit-ai" onclick="submitAIPrompt()" class="ns-btn ns-btn-primary" style="padding: 6px 18px; background: #8e44ad; border-color: #8e44ad;"><i class="fas fa-paper-plane" style="margin-right: 5px;"></i> Parse & Draft</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Search Modal -->
+    <div id="global-search-modal" style="display: none; position: fixed; z-index: 10002; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: flex-start; padding-top: 80px; backdrop-filter: blur(4px);">
+        <div style="background: #ffffff; width: 620px; max-width: 92%; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); overflow: hidden; font-family: inherit;">
+            <div style="padding: 15px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-search" style="color: #888; font-size: 16px;"></i>
+                <input type="text" id="global-search-input" onkeyup="performGlobalSearch(this.value)" placeholder="Search invoices, items, customers, vendors, accounts..." style="width: 100%; border: none; outline: none; font-size: 14px;">
+                <button onclick="closeGlobalSearchModal()" style="background: none; border: none; color: #888; font-size: 18px; cursor: pointer;">&times;</button>
+            </div>
+            <div id="global-search-results" style="max-height: 380px; overflow-y: auto; padding: 10px;">
+                <div style="text-align: center; color: #999; padding: 20px; font-size: 13px;">Type at least 2 characters to search...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openAIAssistantModal() {
+            document.getElementById('ai-assistant-modal').style.display = 'flex';
+            document.getElementById('ai-prompt-input').focus();
+        }
+
+        function closeAIAssistantModal() {
+            document.getElementById('ai-assistant-modal').style.display = 'none';
+        }
+
+        function setAIPrompt(text) {
+            document.getElementById('ai-prompt-input').value = text;
+        }
+
+        function submitAIPrompt() {
+            const prompt = document.getElementById('ai-prompt-input').value.trim();
+            if (!prompt) return;
+
+            const btn = document.getElementById('btn-submit-ai');
+            const resArea = document.getElementById('ai-response-area');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Parsing...';
+
+            const formData = new FormData();
+            formData.append('prompt', prompt);
+
+            fetch('api/ai_assistant_handler.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane" style="margin-right: 5px;"></i> Parse & Draft';
+                resArea.style.display = 'block';
+
+                if (data.status === 'success') {
+                    const ai = data.ai_result;
+                    const p = ai.parsed_data;
+                    let html = `<strong><i class="fas fa-robot"></i> Intent: ${ai.intent.toUpperCase()}</strong><br>`;
+                    if (p.party_name) html += `Party: <b>${p.party_name}</b><br>`;
+                    if (p.item_name) html += `Item: <b>${p.item_name}</b><br>`;
+                    if (p.qty) html += `Qty: <b>${p.qty}</b> | Rate: <b>Rs ${p.rate}</b> | Amount: <b>Rs ${p.amount}</b><br>`;
+                    if (ai.suggested_route) {
+                        html += `<div style="margin-top:8px;"><a href="${ai.suggested_route}" class="ns-btn ns-btn-primary" style="font-size:11px; padding:4px 10px;"><i class="fas fa-external-link-alt"></i> Open Candidate Draft Form</a></div>`;
+                    }
+                    resArea.innerHTML = html;
+                } else {
+                    resArea.innerHTML = `<span style="color:red;"><i class="fas fa-exclamation-circle"></i> ${data.message}</span>`;
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane" style="margin-right: 5px;"></i> Parse & Draft';
+                resArea.style.display = 'block';
+                resArea.innerHTML = `<span style="color:red;"><i class="fas fa-exclamation-circle"></i> Error connecting to AI Assistant.</span>`;
+            });
+        }
+
+        function openGlobalSearchModal() {
+            document.getElementById('global-search-modal').style.display = 'flex';
+            document.getElementById('global-search-input').focus();
+        }
+
+        function closeGlobalSearchModal() {
+            document.getElementById('global-search-modal').style.display = 'none';
+        }
+
+        let searchTimer = null;
+        function performGlobalSearch(q) {
+            clearTimeout(searchTimer);
+            if (q.trim().length < 2) {
+                document.getElementById('global-search-results').innerHTML = '<div style="text-align: center; color: #999; padding: 20px; font-size: 13px;">Type at least 2 characters to search...</div>';
+                return;
+            }
+            searchTimer = setTimeout(() => {
+                fetch('api/global_search.php?q=' + encodeURIComponent(q))
+                .then(res => res.json())
+                .then(data => {
+                    const container = document.getElementById('global-search-results');
+                    if (data.status === 'success' && data.results.length > 0) {
+                        let html = '';
+                        data.results.forEach(r => {
+                            html += `
+                                <a href="${r.url}" onclick="closeGlobalSearchModal()" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; text-decoration: none; color: #333; border-bottom: 1px solid #f0f0f0; border-radius: 4px;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='transparent'">
+                                    <div>
+                                        <span style="font-size: 10px; background: #e0e0e0; color: #555; padding: 2px 6px; border-radius: 8px; margin-right: 6px; font-weight: 600;">${r.category}</span>
+                                        <strong style="font-size: 13px;">${r.title}</strong>
+                                    </div>
+                                    <span style="font-size: 11px; color: #777;">${r.subtitle}</span>
+                                </a>
+                            `;
+                        });
+                        container.innerHTML = html;
+                    } else {
+                        container.innerHTML = '<div style="text-align: center; color: #999; padding: 20px; font-size: 13px;">No matching records found.</div>';
+                    }
+                });
+            }, 250);
+        }
+    </script>
 </body>
 
 </html>

@@ -79,13 +79,12 @@ try {
     );
 
     // GL Logic (Reversal)
-    $sales_account     = get_accounting_preference('default_income_account')   ?: 'acc-4100';
-    $tax_account       = get_accounting_preference('default_tax_account')      ?: 'acc-2200';
-    $cogs_account      = get_accounting_preference('default_cogs_account')     ?: 'acc-5100';
-    $inventory_account  = get_accounting_preference('default_asset_account')    ?: 'acc-1200';
-    
-    // Resolve Refund Account (default to Cash or Bank based on refund_mode)
-    $refund_account = ($refund_mode == 'cash') ? 'acc-1100' : 'acc-1110';
+    $engine = AccountingEngine::getInstance();
+    $sales_account     = $engine->resolveAccount('default_sales_account');
+    $tax_account       = $engine->resolveAccount('default_tax_account');
+    $cogs_account      = $engine->resolveAccount('default_cogs_account');
+    $inventory_account = $engine->resolveAccount('default_inventory_asset_account');
+    $refund_account    = ($refund_mode == 'cash') ? $engine->resolveAccount('default_cash_account') : $engine->resolveAccount('default_bank_account');
     
     // 4a. Reverse Revenue (Dr Sales)
     // Note: This is simplified, assuming same proportions as original

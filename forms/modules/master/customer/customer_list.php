@@ -18,7 +18,7 @@ $customers = $db->fetchAll(
         SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
         FROM journal_entries j
         JOIN transaction_headers th ON j.header_id = th.id
-        WHERE ((j.party_id = CAST(c.id AS CHAR) AND (j.party_type = 'customer' OR j.party_type IS NULL OR j.party_type = '')) OR (th.party_id = CAST(c.id AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL OR th.party_type = '')))
+        WHERE j.party_id = c.id AND j.party_type = 'customer'
           AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')
     ) + (
         SELECT COALESCE(SUM(p.amount), 0)
@@ -33,8 +33,8 @@ $customers = $db->fetchAll(
     ) - (
         SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0)
         FROM transaction_headers th
-        LEFT JOIN credit_memos cm ON cm.header_id = th.id
-        WHERE (cm.customer_id = c.id OR (th.party_id = CAST(c.id AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL OR th.party_type = '')))
+        JOIN credit_memos cm ON cm.header_id = th.id
+        WHERE cm.customer_id = c.id
           AND th.txn_type IN ('credit_memo', 'Credit Memo')
           AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     )) AS total_sales,
@@ -156,7 +156,7 @@ $grand_remaining = 0;
                 <?php $sn = 1; foreach ($customers as $row): 
                     $sales = floatval($row['total_sales']);
                     $paid = floatval($row['total_paid']);
-                    $remaining = $sales - $paid;
+                    $remaining = get_customer_net_balance($db, $row['id']);
 
                     $grand_sales += $sales;
                     $grand_paid += $paid;

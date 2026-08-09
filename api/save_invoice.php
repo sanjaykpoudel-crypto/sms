@@ -8,8 +8,9 @@ if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
     exit;
 }
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/InventoryEngine.php';
 // Load system cache (provides sysinfo_get_batch, account_cache_get/set)
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
@@ -20,6 +21,12 @@ sysinfo_prefetch();
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ob_end_clean();
     echo json_encode(['status' => 'error', 'message' => 'Invalid request method']);
+    exit;
+}
+
+if (!empty($_POST['csrf_token']) && !verify_csrf_token($_POST['csrf_token'])) {
+    ob_end_clean();
+    echo json_encode(['status' => 'error', 'message' => 'Invalid or expired security token (CSRF). Please refresh and try again.']);
     exit;
 }
 
@@ -92,12 +99,9 @@ try {
             $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $status, $location_id, $id
         ]);
         
-        // Reverse old stock
+        // Reverse old stock via InventoryEngine
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-            $old_items = $db->fetchAll("SELECT item_id, quantity FROM transaction_lines WHERE header_id = ?", [$id]);
-            foreach($old_items as $oi) {
-                $db->execute("UPDATE items SET current_stock = current_stock + ? WHERE id = ?", [$oi['quantity'], $oi['item_id']]);
-            }
+            InventoryEngine::getInstance()->reverseMovementsForHeader($id, 'Sales Invoice Edit Reversal');
         }
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
@@ -205,21 +209,14 @@ try {
             [generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit]
         );
 
-        // Deduct new stock and update inventory_balances for the selling location
+        // Deduct new stock and update inventory_balances via InventoryEngine
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-            $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$qty, $item_id]);
-            // Also update local batch map so subsequent validation in same request is accurate
+            InventoryEngine::getInstance()->issueStock($item_id, $location_id, $qty, $id, null, 'SALE', $rate, $txn_date, [
+                'txn_number' => $txn_number,
+                'force_issue' => isset($_POST['force_save'])
+            ]);
             if (isset($item_data_map[$item_id])) {
                 $item_data_map[$item_id]['current_stock'] -= $qty;
-            }
-            // Update cost_price in inventory_balances for the selling location (reflects COGS cost)
-            if ($cost_price > 0) {
-                $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
-                if ($bal_exists) {
-                    $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$cost_price, $cost_price, $item_id, $location_id]);
-                } else {
-                    $db->execute("INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, NOW())", [generate_uuid(), $item_id, $location_id, $cost_price, $cost_price]);
-                }
             }
         }
         $synced_items[] = $item_id;
@@ -383,7 +380,7 @@ try {
             }
         } else {
             // Fallback cash payment
-            $default_account = get_accounting_preference('default_cash_account') ?: 'acc-1100';
+            $default_account = AccountingEngine::getInstance()->resolveAccount('default_cash_account');
             $db->execute(
                 "INSERT INTO pos_payments (id, pos_id, payment_mode, account_id, amount)
                  VALUES (?, ?, 'cash', ?, ?)",
@@ -465,7 +462,7 @@ try {
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     ob_end_clean();
-    file_put_contents(__DIR__ . '/../scratch/api_error.log', date('Y-m-d H:i:s') . ' - save_invoice.php: ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n", FILE_APPEND);
+    @file_put_contents(sys_get_temp_dir() . '/api_error.log', date('Y-m-d H:i:s') . ' - save_invoice.php: ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n", FILE_APPEND);
     http_response_code(400);
     echo json_encode(['status' => 'error', 'code' => 400, 'message' => $e->getMessage()]);
     exit;

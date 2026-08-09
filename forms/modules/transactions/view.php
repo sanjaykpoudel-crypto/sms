@@ -120,7 +120,16 @@ if ($txn_type == 'vendor_bill') {
     ", ['id' => $id]);
     if ($details) {
         $details['total_amount'] = $details['total_cash'];
-        $details['entity_name'] = $header['party_id']; // Shift/Counter
+        $shift_val = $header['reference_number'] ?: $header['party_id'];
+        $shift_name = 'Main Counter';
+        if ($shift_val === 'Shift_A') {
+            $shift_name = 'Shift_A';
+        } elseif ($shift_val === 'Shift_B') {
+            $shift_name = 'Shift_B';
+        } elseif (!empty($shift_val) && $shift_val !== '1' && $shift_val !== 1 && $shift_val !== 'Main') {
+            $shift_name = $shift_val;
+        }
+        $details['entity_name'] = $shift_name;
     }
 }
 

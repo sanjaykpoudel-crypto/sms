@@ -7,12 +7,14 @@ if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
     exit;
 }
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/InventoryEngine.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");
 }
+enforce_csrf_protection();
 
 $db = db();
 $pdo = $db->getConnection();
@@ -91,11 +93,8 @@ try {
         ]);
         incrementTransactionNumber('inventory_adjustment');
     } else {
-        // Reverse previous stock changes before updating
-        $old_lines = $db->fetchAll("SELECT item_id, quantity FROM transaction_lines WHERE header_id = ?", [$id]);
-        foreach ($old_lines as $ol) {
-            $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$ol['quantity'], $ol['item_id']]);
-        }
+        // Reverse previous stock changes via InventoryEngine
+        InventoryEngine::getInstance()->reverseMovementsForHeader($id, 'Inventory Adjustment Edit Reversal');
 
         $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ? WHERE id = ?", [
             $txn_date, $memo, $net_amount, $adjustment_account_id, $first_location_id, $id
@@ -123,24 +122,10 @@ try {
             generate_uuid(), $id, $item_id, $inventory_account_id, $line_loc, $idx + 1, $qty, $rate, $line_total, $rate
         ]);
 
-        // Update item stock and cost price on items master
-        $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
-
-        // Update cost_price in inventory_balances for the specific adjustment location
-        if ($line_loc && $rate > 0) {
-            $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $line_loc]);
-            if ($bal_exists) {
-                $db->execute(
-                    "UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?",
-                    [$rate, $rate, $item_id, $line_loc]
-                );
-            } else {
-                $db->execute(
-                    "INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, NOW())",
-                    [generate_uuid(), $item_id, $line_loc, $rate, $rate]
-                );
-            }
-        }
+        // Post stock adjustment via InventoryEngine
+        InventoryEngine::getInstance()->adjustStock($item_id, $line_loc, $qty, $rate, $id, null, $memo, $txn_date, [
+            'txn_number' => $txn_number
+        ]);
 
         // Sync all-location stock figures from transaction history
         sync_and_get_item_inventory_balances($db, $item_id);

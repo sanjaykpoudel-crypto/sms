@@ -7,8 +7,8 @@ if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
     exit;
 }
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");

@@ -147,8 +147,16 @@ function cache_set($key, $value, $ttl_sec = 60) {
     }
 }
 
+$user_id = $_SESSION['user_id'] ?? ($_SESSION['userdata']['id'] ?? '');
+$user_info = $db->fetchOne("SELECT * FROM users WHERE id = CAST(? AS CHAR) OR username = ? LIMIT 1", [$user_id, $user_id]);
+$is_admin = ($user_info && strtolower($user_info['role'] ?? '') === 'admin');
+
 $raw_loc = $_GET['location_id'] ?? $_SESSION['location_id'] ?? get_user_default_location_id();
-if ($raw_loc === 'all') {
+if (!$is_admin && !empty($user_info['location_id'])) {
+    $raw_loc = $user_info['location_id'];
+}
+
+if ($raw_loc === 'all' && $is_admin) {
     $selected_location_id = '';
 } else {
     $selected_location_id = !empty($raw_loc) ? $raw_loc : get_user_default_location_id();
@@ -280,50 +288,12 @@ $profit_yest  = $pnl_yest['gross_profit'];
 // ── 1c. Cash / Bank / AR / AP — Single batch query ──
 // ── 1c. Cash / Bank / AR / AP — Single batch query ──
 function get_balances($db, $as_of) {
+    global $selected_location_id;
     $loc_sql_th = dash_loc_sql('th');
     $loc_sql_h  = dash_loc_sql('h');
 
-    // AR total: Invoices (balance_due) + open Customer Opening Balance Journals
-    $ar = (float)($db->fetchOne("
-        SELECT 
-        ((
-            SELECT COALESCE(SUM(ci.balance_due), 0)
-            FROM customer_invoices ci
-            JOIN transaction_headers th ON ci.header_id = th.id
-            WHERE th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql_th}
-        ) + (
-            -- Opening balance journals tagged as customer receivables
-            SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
-            FROM journal_entries j
-            JOIN transaction_headers th ON j.header_id = th.id
-            WHERE j.party_type = 'customer'
-              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-              AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
-        )) as total
-    ", [$as_of, $as_of])['total'] ?? 0);
-
-    // AP total: Bills (balance_due) + open Vendor Opening Balance Journals
-    $ap = (float)($db->fetchOne("
-        SELECT 
-        (
-            COALESCE((
-                SELECT SUM(vb.balance_due)
-                FROM vendor_bills vb
-                JOIN transaction_headers th ON vb.header_id = th.id
-                WHERE th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql_th}
-            ), 0.00) 
-            + 
-            COALESCE((
-                -- Opening balance journals tagged as vendor payables
-                SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END)
-                FROM journal_entries j
-                JOIN transaction_headers th ON j.header_id = th.id
-                WHERE j.party_type = 'vendor'
-                  AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-                  AND th.txn_type IN ('Journal', 'journal_entry') AND th.txn_date <= ? {$loc_sql_th}
-            ), 0.00)
-        ) as total
-    ", [$as_of, $as_of])['total'] ?? 0);
+    $ar = get_total_receivables_balance($db, $as_of, $selected_location_id);
+    $ap = get_total_payables_balance($db, $as_of, $selected_location_id);
 
 
     // Cash and Bank totals (excluding Fixed Deposit accounts)
@@ -920,80 +890,55 @@ $top_cust = $db->fetchAll("
     GROUP BY ci.customer_id ORDER BY total_sales DESC LIMIT 5
 ", [$month_start, $month_end]);
 
-$out_ar = $db->fetchAll("
+$all_cust_rows = $db->fetchAll("
     SELECT c.id, c.full_name, c.phone, c.customer_type,
-        (
-            -- Invoice balance due (open invoices not fully paid)
-            COALESCE((
-                SELECT SUM(ci.balance_due) 
-                FROM customer_invoices ci 
-                JOIN transaction_headers th ON ci.header_id = th.id 
-                WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
-            ), 0)
-            +
-            -- Opening balance journal entries tagged as customer receivables
-            COALESCE((
-                SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END)
-                FROM journal_entries j
-                JOIN transaction_headers th ON j.header_id = th.id
-                WHERE j.party_id = c.id AND j.party_type = 'customer'
-                  AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-                  AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql_th}
-            ), 0)
-        ) as balance,
         (
             SELECT MAX(th.txn_date)
             FROM transaction_headers th
             LEFT JOIN customer_invoices ci ON ci.header_id = th.id
             LEFT JOIN journal_entries j ON j.header_id = th.id
-            WHERE (ci.customer_id = c.id OR j.party_id = c.id OR th.party_id = c.id) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
+            WHERE (ci.customer_id = c.id OR j.party_id = c.id OR th.party_id = c.id)
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
         ) as last_txn
     FROM customers c
     WHERE c.is_deleted = 0 AND c.is_active = 1
-    HAVING balance > 0.01
-    ORDER BY balance DESC LIMIT 10
 ");
 
-$out_ap = $db->fetchAll("
+$out_ar = [];
+foreach ($all_cust_rows as $cr) {
+    $bal = get_customer_net_balance($db, $cr['id'], $today, $selected_location_id);
+    if ($bal > 0.01) {
+        $cr['balance'] = number_format($bal, 2, '.', '');
+        $out_ar[] = $cr;
+    }
+}
+usort($out_ar, function($a, $b) { return (float)$b['balance'] <=> (float)$a['balance']; });
+$out_ar = array_slice($out_ar, 0, 10);
+
+$all_vend_rows = $db->fetchAll("
     SELECT v.id, v.company_name, v.phone,
-        (
-            COALESCE((
-                SELECT SUM(vb.balance_due) 
-                FROM vendor_bills vb 
-                JOIN transaction_headers th ON vb.header_id = th.id 
-                WHERE vb.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
-            ), 0.00) 
-            + 
-            COALESCE((
-                SELECT SUM(
-                    CASE WHEN j.party_id = v.id THEN (CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) ELSE 0 END
-                ) - COALESCE((
-                    SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
-                    FROM transaction_links tl
-                    JOIN transaction_headers ph ON tl.parent_id = ph.id
-                    WHERE tl.child_id = th.id 
-                      AND tl.link_type LIKE 'payment:%'
-                      AND ph.txn_type = 'vendor_payment'
-                      AND ph.party_id = v.id
-                      AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
-                ), 0.00)
-                FROM journal_entries j
-                JOIN transaction_headers th ON j.header_id = th.id
-                WHERE j.party_id = v.id AND (j.party_type = 'vendor' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql_th}
-            ), 0.00)
-        ) as balance,
         (
             SELECT MAX(th.txn_date)
             FROM transaction_headers th
             LEFT JOIN vendor_bills vb ON vb.header_id = th.id
             LEFT JOIN journal_entries j ON j.header_id = th.id
-            WHERE (vb.vendor_id = v.id OR j.party_id = v.id OR th.party_id = v.id) AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
+            WHERE (vb.vendor_id = v.id OR j.party_id = v.id OR th.party_id = v.id)
+              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
         ) as last_txn
     FROM vendors v
     WHERE v.is_deleted = 0 AND v.is_active = 1
-    HAVING balance > 0.01
-    ORDER BY balance DESC LIMIT 10
 ");
+
+$out_ap = [];
+foreach ($all_vend_rows as $vr) {
+    $bal = get_vendor_net_balance($db, $vr['id'], $today, $selected_location_id);
+    if ($bal > 0.01) {
+        $vr['balance'] = number_format($bal, 2, '.', '');
+        $out_ap[] = $vr;
+    }
+}
+usort($out_ap, function($a, $b) { return (float)$b['balance'] <=> (float)$a['balance']; });
+$out_ap = array_slice($out_ap, 0, 10);
 
 // Bills due to pay (exclude deleted vendors and deleted/voided bills)
 $bills_due = $db->fetchAll("

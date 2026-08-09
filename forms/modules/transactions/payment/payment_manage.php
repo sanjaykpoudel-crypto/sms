@@ -41,13 +41,14 @@ $accounts = $db->fetchAll("
     FROM accounts a
     LEFT JOIN journal_entries j ON a.id = j.account_id
     LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
-    WHERE a.account_subtype IN ('Bank') AND a.is_active = 1 AND a.is_deleted = 0
+    WHERE (a.account_type_id = 1 OR a.account_subtype IN ('Bank', 'Cash', 'Liquid Assets')) AND a.is_active = 1 AND a.is_deleted = 0
     GROUP BY a.id ORDER BY a.account_name ASC
 ");
 
 $customers  = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $vendors    = $db->fetchAll("SELECT id, company_name FROM vendors WHERE is_active = 1 AND is_deleted = 0 ORDER BY company_name ASC");
 $default_bank = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'default_bank_account'")['meta_value'] ?? '';
+$default_cash_account_id = get_accounting_preference('default_cash_account') ?: (AccountingEngine::getInstance()->resolveAccount('default_cash_account') ?: '');
 $is_pos_pay = (!empty($data['txn_number']) && (strpos($data['txn_number'], 'PAY-POS-') === 0 || strpos($data['txn_number'], 'POS-PAY-') === 0));
 $status = $data['status'] ?? 'draft';
 $is_new = !$id;
@@ -557,7 +558,12 @@ textarea.pm-control { height: 68px; resize: vertical; }
         <div class="pm-card">
           <div class="pm-card-title">
             <span>Deposit / Payment Account</span>
-            <button type="button" class="pm-btn pm-btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="addPayRow()">+ Add Account</button>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button type="button" id="btn-generate-qr" class="pm-btn" onclick="showPaymentQrModal()" style="display: none; background: #003087; color: #fff; border-color: #003087; padding: 4px 10px; font-size: 12px; font-weight: 700; align-items: center; gap: 4px;">
+                <i class="fas fa-qrcode"></i> Generate QR
+              </button>
+              <button type="button" class="pm-btn pm-btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="addPayRow()">+ Add Account</button>
+            </div>
           </div>
           <div style="overflow-x:auto;">
             <table class="pm-table">
@@ -739,6 +745,7 @@ textarea.pm-control { height: 68px; resize: vertical; }
 const _accounts   = <?php echo json_encode($accounts); ?>;
 const _customers  = <?php echo json_encode($customers); ?>;
 const _vendors    = <?php echo json_encode($vendors); ?>;
+const defaultCashAccountId = <?php echo json_encode((string)$default_cash_account_id); ?>;
 const _custNum    = "<?php echo getNextTransactionNumber('customer_payment'); ?>";
 const _vendNum    = "<?php echo getNextTransactionNumber('vendor_payment'); ?>";
 const _isEdit     = <?php echo $id ? 'true' : 'false'; ?>;
@@ -947,11 +954,27 @@ function addPayRow() {
     <td class="c"><i class="fas fa-trash-alt pm-del-icon" onclick="removePayRow(this)"></i></td>`;
   tbody.appendChild(tr);
   onAccChange(tr.querySelector('.pm-control'));
+  checkQrButtonVisibility();
 }
 
 function removePayRow(icon) {
   const tbody = document.getElementById('pay-rows');
   if (tbody.children.length > 1) { icon.closest('tr').remove(); calcTotals(); }
+  checkQrButtonVisibility();
+}
+
+function checkQrButtonVisibility() {
+  let showQr = false;
+  document.querySelectorAll('#pay-rows .pay-method-row').forEach(tr => {
+    const sel = tr.querySelector('.pm-control');
+    if (sel && sel.value && String(sel.value) !== String(defaultCashAccountId)) {
+      showQr = true;
+    }
+  });
+  const qrBtn = document.getElementById('btn-generate-qr');
+  if (qrBtn) {
+    qrBtn.style.display = showQr ? 'inline-flex' : 'none';
+  }
 }
 
 function onAccChange(sel) {
@@ -968,6 +991,7 @@ function onAccChange(sel) {
     if (balDisp) balDisp.textContent = '—';
     if (afterDisp) afterDisp.textContent = '—';
   }
+  checkQrButtonVisibility();
 }
 
 function calcTotals() {
@@ -984,6 +1008,7 @@ function calcTotals() {
     if (afterDisp && sel?.value) afterDisp.textContent = fmt(bal - lineAmt);
   });
   recalc();
+  checkQrButtonVisibility();
 }
 
 function getTotalApplied() {
@@ -1056,8 +1081,74 @@ function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function init() {
   calcTotals();
   document.querySelectorAll('.pay-method-row .pm-control').forEach(onAccChange);
+  checkQrButtonVisibility();
   if (_isEdit || document.getElementById('party_id').value) fetchOpenTxns();
 }
 document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
 window.addEventListener('load', init);
+
+function showPaymentQrModal() {
+    let nonCashAmt = 0;
+    let cashAmt = 0;
+    document.querySelectorAll('#pay-rows .pay-method-row').forEach(tr => {
+        const sel = tr.querySelector('.pm-control');
+        const lineAmt = parseFloat(tr.querySelector('.pay-line-amt')?.value) || 0;
+        if (sel && sel.value) {
+            if (String(sel.value) !== String(defaultCashAccountId)) {
+                nonCashAmt += lineAmt;
+            } else {
+                cashAmt += lineAmt;
+            }
+        }
+    });
+    const tendered = parseFloat(document.getElementById('net_amount').value) || 0;
+    let qrAmt = 0;
+    if (nonCashAmt > 0) {
+        qrAmt = nonCashAmt;
+    } else if (cashAmt > 0 && tendered > cashAmt) {
+        qrAmt = tendered - cashAmt;
+    } else {
+        qrAmt = tendered;
+    }
+
+    const modal = document.getElementById('payment-qr-modal');
+    document.getElementById('pm-qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=210x210&margin=0&data=Loading...';
+    document.getElementById('pm-qr-amount-txt').innerText = 'Rs ' + qrAmt.toFixed(2);
+    modal.style.display = 'flex';
+
+    const txnNo = document.getElementById('txn_number')?.value || '';
+    fetch(`api/get_qr_code.php?amount=${qrAmt}&txn_no=${encodeURIComponent(txnNo)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success') {
+                document.getElementById('pm-qr-img').src = res.qr_src;
+                document.getElementById('pm-qr-company-name').innerText = res.company_name;
+                document.getElementById('pm-qr-amount-txt').innerText = res.formatted_amount;
+            }
+        })
+        .catch(err => console.error('Error fetching QR code:', err));
+}
+
+function closePaymentQrModal() {
+    document.getElementById('payment-qr-modal').style.display = 'none';
+}
 </script>
+
+<!-- PAYMENT MODULE QR MODAL -->
+<div id="payment-qr-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 99999; align-items: center; justify-content: center;">
+    <div style="background: #fff; border-radius: 16px; width: 380px; max-width: 90%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2); text-align: center; position: relative;">
+        <button type="button" onclick="closePaymentQrModal()" style="position: absolute; top: 14px; right: 14px; border: none; background: #f1f5f9; color: #64748b; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;"><i class="fas fa-times"></i></button>
+        <div style="color: #003087; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;" id="pm-qr-company-name">MNS LIQUORS</div>
+        <div style="font-size: 12px; color: #64748b; margin-bottom: 15px;" id="pm-qr-txn-no">Ref: <?php echo htmlspecialchars($data['txn_number'] ?? ''); ?></div>
+        
+        <div style="background: #f8fafc; border: 2px dashed #003087; border-radius: 12px; padding: 15px; display: inline-block; margin-bottom: 15px; width: 100%; box-sizing: border-box;">
+            <img id="pm-qr-img" src="" alt="Payment QR" style="width: 210px; height: 210px; border-radius: 8px; background: #fff; padding: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: block; margin: 0 auto;">
+            <div style="font-size: 22px; font-weight: 800; color: #16a34a; margin-top: 12px;" id="pm-qr-amount-txt">Rs 0.00</div>
+        </div>
+
+        <div style="font-size: 12px; color: #475569; font-weight: 500; margin-bottom: 18px;">
+            <i class="fas fa-mobile-alt" style="color: #003087; margin-right: 4px;"></i> Scan with eSewa, Fonepay, Mobile Banking or any QR app to pay.
+        </div>
+        <button type="button" class="pm-btn pm-btn-primary" onclick="closePaymentQrModal()" style="width: 100%; padding: 10px; justify-content: center;">Done / Close</button>
+    </div>
+</div>

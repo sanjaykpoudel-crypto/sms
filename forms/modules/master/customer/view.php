@@ -28,9 +28,9 @@ $invoices = $db->fetchAll("
     WHERE ci.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
         (
-            SUM(CASE WHEN (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END)
             - COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
@@ -38,15 +38,14 @@ $invoices = $db->fetchAll("
                 JOIN payments p ON ph.id = p.header_id
                 WHERE tl.child_id = h.id 
                   AND tl.link_type LIKE 'payment:%'
-                  AND (p.customer_id = ? OR ph.party_id = CAST(? AS CHAR))
+                  AND p.customer_id = ?
                   AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
             ), 0.00)
         ) as balance_due,
         h.status as payment_status
     FROM journal_entries j
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (j.party_id = CAST(? AS CHAR) OR (h.party_id = CAST(? AS CHAR) AND (h.party_type = 'customer' OR h.party_type IS NULL))) 
-      AND (j.party_type = 'customer' OR j.party_type IS NULL OR h.party_type = 'customer') 
+    WHERE j.party_id = ? AND j.party_type = 'customer'
       AND h.is_deleted = 0 
       AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')
@@ -71,12 +70,12 @@ $invoices = $db->fetchAll("
         0 as balance_due,
         th.status as payment_status
     FROM transaction_headers th
-    LEFT JOIN credit_memos cm ON cm.header_id = th.id
-    WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+    JOIN credit_memos cm ON cm.header_id = th.id
+    WHERE cm.customer_id = ?
       AND th.txn_type IN ('credit_memo', 'Credit Memo')
       AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ORDER BY doc_date DESC LIMIT 50
-", [$id, $id, $id, $id, $id, $id, $id, $id, $id, $id, $id, $id]);
+", [$id, $id, $id, $id, $id]);
 
 // Fetch related records (Payments - Customer Receipts only)
 $payments = $db->fetchAll("
@@ -104,11 +103,11 @@ $payments = $db->fetchAll("
 $credit_memos_sum = $db->fetchOne("
     SELECT COALESCE(SUM(COALESCE(cm.total_amount, th.net_amount)), 0) as total
     FROM transaction_headers th
-    LEFT JOIN credit_memos cm ON cm.header_id = th.id
-    WHERE (cm.customer_id = ? OR (th.party_id = CAST(? AS CHAR) AND (th.party_type = 'customer' OR th.party_type IS NULL)))
+    JOIN credit_memos cm ON cm.header_id = th.id
+    WHERE cm.customer_id = ?
       AND th.txn_type IN ('credit_memo', 'Credit Memo')
       AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-", [$id, $id])['total'] ?? 0;
+", [$id])['total'] ?? 0;
 
 // Summary Computations
 // Total Sales = Invoices + Journal Debits + Customer Refunds - Credit Memos

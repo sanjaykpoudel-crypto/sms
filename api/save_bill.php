@@ -7,8 +7,9 @@ if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
     exit;
 }
-require_once '../database/DBConnection.php';
-require_once 'reference_helper.php';
+require_once __DIR__ . '/../database/DBConnection.php';
+require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/InventoryEngine.php';
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
 }
@@ -16,6 +17,7 @@ if (!function_exists('sysinfo_get')) {
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");
 }
+enforce_csrf_protection();
 
 $db = db();
 $pdo = $db->getConnection();
@@ -73,12 +75,9 @@ try {
             $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $status, $location_id, $id
         ]);
         
-        // Reverse old stock
+        // Reverse old stock via InventoryEngine
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-            $old_items = $db->fetchAll("SELECT item_id, quantity FROM transaction_lines WHERE header_id = ?", [$id]);
-            foreach($old_items as $oi) {
-                $db->execute("UPDATE items SET current_stock = current_stock - ? WHERE id = ?", [$oi['quantity'], $oi['item_id']]);
-            }
+            InventoryEngine::getInstance()->reverseMovementsForHeader($id, 'Vendor Bill Edit Reversal');
         }
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
@@ -120,34 +119,20 @@ try {
             generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $rate, 0
         ]);
         
-        // Add new stock and update cost price on item master + location-specific inventory_balances
+        // Add new stock and update moving-average cost via InventoryEngine
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $item_sku = $db->fetchOne("SELECT sku FROM items WHERE id = ?", [$item_id])['sku'] ?? '';
             $new_cost = ($item_sku === 'I-00013') ? 0.00 : $rate;
-            if ($item_sku === 'I-00013') {
-                $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = 0.00 WHERE id = ?", [$qty, $item_id]);
-            } else {
-                $db->execute("UPDATE items SET current_stock = current_stock + ?, cost_price = ? WHERE id = ?", [$qty, $rate, $item_id]);
-            }
+            
+            InventoryEngine::getInstance()->receiveStock($item_id, $location_id, $qty, $new_cost, $id, null, 'PURCHASE', $txn_date, [
+                'txn_number' => $txn_number
+            ]);
 
             // Update MRP on item master if provided
             $mrp_val = isset($mrps[$idx]) && is_numeric($mrps[$idx]) ? (float)$mrps[$idx] : 0;
             if ($mrp_val > 0) {
                 $db->execute("UPDATE items SET mrp = ? WHERE id = ?", [$mrp_val, $item_id]);
-            }
-
-            // Update cost_price (and MRP) in inventory_balances for the receiving location
-            if ($new_cost > 0) {
-                $bal_exists = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $location_id]);
-                if ($bal_exists) {
-                    if ($mrp_val > 0) {
-                        $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, mrp = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$new_cost, $new_cost, $mrp_val, $item_id, $location_id]);
-                    } else {
-                        $db->execute("UPDATE inventory_balances SET cost_price = ?, average_cost = ?, last_updated = NOW() WHERE item_id = ? AND location_id = ?", [$new_cost, $new_cost, $item_id, $location_id]);
-                    }
-                } else {
-                    $db->execute("INSERT INTO inventory_balances (id, item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price, mrp, last_updated) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?, NOW())", [generate_uuid(), $item_id, $location_id, $new_cost, $new_cost, $mrp_val ?: null]);
-                }
+                $db->execute("UPDATE inventory_balances SET mrp = ? WHERE item_id = ? AND location_id = ?", [$mrp_val, $item_id, $location_id]);
             }
         }
 
@@ -214,8 +199,9 @@ try {
 
     // GL Impact
     if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-        $ap_account = get_effective_account($party_id, 'payable');
-        $tax_account = get_accounting_preference('default_tax_account') ?: 'acc-2200';
+        $engine = AccountingEngine::getInstance();
+        $ap_account  = $engine->resolveVendorAPAccount($party_id);
+        $tax_account = $engine->resolveAccount('default_tax_account');
 
         // Dr Inventory (per item)
         foreach ($gl_items as $gi) {
@@ -231,7 +217,7 @@ try {
             ]);
         }
         if ($discount_amount > 0) {
-            $disc_account = get_accounting_preference('default_discount_account') ?: 'acc-6160';
+            $disc_account = $engine->resolveAccount('default_discount_account');
             $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
                 generate_uuid(), $id, $disc_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
             ]);
