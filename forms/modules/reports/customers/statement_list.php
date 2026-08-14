@@ -2,8 +2,9 @@
 require_once __DIR__ . '/../rpt_helpers.php';
 $fy          = rpt_get_current_fiscal_year_dates();
 $customer_id = $_GET['customer_id'] ?? '';
+$today       = date('Y-m-d');
 $from_date   = $_GET['from_date']   ?? $fy['start_date'];
-$to_date     = $_GET['to_date']     ?? $fy['end_date'];
+$to_date     = $_GET['to_date']     ?? $today;
 
 $customers_list = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
 $customer_options = ['' => '-- Select Customer --'];

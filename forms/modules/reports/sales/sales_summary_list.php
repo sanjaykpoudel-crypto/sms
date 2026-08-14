@@ -11,7 +11,7 @@ $db = db();
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 $channel   = $_GET['channel']   ?? 'all';
 
 $loc_id = $_GET['location_id'] ?? '';

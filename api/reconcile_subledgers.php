@@ -1,12 +1,21 @@
 <?php
 /**
  * api/reconcile_subledgers.php
- * Comprehensive automated financial reconciliation tool for MNS Liquor ERP.
- * Verifies that:
- * 1. Total Debit == Total Credit across all journal entries
- * 2. AR Subledger Customer Net Balances == Receivable Accounts Ledger
- * 3. AP Subledger Vendor Net Balances == Payable Accounts Ledger
- * 4. Inventory Valuation == Inventory Asset Account Ledger
+ * ─────────────────────────────────────────────────────────────
+ * AUTOMATED CROSS-REPORT RECONCILIATION MODULE
+ * ─────────────────────────────────────────────────────────────
+ * Runs ALL reconciliation assertions using the central ReportingEngine.
+ * Can be called via:
+ *   - CLI: php reconcile_subledgers.php
+ *   - API: GET /api/reconcile_subledgers.php
+ *   - Internal: require + re_run_reconciliation($db, $from, $to)
+ *
+ * Checks:
+ *  1. Trial Balance Debits == Credits
+ *  2. Balance Sheet Assets == Liabilities + Equity
+ *  3. AR Subledger == AR GL Control Account
+ *  4. AP Subledger == AP GL Control Account
+ *  5. Inventory Subledger == Inventory GL Control Account
  */
 
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
@@ -19,110 +28,55 @@ if (!isset($_SESSION['user_id']) && PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/ReportingEngine.php';
 
 $db = db();
-$pdo = $db->getConnection();
 
 try {
-    $results = [];
-    $allBalanced = true;
-
-    // 1. Trial Balance Check: Total Debit vs Total Credit
-    $glTotals = $db->fetchOne("
-        SELECT 
-            SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE 0 END) as total_debit,
-            SUM(CASE WHEN entry_type = 'credit' THEN amount ELSE 0 END) as total_credit
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+    // Get fiscal year dates for trial balance period
+    $fy = $db->fetchOne("
+        SELECT start_date, end_date FROM fiscal_years
+        WHERE status IN ('active', 'open', 'current')
+        ORDER BY start_date DESC LIMIT 1
     ");
-    $totDebit = (float)($glTotals['total_debit'] ?? 0);
-    $totCredit = (float)($glTotals['total_credit'] ?? 0);
-    $glDiff = abs($totDebit - $totCredit);
+    $from_date = $fy['start_date'] ?? date('Y-01-01');
+    $to_date   = date('Y-m-d');
 
-    $results['trial_balance'] = [
-        'total_debit' => round($totDebit, 2),
-        'total_credit' => round($totCredit, 2),
-        'difference' => round($glDiff, 2),
-        'status' => $glDiff < 0.01 ? 'MATCH' : 'MISMATCH'
-    ];
-    if ($glDiff >= 0.01) $allBalanced = false;
+    $result = re_run_reconciliation($db, $from_date, $to_date);
 
-    // 2. Customer Accounts Receivable Subledger Check
-    $customers = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_deleted = 0");
-    $totalArSubledger = 0.0;
-    foreach ($customers as $c) {
-        $totalArSubledger += get_customer_net_balance($db, $c['id']);
-    }
-    
-    $arGlBalance = (float)($db->fetchOne("
-        SELECT SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END) as net_bal
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (a.account_subtype IN ('receivable', 'Accounts Receivable') OR a.id = 'acc-1100')
-          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ")['net_bal'] ?? 0);
-    
-    $arDiff = abs($totalArSubledger - $arGlBalance);
-    $results['accounts_receivable'] = [
-        'subledger_total' => round($totalArSubledger, 2),
-        'gl_ledger_total' => round($arGlBalance, 2),
-        'difference' => round($arDiff, 2),
-        'status' => $arDiff < 0.01 ? 'MATCH' : 'MISMATCH'
+    // Reformat for display
+    $output = [
+        'success'       => true,
+        'all_reconciled'=> $result['all_pass'],
+        'timestamp'     => $result['timestamp'],
+        'period'        => ['from' => $from_date, 'to' => $to_date],
+        'reconciliation'=> [],
     ];
 
-    // 3. Vendor Accounts Payable Subledger Check
-    $vendors = $db->fetchAll("SELECT id, company_name FROM vendors WHERE is_deleted = 0");
-    $totalApSubledger = 0.0;
-    foreach ($vendors as $v) {
-        $totalApSubledger += get_vendor_net_balance($db, $v['id']);
+    foreach ($result['checks'] as $key => $check) {
+        $row = ['status' => $check['status']];
+        // TB
+        if ($key === 'trial_balance') {
+            $row['closing_dr']  = $check['closing_dr'];
+            $row['closing_cr']  = $check['closing_cr'];
+            $row['difference']  = $check['difference'];
+        }
+        // BS
+        elseif ($key === 'balance_sheet') {
+            $row['total_assets']      = $check['total_assets'];
+            $row['total_liab_equity'] = $check['total_liab_equity'];
+            $row['difference']        = $check['difference'];
+        }
+        // Sub/GL pairs
+        else {
+            $row['subledger']   = $check['subledger'];
+            $row['gl']          = $check['gl'];
+            $row['difference']  = $check['difference'];
+        }
+        $output['reconciliation'][$key] = $row;
     }
 
-    $apGlBalance = (float)($db->fetchOne("
-        SELECT SUM(CASE WHEN entry_type = 'credit' THEN amount ELSE -amount END) as net_bal
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (a.account_subtype IN ('payable', 'Accounts Payable') OR a.id = 'acc-2100')
-          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ")['net_bal'] ?? 0);
-
-    $apDiff = abs($totalApSubledger - $apGlBalance);
-    $results['accounts_payable'] = [
-        'subledger_total' => round($totalApSubledger, 2),
-        'gl_ledger_total' => round($apGlBalance, 2),
-        'difference' => round($apDiff, 2),
-        'status' => $apDiff < 0.01 ? 'MATCH' : 'MISMATCH'
-    ];
-
-    // 4. Inventory Valuation Subledger Check
-    $invSubledger = (float)($db->fetchOne("SELECT SUM(current_stock * cost_price) as total_val FROM items WHERE is_deleted = 0")['total_val'] ?? 0);
-    $invGlBalance = (float)($db->fetchOne("
-        SELECT SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END) as net_bal
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (a.account_subtype IN ('inventory', 'Inventory Asset') OR a.id = 'acc-1200')
-          AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ")['net_bal'] ?? 0);
-
-    $invDiff = abs($invSubledger - $invGlBalance);
-    $results['inventory_valuation'] = [
-        'items_stock_valuation' => round($invSubledger, 2),
-        'gl_ledger_valuation' => round($invGlBalance, 2),
-        'difference' => round($invDiff, 2),
-        'status' => $invDiff < 0.01 ? 'MATCH' : 'MISMATCH'
-    ];
-
-    $response = [
-        'success' => true,
-        'all_reconciled' => $allBalanced,
-        'timestamp' => date('Y-m-d H:i:s'),
-        'reconciliation' => $results
-    ];
-
-    echo json_encode($response, JSON_PRETTY_PRINT);
+    echo json_encode($output, JSON_PRETTY_PRINT);
 
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'error' => $e->getMessage()]);

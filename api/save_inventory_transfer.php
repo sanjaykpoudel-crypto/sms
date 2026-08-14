@@ -8,6 +8,7 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
 require_once __DIR__ . '/InventoryEngine.php';
+require_once __DIR__ . '/UnitConversionEngine.php';
 
 header('Content-Type: application/json');
 
@@ -45,6 +46,7 @@ try {
     $memo             = trim($_POST['memo'] ?? '');
     $item_ids         = $_POST['item_id'] ?? [];
     $quantities       = $_POST['quantity'] ?? [];
+    $units            = $_POST['unit'] ?? [];
     $unit_costs       = $_POST['unit_cost'] ?? [];
     $mrps             = $_POST['mrp'] ?? [];
 
@@ -94,6 +96,7 @@ try {
         $valid_lines[] = [
             'item_id'    => $item_id,
             'quantity'   => $qty,
+            'unit'       => $units[$idx] ?? 'PCS',
             'unit_cost'  => $cost,
             'line_total' => $line_total,
             'mrp'        => isset($mrps[$idx]) && is_numeric($mrps[$idx]) ? (float)$mrps[$idx] : null
@@ -143,15 +146,21 @@ try {
     foreach ($valid_lines as $idx => $line) {
         $item_id = $line['item_id'];
         $inv_account_id = function_exists('get_effective_account') ? (get_effective_account($item_id, 'inventory') ?: 'acc-1200') : 'acc-1200';
+        
+        $raw_unit  = $line['unit'] ?? 'PCS';
+        $unit_info = uce_resolve_unit($item_id, $raw_unit);
+        $conversion_factor = (float)$unit_info['conversion_factor'];
+        $base_qty  = uce_calculate_base_qty($line['quantity'], $conversion_factor);
+
         $db->execute("
-            INSERT INTO transaction_lines (id, header_id, line_number, item_id, account_id, quantity, unit_price, cost_price, tax_rate, tax_amount, line_total, gross_profit)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0)
+            INSERT INTO transaction_lines (id, header_id, line_number, item_id, account_id, quantity, unit, conversion_factor, base_qty, base_unit_price, unit_price, cost_price, tax_rate, tax_amount, line_total, gross_profit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0)
         ", [
-            generate_uuid(), $id, $idx + 1, $item_id, $inv_account_id, $line['quantity'], $line['unit_cost'], $line['unit_cost'], $line['line_total']
+            generate_uuid(), $id, $idx + 1, $item_id, $inv_account_id, $line['quantity'], $unit_info['unit_name'], $conversion_factor, $base_qty, $line['unit_cost'], $line['unit_cost'], $line['unit_cost'], $line['line_total']
         ]);
 
-        // Perform stock transfer between locations via InventoryEngine
-        InventoryEngine::getInstance()->transferStock($item_id, $from_location_id, $to_location_id, $line['quantity'], $id, null, $txn_date, [
+        // Perform stock transfer between locations via InventoryEngine using base_qty
+        InventoryEngine::getInstance()->transferStock($item_id, $from_location_id, $to_location_id, $base_qty, $id, null, $txn_date, [
             'txn_number' => $txn_number
         ]);
 

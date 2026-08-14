@@ -6,7 +6,7 @@ $db = db();
 $fy         = rpt_get_current_fiscal_year_dates();
 $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? $fy['start_date'];
-$date_to    = $_GET['date_to']   ?? $fy['end_date'];
+$date_to    = $_GET['date_to']   ?? $today;
 
 $loc_sql = rpt_location_sql('h');
 $items = $db->fetchAll("
@@ -19,8 +19,8 @@ $items = $db->fetchAll("
             WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-SUM-%' THEN l.line_total
             ELSE l.line_total - l.tax_amount
         END) as total_revenue, 
-        SUM(l.cost_price * l.quantity) as total_cost,
-        SUM(l.gross_profit) as total_profit
+        SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))) as total_cost,
+        SUM(COALESCE(l.gross_profit, (CASE WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-SUM-%' THEN l.line_total ELSE l.line_total - l.tax_amount END) - (l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))))) as total_profit
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
     JOIN items i ON l.item_id = i.id

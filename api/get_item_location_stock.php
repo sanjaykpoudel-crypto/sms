@@ -22,7 +22,7 @@ $db = db();
 $balances = sync_and_get_item_inventory_balances($db, $item_id);
 $stock = 0.00;
 foreach ($balances as $b) {
-    if ($b['location_id'] === $loc_id) {
+    if ((string)$b['location_id'] === (string)$loc_id) {
         $stock = (float)($b['quantity_on_hand'] ?? 0);
         break;
     }

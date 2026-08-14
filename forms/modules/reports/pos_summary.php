@@ -3,10 +3,9 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
-$date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_from = $_GET['date_from'] ?? $today;
+$date_to   = $_GET['date_to']   ?? $today;
 
 $selected_loc = $_GET['location_id'] ?? '';
 
@@ -47,7 +46,7 @@ $invoices = $db->fetchAll("
         'POS' as txn_source,
         '?page=transactions/pos/view&id=' as view_link,
         (
-            SELECT COALESCE(SUM(pi.net_amount - (pi.quantity * i.cost_price)), 0)
+            SELECT COALESCE(SUM(pi.net_amount - (COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price)), 0)
             FROM pos_items pi
             JOIN items i ON pi.item_id = i.id
             WHERE pi.pos_id = p.id
@@ -73,7 +72,7 @@ $invoices = $db->fetchAll("
         u.full_name as cashier_name,
         'Invoice' as txn_source,
         '?page=transactions/view&id=' as view_link,
-        COALESCE((SELECT SUM(l.line_total - (l.cost_price * l.quantity)) FROM transaction_lines l WHERE l.header_id = h.id), 0) as profit
+        COALESCE((SELECT SUM(COALESCE(l.gross_profit, l.line_total - (l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))))) FROM transaction_lines l WHERE l.header_id = h.id), 0) as profit
     FROM transaction_headers h
     LEFT JOIN customer_invoices ci ON ci.header_id = h.id
     LEFT JOIN customers c ON h.party_id = c.id
@@ -177,7 +176,7 @@ $top_items = $db->fetchAll("
             pi.item_id,
             pi.quantity as qty,
             pi.net_amount as net_amt,
-            (pi.net_amount - (pi.quantity * i.cost_price)) as profit_amt
+            (pi.net_amount - (COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price)) as profit_amt
         FROM pos_items pi
         JOIN pos_entry p ON pi.pos_id = p.id
         JOIN items i ON pi.item_id = i.id
@@ -189,7 +188,7 @@ $top_items = $db->fetchAll("
             l.item_id,
             l.quantity as qty,
             l.line_total as net_amt,
-            (l.line_total - (l.quantity * l.cost_price)) as profit_amt
+            COALESCE(l.gross_profit, (l.line_total - (l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))))) as profit_amt
         FROM transaction_lines l
         JOIN transaction_headers h ON l.header_id = h.id
         JOIN items i ON l.item_id = i.id

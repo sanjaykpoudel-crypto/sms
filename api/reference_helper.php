@@ -966,17 +966,20 @@ function sync_daily_pos_summary($date)
     $agg_items = $db->fetchAll("
         SELECT 
             pi.item_id, 
+            COALESCE(NULLIF(pi.txn_unit, ''), 'PCS') as unit,
+            COALESCE(NULLIF(pi.conversion_factor, 0), 1) as conversion_factor,
             SUM(pi.quantity) as total_qty, 
+            SUM(COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1))) as total_base_qty,
             SUM(pi.amount) as total_gross, 
             SUM(pi.discount) as total_discount, 
             SUM(pi.tax) as total_tax, 
             SUM(pi.net_amount) as total_net, 
-            SUM(pi.quantity * i.cost_price) as total_cogs 
+            SUM(COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price) as total_cogs 
         FROM pos_items pi 
         JOIN pos_entry pe ON pi.pos_id = pe.id 
         JOIN items i ON pi.item_id = i.id 
         WHERE DATE(pe.date_time) = ? AND pe.is_deleted = 0 
-        GROUP BY pi.item_id
+        GROUP BY pi.item_id, COALESCE(NULLIF(pi.txn_unit, ''), 'PCS'), COALESCE(NULLIF(pi.conversion_factor, 0), 1)
     ", [$date]);
 
     $summary_subtotal = 0;
@@ -992,7 +995,10 @@ function sync_daily_pos_summary($date)
 
     foreach ($agg_items as $item) {
         $item_id = $item['item_id'];
+        $unit = $item['unit'];
+        $conv = (float)$item['conversion_factor'];
         $qty = (float) $item['total_qty'];
+        $base_qty = (float) $item['total_base_qty'];
         $gross = (float) $item['total_gross'];
         $disc = (float) $item['total_discount'];
         $tax = (float) $item['total_tax'];
@@ -1018,11 +1024,12 @@ function sync_daily_pos_summary($date)
         $max_line++;
         // Do not change rate of items when discount is given; keep unit_price as gross rate and record discount on invoice header
         $unit_price_full = $qty > 0 ? $gross / $qty : 0;
+        $base_cost_price = $base_qty > 0 ? $cogs / $base_qty : 0;
         $gross_profit_excl_tax = ($net - $tax) - $cogs; // true margin, tax excluded
         $pdo->prepare("
-            INSERT INTO transaction_lines (header_id, item_id, account_id, line_number, quantity, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ")->execute([$invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit_price_full, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $gross, $qty > 0 ? $cogs / $qty : 0, $gross_profit_excl_tax, $user_id]);
+            INSERT INTO transaction_lines (header_id, item_id, account_id, line_number, quantity, unit, conversion_factor, base_qty, base_unit_price, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$invoice_header_id, $item_id, $line_income_account, $max_line, $qty, $unit, $conv, $base_qty, $base_cost_price, $unit_price_full, ($gross > 0) ? ($tax / $gross) * 100 : 0, $tax, $gross, $base_cost_price, $gross_profit_excl_tax, $user_id]);
     }
 
     // Write customer_invoices record
@@ -1856,21 +1863,25 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             $hdr_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND $is_loc THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND $is_loc THEN -l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND $is_party THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND $is_loc THEN -l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN l.quantity 
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN -l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.to_location_id, h.party_id) = ? THEN l.quantity 
+                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.from_location_id, h.location_id) = ? THEN -l.quantity 
                     ELSE 0 END), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
+                LEFT JOIN inventory_transfers it ON it.header_id = h.id
                 WHERE l.item_id = ? 
-                  AND ($is_loc OR (h.txn_type = 'inventory_transfer' AND $is_party))
+                  AND (
+                     (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) OR
+                     (h.txn_type = 'inventory_transfer' AND (it.from_location_id = ? OR it.to_location_id = ? OR h.party_id = ?))
+                  )
                   AND h.is_deleted = 0 
                   AND h.status NOT IN ('void', 'voided', 'draft')
             ", [
                 $loc_id, $loc_id, $loc_id, $loc_id,
                 $item_id,
-                $loc_id, $loc_id
+                $loc_id, $loc_id, $loc_id, $loc_id
             ])['qty'] ?? 0);
 
             // Add POS Entries if matched by location
@@ -1913,18 +1924,19 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
             $available = max(0, $on_hand - $committed);
 
             // Upsert into inventory_balances table using pure INT keys
-            $existing = $db->fetchOne("SELECT id FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $loc_id]);
+            $existing = $db->fetchOne("SELECT id, average_cost FROM inventory_balances WHERE item_id = ? AND location_id = ?", [$item_id, $loc_id]);
+            $effective_cost = ($cost_price > 0) ? $cost_price : (float)($existing['average_cost'] ?? 0.00);
             if ($existing) {
                 $db->execute("
                     UPDATE inventory_balances 
-                    SET quantity_on_hand = ?, available_qty = ?, committed_qty = ?, on_order_qty = ?, average_cost = ?, last_updated = CURRENT_TIMESTAMP 
+                    SET quantity_on_hand = ?, available_qty = ?, committed_qty = ?, on_order_qty = ?, average_cost = ?, cost_price = ?, last_updated = CURRENT_TIMESTAMP 
                     WHERE id = ?
-                ", [$on_hand, $available, $committed, $on_order, $cost_price, $existing['id']]);
+                ", [$on_hand, $available, $committed, $on_order, $effective_cost, $effective_cost, $existing['id']]);
             } else {
                 $db->execute("
-                    INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ", [(int)$item_id, (int)$loc_id, $on_hand, $available, $committed, $on_order, $cost_price]);
+                    INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, committed_qty, on_order_qty, average_cost, cost_price) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ", [(int)$item_id, (int)$loc_id, $on_hand, $available, $committed, $on_order, $effective_cost, $effective_cost]);
             }
         }
 
@@ -2100,5 +2112,11 @@ if (!function_exists('check_period_lock')) {
             throw new Exception("Transaction blocked: Date {$txn_date} falls in Fiscal Year '{$fy['name']}' which is {$st}.");
         }
     }
+}
+
+function clear_dashboard_kpi_cache(): void {
+    try {
+        db()->execute("TRUNCATE TABLE dashboard_kpi_cache");
+    } catch (Throwable $e) {}
 }
 ?>

@@ -14,6 +14,7 @@ if (!empty($loc_id) && $loc_id !== 'all') {
     $rows = $db->fetchAll("
         SELECT 
             i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+            i.units_per_case, i.case_unit_name,
             i.cost_price, i.selling_price, i.reorder_level, i.item_category as category_id,
             COALESCE(ib.quantity_on_hand, 0) AS stock_qty
         FROM items i
@@ -37,6 +38,7 @@ if (!empty($loc_id) && $loc_id !== 'all') {
     $rows = $db->fetchAll("
         SELECT 
             i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+            i.units_per_case, i.case_unit_name,
             i.cost_price, i.selling_price, i.reorder_level, i.item_category as category_id,
             COALESCE(i.current_stock, 0) AS stock_qty
         FROM items i
@@ -130,7 +132,17 @@ rpt_filter_bar('Stock Summary', [
           <td><?= htmlspecialchars($r['item_name']) ?></td>
           <td><?= htmlspecialchars($r['item_category'] ?? 'Uncategorized') ?></td>
           <td><?= htmlspecialchars($r['unit_type'] ?? '') ?></td>
-          <td style="text-align:right;font-weight:600"><?= number_format($r['stock_qty'],0) ?></td>
+          <td style="text-align:right;font-weight:600">
+            <?= number_format($r['stock_qty'],0) ?> <?= htmlspecialchars($r['unit_type'] ?? 'PCS') ?>
+            <?php 
+              $conv = (int)($r['units_per_case'] ?? 0);
+              if ($conv > 1) {
+                  $case_qty = round($r['stock_qty'] / $conv, 1);
+                  $case_unit = !empty($r['case_unit_name']) ? $r['case_unit_name'] : 'CASE';
+                  echo '<br><small style="color:#666;font-weight:normal">(' . $case_qty . ' ' . htmlspecialchars($case_unit) . ')</small>';
+              }
+            ?>
+          </td>
           <td style="text-align:right"><?= number_format($r['reorder_level']) ?></td>
           <td style="text-align:right"><?= rpt_currency($r['cost_price']) ?></td>
           <td style="text-align:right"><?= rpt_currency($stock_val) ?></td>

@@ -40,6 +40,11 @@ try {
     $reorder_qty       = isset($_POST['reorder_qty']) && $_POST['reorder_qty'] !== '' ? (int)$_POST['reorder_qty'] : null;
     $description       = trim($_POST['description'] ?? '');
 
+    $case_unit_name      = !empty($_POST['case_unit_name']) ? trim($_POST['case_unit_name']) : 'CASE';
+    $case_purchase_price = isset($_POST['case_purchase_price']) && is_numeric($_POST['case_purchase_price']) ? (float)$_POST['case_purchase_price'] : null;
+    $case_selling_price  = isset($_POST['case_selling_price']) && is_numeric($_POST['case_selling_price']) ? (float)$_POST['case_selling_price'] : null;
+    $case_barcode         = trim($_POST['case_barcode'] ?? '');
+
     $inventory_account_id = trim($_POST['inventory_account_id'] ?? '');
     $cogs_account_id      = trim($_POST['cogs_account_id'] ?? '');
     $income_account_id    = trim($_POST['income_account_id'] ?? '');
@@ -93,6 +98,8 @@ try {
         throw new Exception("Income Account is required in Accounting Configuration.");
     }
 
+    $user_id = $_SESSION['user_id'] ?? '1';
+
     if (empty($id)) {
         // Create new item
         $id = generate_uuid();
@@ -102,31 +109,54 @@ try {
         $db->execute("
             INSERT INTO items (
                 id, sku, item_name, item_category, brand, unit_type, bottle_size_ml, units_per_case,
+                case_unit_name, case_purchase_price, case_selling_price, case_barcode,
                 barcode, is_active, cost_price, selling_price, mrp, tax_id, tax_rate, reorder_level, reorder_qty,
                 description, inventory_account_id, cogs_account_id, income_account_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         ", [
             $id, $sku, $item_name, $item_category, $brand, $unit_type, $bottle_size_ml, $units_per_case,
+            $case_unit_name, $case_purchase_price, $case_selling_price, $case_barcode ?: null,
             $barcode ?: null, $is_active, $cost_price, $selling_price, $mrp, $tax_id ?: null, $tax_rate, $reorder_level, $reorder_qty,
             $description, $inventory_account_id, $cogs_account_id, $income_account_id
         ]);
 
+        $new_item = $db->fetchOne("SELECT * FROM items WHERE id = ?", [$id]);
+        if ($new_item) {
+            $db->execute("
+                INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id, created_at)
+                VALUES ('items', 'create', ?, NULL, ?, ?, NOW())
+            ", [$id, json_encode($new_item), $user_id]);
+        }
+
         $message = "Item created successfully.";
     } else {
+        // Fetch old state before updating for audit comparison
+        $old_item = $db->fetchOne("SELECT * FROM items WHERE id = ?", [$id]);
+
         // Update existing item
         $db->execute("
             UPDATE items SET
                 item_name = ?, item_category = ?, brand = ?, unit_type = ?, bottle_size_ml = ?, units_per_case = ?,
+                case_unit_name = ?, case_purchase_price = ?, case_selling_price = ?, case_barcode = ?,
                 barcode = ?, is_active = ?, cost_price = ?, selling_price = ?, mrp = ?, tax_id = ?, tax_rate = ?,
                 reorder_level = ?, reorder_qty = ?, description = ?, inventory_account_id = ?, cogs_account_id = ?,
                 income_account_id = ?, updated_at = NOW()
             WHERE id = ?
         ", [
             $item_name, $item_category, $brand, $unit_type, $bottle_size_ml, $units_per_case,
+            $case_unit_name, $case_purchase_price, $case_selling_price, $case_barcode ?: null,
             $barcode ?: null, $is_active, $cost_price, $selling_price, $mrp, $tax_id ?: null, $tax_rate,
             $reorder_level, $reorder_qty, $description, $inventory_account_id, $cogs_account_id,
             $income_account_id, $id
         ]);
+
+        $new_item = $db->fetchOne("SELECT * FROM items WHERE id = ?", [$id]);
+        if ($old_item && $new_item) {
+            $db->execute("
+                INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id, created_at)
+                VALUES ('items', 'update', ?, ?, ?, ?, NOW())
+            ", [$id, json_encode($old_item), json_encode($new_item), $user_id]);
+        }
 
         $message = "Item updated successfully.";
     }

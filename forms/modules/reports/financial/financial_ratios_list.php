@@ -1,91 +1,94 @@
 <?php
 /**
  * Financial Ratios & Performance Indicators Report
+ * Fully COA-driven — no hardcoded account IDs.
  */
 require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 require_once 'api/reference_helper.php';
+require_once 'api/ReportingEngine.php';
 
 $db = db();
 
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 
 $loc_sql = rpt_location_sql('h');
 
-// Fetch Income Statement balances
-$revenue = -(float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'income' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-", [$date_from, $date_to])['v'] ?? 0);
+// ── Income Statement — via central engine (same as P&L report) ───────────────
+$pnl = re_get_pnl($db, $date_from, $date_to, $_GET['location_id'] ?? null);
+$revenue      = $pnl['total_revenue'];
+$cogs         = $pnl['total_cogs'];
+$expenses     = $pnl['total_expenses'];
+$gross_profit = $pnl['gross_profit'];
+$net_profit   = $pnl['net_profit'];
 
-$cogs = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND (a.account_subtype = 'Cost of Goods Sold' OR a.id = 'acc-5100' OR a.account_name LIKE '%cogs%' OR a.account_name LIKE '%cost of goods%')
-      AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-", [$date_from, $date_to])['v'] ?? 0);
+// ── Balance Sheet Balances — COA-driven via account_type / account_subtype ───
 
-$expenses = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND (a.account_subtype != 'Cost of Goods Sold' AND a.id != 'acc-5100' AND a.account_name NOT LIKE '%cogs%' AND a.account_name NOT LIKE '%cost of goods%')
-      AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-", [$date_from, $date_to])['v'] ?? 0);
-
-$gross_profit = $revenue - $cogs;
-$net_profit   = $gross_profit - $expenses;
-
-// Fetch Balance Sheet balances as of date_to
-$cash_bank = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as v
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.id IN ('acc-1010', 'acc-1020') OR (a.account_type = 'asset' AND (a.account_name LIKE '%cash%' OR a.account_name LIKE '%bank%') AND a.account_name NOT LIKE '%receivable%'))
-      AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+// Cash & Bank: asset accounts with subtype 'Cash' or 'Bank'
+$cash_bank = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'asset'
+      AND a.account_subtype IN ('Cash', 'Bank')
+      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
-$receivables = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as v
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.id = 'acc-1100' OR a.account_type = 'accounts_receivable' OR (a.account_name LIKE '%receivable%' AND a.account_name NOT LIKE '%payable%'))
-      AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+// AR: accounts with account_subtype = 'Accounts Receivable'
+$receivables = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'asset' AND a.account_subtype = 'Accounts Receivable'
+      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
-$inventory_asset = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as v
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.id = 'acc-1200' OR a.account_type = 'inventory' OR (a.account_name LIKE '%inventory%' AND a.account_type = 'asset'))
-      AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+// Inventory: accounts with account_subtype = 'Inventory Asset'
+$inventory_asset = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'asset' AND a.account_subtype = 'Inventory Asset'
+      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 $current_assets = $cash_bank + $receivables + $inventory_asset;
 
-$current_liabilities = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as v
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.account_type IN ('accounts_payable', 'current_liability', 'liability') OR a.id IN ('acc-2100', 'acc-2200'))
-      AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+// Liabilities: all accounts with account_type = 'liability'
+$current_liabilities = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as v
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'liability'
+      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
-$total_equity = (float) ($db->fetchOne("
-    SELECT -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as v
-    FROM journal_entries j JOIN accounts a ON j.account_id = a.id JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type IN ('equity', 'income', 'expense') AND h.txn_date <= ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+// Equity: accounts with account_type = 'equity' (credit-normal, so flip sign)
+$equity_accts = (float)($db->fetchOne("
+    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as v
+    FROM journal_entries j
+    JOIN accounts a ON j.account_id = a.id
+    JOIN transaction_headers h ON j.header_id = h.id
+    WHERE a.account_type = 'equity'
+      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
-// Calculate Ratios
-$current_ratio = $current_liabilities > 0 ? ($current_assets / $current_liabilities) : 0;
-$quick_ratio   = $current_liabilities > 0 ? (($cash_bank + $receivables) / $current_liabilities) : 0;
+$total_equity = $equity_accts + $net_profit; // equity + current period net income
+
+// ── Ratios ────────────────────────────────────────────────────────────────────
+$current_ratio  = $current_liabilities > 0 ? ($current_assets / $current_liabilities) : 0;
+$quick_ratio    = $current_liabilities > 0 ? (($cash_bank + $receivables) / $current_liabilities) : 0;
 $debt_to_equity = $total_equity > 0 ? ($current_liabilities / $total_equity) : 0;
-$gross_margin  = $revenue > 0 ? (($gross_profit / $revenue) * 100) : 0;
-$net_margin    = $revenue > 0 ? (($net_profit / $revenue) * 100) : 0;
-$roe           = $total_equity > 0 ? (($net_profit / $total_equity) * 100) : 0;
+$gross_margin   = $revenue > 0 ? (($gross_profit / $revenue) * 100) : 0;
+$net_margin     = $revenue > 0 ? (($net_profit / $revenue) * 100) : 0;
+$roe            = $total_equity > 0 ? (($net_profit / $total_equity) * 100) : 0;
 ?>
 
 <style>
@@ -151,12 +154,12 @@ $roe           = $total_equity > 0 ? (($net_profit / $total_equity) * 100) : 0;
                 <tr><td>Gross Profit</td><td style="text-align:right; font-weight:700; color:#003087;"><?= rpt_currency($gross_profit) ?></td></tr>
                 <tr><td>Operating Expenses</td><td style="text-align:right; font-weight:600; color:#dc2626;"><?= rpt_currency($expenses) ?></td></tr>
                 <tr style="background:#f8fafc; font-weight:800;"><td>Net Profit / (Loss)</td><td style="text-align:right; color:<?= $net_profit >= 0 ? '#059669' : '#dc2626' ?>; font-size:14px;"><?= rpt_currency($net_profit) ?></td></tr>
-                <tr><td>Cash & Bank Balances</td><td style="text-align:right; font-weight:600;"><?= rpt_currency($cash_bank) ?></td></tr>
+                <tr><td>Cash &amp; Bank Balances</td><td style="text-align:right; font-weight:600;"><?= rpt_currency($cash_bank) ?></td></tr>
                 <tr><td>Accounts Receivable</td><td style="text-align:right; font-weight:600;"><?= rpt_currency($receivables) ?></td></tr>
                 <tr><td>Inventory Asset Value</td><td style="text-align:right; font-weight:600;"><?= rpt_currency($inventory_asset) ?></td></tr>
                 <tr><td>Total Current Liabilities</td><td style="text-align:right; font-weight:700; color:#dc2626;"><?= rpt_currency($current_liabilities) ?></td></tr>
                 <tr style="background:#003087; color:#fff; font-weight:900;">
-                    <td style="padding:10px 14px">TOTAL OWNER'S EQUITY</td>
+                    <td style="padding:10px 14px">TOTAL OWNER'S EQUITY (incl. Net Income)</td>
                     <td style="text-align:right; padding:10px 14px"><?= rpt_currency($total_equity) ?></td>
                 </tr>
             </tbody>

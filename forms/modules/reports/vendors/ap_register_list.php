@@ -6,7 +6,7 @@ $db = db();
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 $vendor_id = $_GET['vendor_id'] ?? '';
 
 // Fetch vendors for filter dropdown
@@ -51,28 +51,30 @@ $sql = "
         th.id as header_id,
         th.txn_date,
         th.txn_number,
-        v.company_name as vendor_name,
+        COALESCE(v.company_name, 'Unknown Vendor') as vendor_name,
         th.txn_number as vendor_invoice_number,
         th.txn_date as bill_date,
         th.txn_date as due_date,
         0.00 as subtotal,
         0.00 as discount_amount,
         0.00 as tax_amount,
-        SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total_amount,
+        j.amount as total_amount,
         COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
-        (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
-        CASE WHEN (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
+        (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+        CASE WHEN (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
     FROM journal_entries j
     JOIN transaction_headers th ON j.header_id = th.id
     LEFT JOIN vendors v ON COALESCE(j.party_id, th.party_id) = v.id
-    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
-    WHERE (j.party_type = 'vendor' OR j.party_type IS NULL)
+    LEFT JOIN accounts a ON j.account_id = a.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND (tl.link_type = CONCAT('payment:', j.id) OR tl.link_type LIKE CONCAT('payment:', j.id, ':%'))
+    WHERE (j.party_type = 'vendor' OR a.account_subtype IN ('Accounts Payable', 'AP'))
+      AND j.entry_type = 'credit'
       AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND th.txn_type IN ('Journal', 'journal_entry')
       AND th.txn_date BETWEEN ? AND ? {$where_vend_j} {$loc_sql_th}
-    GROUP BY th.id, th.txn_date, th.txn_number, v.company_name
+    GROUP BY j.id, th.id, th.txn_date, th.txn_number, v.company_name
     ORDER BY txn_date DESC, txn_number DESC
 ";
 $params = [$date_from, $date_to, $date_from, $date_to];
@@ -94,9 +96,9 @@ $total_balance  = array_sum(array_column($rows, 'balance_due'));
 </style>
 
 <?php rpt_filter_bar('Accounts Payable (AP) Register', [
-    ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
-    ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
-    ['name'=>'vendor_id','label'=>'Vendor','type'=>'select','default'=>'','options'=>$vendor_options]
+    ['name'=>'date_from','label'=>'From','type'=>'date','default'=>$date_from],
+    ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$date_to],
+    ['name'=>'vendor_id','label'=>'Vendor','type'=>'select','default'=>$vendor_id,'options'=>$vendor_options]
 ], 'tbl-ap-reg'); ?>
 
 <div class="rpt-summary">

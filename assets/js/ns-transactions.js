@@ -1,5 +1,5 @@
 /**
- * NetSuite Transactions UI Logic
+ * ERP Transactions UI Logic
  * Handles dynamic grid interactions and front-end calculations
  */
 
@@ -179,3 +179,47 @@ function nsDeleteTransaction(id, redirectUrl) {
         });
     }
 }
+
+/* ERP Action Dropdown System */
+function nsPositionDropdown(toggle, menu) {
+    if (!toggle || !menu) return;
+    const btnRect = toggle.getBoundingClientRect();
+    const menuH = $(menu).outerHeight() || 160;
+    const spaceBelow = window.innerHeight - btnRect.bottom;
+    menu.style.position = 'fixed';
+    menu.style.left = Math.max(10, (btnRect.right - 160)) + 'px';
+    if (spaceBelow < menuH + 10) {
+        menu.style.top = Math.max(10, (btnRect.top - menuH)) + 'px';
+    } else {
+        menu.style.top = (btnRect.bottom + 4) + 'px';
+    }
+    menu.style.zIndex = '999999';
+}
+
+$(document).on('click', '.ns-dropdown-toggle', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const toggle = this;
+    const menu = $(toggle).next('.ns-action-dropdown-menu')[0];
+    if (!menu) return;
+
+    const isOpen = $(menu).hasClass('show');
+    $('.ns-action-dropdown-menu').removeClass('show');
+
+    if (!isOpen) {
+        $(menu).addClass('show');
+        nsPositionDropdown(toggle, menu);
+    }
+});
+
+$(document).on('click', function (e) {
+    if (!$(e.target).closest('.ns-dropdown-toggle, .ns-action-dropdown-menu').length) {
+        $('.ns-action-dropdown-menu').removeClass('show');
+    }
+});
+
+$(window).on('scroll resize', function () {
+    $('.ns-action-dropdown-menu.show').removeClass('show');
+});
+
+

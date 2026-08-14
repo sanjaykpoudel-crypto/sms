@@ -126,11 +126,13 @@ class DBConnection
 
             // 2. Default Seed Records
             $seedRecords = [
+                ['Cash', 'Asset', 'Debit', 'Cash on hand accounts', 1, 1, 5],
                 ['Bank', 'Asset', 'Debit', 'Bank and cash accounts', 1, 1, 10],
                 ['Accounts Receivable', 'Asset', 'Debit', 'Customer receivables', 1, 1, 30],
                 ['Inventory Asset', 'Asset', 'Debit', 'Liquor inventory value', 1, 1, 40],
                 ['Other Current Asset', 'Asset', 'Debit', 'Deposits, advances, prepaid expenses', 1, 1, 50],
                 ['Fixed Asset', 'Asset', 'Debit', 'Furniture, vehicles, equipment', 1, 1, 60],
+                ['Contra Asset', 'Asset', 'Debit', 'Accumulated depreciation and contra assets', 1, 1, 65],
                 ['Other Asset', 'Asset', 'Debit', 'Long-term assets', 1, 1, 70],
 
                 ['Accounts Payable', 'Liability', 'Credit', 'Vendor balances', 1, 1, 80],
@@ -167,14 +169,6 @@ class DBConnection
                 }
             }
 
-            // If Cash account type exists, reassign accounts to Bank and remove Cash
-            $bankRow = $this->conn->query("SELECT AccountTypeId FROM `AccountTypeMaster` WHERE AccountTypeName = 'Bank'")->fetch();
-            $cashRow = $this->conn->query("SELECT AccountTypeId FROM `AccountTypeMaster` WHERE AccountTypeName = 'Cash'")->fetch();
-            if ($bankRow && $cashRow) {
-                $this->conn->exec("UPDATE accounts SET account_type_id = {$bankRow['AccountTypeId']} WHERE account_type_id = {$cashRow['AccountTypeId']}");
-                $this->conn->exec("DELETE FROM AccountTypeMaster WHERE AccountTypeName = 'Cash'");
-            }
-
             // Drop account_code column if present
             try {
                 $codeCheck = $this->conn->query("SHOW COLUMNS FROM `accounts` LIKE 'account_code'")->fetch();
@@ -195,11 +189,20 @@ class DBConnection
                 $this->conn->exec("ALTER TABLE `accounts` ADD COLUMN `description` VARCHAR(255) NULL AFTER `normal_balance`");
             }
 
+            // Explicitly set account_type_id for key system accounts by name/subtype
+            $this->conn->exec("
+                UPDATE accounts a JOIN AccountTypeMaster atm ON atm.AccountTypeName = 'Cash' SET a.account_type_id = atm.AccountTypeId WHERE a.account_name = 'Cash';
+                UPDATE accounts a JOIN AccountTypeMaster atm ON atm.AccountTypeName = 'Contra Asset' SET a.account_type_id = atm.AccountTypeId WHERE a.account_name = 'Accumulated Depreciation';
+                UPDATE accounts a JOIN AccountTypeMaster atm ON atm.AccountTypeName = 'Bank' SET a.account_type_id = atm.AccountTypeId WHERE a.account_name IN ('Prabhu Bank', 'Esewa');
+            ");
+
             // 4. Populate missing account_type_id in accounts table based on existing data
             $this->conn->exec("
                 UPDATE accounts a
                 JOIN AccountTypeMaster atm ON (
-                    (a.account_subtype IN ('bank', 'cash') AND atm.AccountTypeName = 'Bank') OR
+                    (a.account_name = 'Cash' AND atm.AccountTypeName = 'Cash') OR
+                    (a.account_name = 'Accumulated Depreciation' AND atm.AccountTypeName = 'Contra Asset') OR
+                    (a.account_subtype = 'bank' AND atm.AccountTypeName = 'Bank') OR
                     (a.account_subtype = 'receivable' AND atm.AccountTypeName = 'Accounts Receivable') OR
                     (a.account_subtype = 'inventory' AND atm.AccountTypeName = 'Inventory Asset') OR
                     (a.account_subtype = 'payable' AND atm.AccountTypeName = 'Accounts Payable') OR
@@ -534,7 +537,7 @@ function get_accounting_tax_list(): array
     if ($tax_list === null) {
         try {
             $db = db();
-            $tax_list = $db->fetchAll("SELECT id, name, code, value, is_active FROM reference_codes WHERE type IN ('tax', 'tax_code') AND is_active = 1 ORDER BY value ASC");
+            $tax_list = $db->fetchAll("SELECT MIN(id) as id, name, code, value, is_active FROM reference_codes WHERE type IN ('tax', 'tax_code') AND is_active = 1 GROUP BY name, value ORDER BY value ASC");
             if (empty($tax_list)) {
                 $tax_list = [
                     ['id' => '0ef7af3b-0c9d-41d3-b6f8-f7f3dfb2b9aa', 'name' => 'Non-Taxable', 'code' => 'Zero', 'value' => 0.00, 'is_active' => 1],

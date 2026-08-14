@@ -294,17 +294,18 @@ function rpt_filter_bar(string $title, array $filters, string $export_id = '', s
     
     $fy_info = rpt_get_current_fiscal_year_dates();
 
-    // Auto-default date filter fields to current active fiscal year if not provided or set to legacy monthly default
+    $today = date('Y-m-d');
+    // Auto-default date filter fields ONLY if default is not already set by report caller
     foreach ($filters as &$f) {
         if (($f['type'] ?? '') === 'date') {
             if (($f['name'] ?? '') === 'date_from' || ($f['name'] ?? '') === 'from_date') {
-                if (!isset($_GET[$f['name']]) && (empty($f['default']) || $f['default'] === date('Y-m-01') || $f['default'] === date('Y-01-01'))) {
+                if (!isset($_GET[$f['name']]) && empty($f['default'])) {
                     $f['default'] = $fy_info['start_date'];
                 }
             }
-            if (($f['name'] ?? '') === 'date_to' || ($f['name'] ?? '') === 'to_date') {
-                if (!isset($_GET[$f['name']]) && (empty($f['default']) || $f['default'] === date('Y-m-d'))) {
-                    $f['default'] = $fy_info['end_date'];
+            if (($f['name'] ?? '') === 'date_to' || ($f['name'] ?? '') === 'to_date' || ($f['name'] ?? '') === 'as_of_date') {
+                if (!isset($_GET[$f['name']]) && empty($f['default'])) {
+                    $f['default'] = $today;
                 }
             }
         }
@@ -482,7 +483,8 @@ function rpt_get_location_options(): array {
 }
 
 function rpt_location_filter(string $name = 'location_id', string $label = 'Location'): array {
-    $default_loc = $_GET[$name] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
+    $user_def_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+    $default_loc = $_GET[$name] ?? ($user_def_loc ?: ($_SESSION['location_id'] ?? ''));
     return [
         'name' => $name,
         'label' => $label,
@@ -492,7 +494,8 @@ function rpt_location_filter(string $name = 'location_id', string $label = 'Loca
     ];
 }
 function rpt_location_sql(string $alias = 'h'): string {
-    $loc_id = $_GET['location_id'] ?? ($_SESSION['location_id'] ?? (function_exists('get_user_default_location_id') ? get_user_default_location_id() : ''));
+    $user_def_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+    $loc_id = $_GET['location_id'] ?? ($user_def_loc ?: ($_SESSION['location_id'] ?? ''));
     if (!empty($loc_id) && $loc_id !== 'all') {
         $db = db();
         return " AND {$alias}.location_id = " . $db->getConnection()->quote($loc_id) . " ";

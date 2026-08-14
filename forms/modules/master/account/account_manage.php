@@ -78,9 +78,17 @@ if ($id) {
             </div>
             <div style="flex: 1;">
                 <div class="ns-form-group">
-                    <label class="ns-label">Account Type *</label>
+                    <label class="ns-label">
+                        Account Type *
+                        <?php if ($id): ?>
+                            <span title="Account type cannot be changed after creation to preserve accounting integrity."
+                                style="margin-left:6px; font-size:11px; color:#e55; font-weight:600; cursor:help;">
+                                <i class="fas fa-lock" style="font-size:10px;"></i> Locked
+                            </span>
+                        <?php endif; ?>
+                    </label>
                     <select name="account_type_id" id="account_type_id_select" class="ns-select" required
-                        onchange="onAccountTypeMasterChange(this)">
+                        <?php if ($id): ?>disabled title="Account type cannot be changed after the account is created."<?php else: ?>onchange="onAccountTypeMasterChange(this)"<?php endif; ?>>
                         <option value="">Select Account Type</option>
                         <?php foreach ($account_type_masters as $atm):
                             $sel = ($data['account_type_id'] ?? '') == $atm['AccountTypeId'] ? 'selected' : '';
@@ -93,6 +101,9 @@ if ($id) {
                             </option>
                         <?php endforeach; ?>
                     </select>
+                    <?php if ($id): ?>
+                        <input type="hidden" name="account_type_id" value="<?php echo htmlspecialchars($data['account_type_id'] ?? ''); ?>">
+                    <?php endif; ?>
                 </div>
             </div>
         </div>

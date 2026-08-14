@@ -45,9 +45,9 @@ $as_of_prev = $prev_fy ? $prev_fy['end_date'] : '1970-01-01';
 $start_date_prev = $prev_fy ? get_report_start_date($as_of_prev) : '1970-01-01';
 
 /**
- * Helpers to fetch GL balances
+ * Helpers to fetch GL balances (Cumulative As Of point-in-time for Balance Sheet)
  */
-function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id = true)
+function get_gl_bal_for_as_of($db, $id_or_subtype, $as_of, $is_id = true)
 {
   $field = $is_id ? 'j.account_id' : 'a.account_subtype';
   $loc_sql = rpt_location_sql('h');
@@ -56,13 +56,13 @@ function get_gl_bal_for_dates($db, $id_or_subtype, $start_date, $as_of, $is_id =
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE $field = ? AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ", [$id_or_subtype, $start_date, $as_of]);
+    ", [$id_or_subtype, $as_of]);
   return (float) ($row['bal'] ?? 0);
 }
 
-function get_bank_bal_for_dates($db, $start_date, $as_of)
+function get_bank_bal_for_as_of($db, $as_of)
 {
   $loc_sql = rpt_location_sql('h');
   $row = $db->fetchOne("
@@ -70,13 +70,29 @@ function get_bank_bal_for_dates($db, $start_date, $as_of)
         FROM journal_entries j
         JOIN accounts a ON j.account_id = a.id
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE a.account_type = 'asset' AND a.account_subtype = 'Bank'
+          AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ", [$start_date, $as_of]);
-  return (float) ($row['bal'] ?? 0);
+    ", [$as_of]);
+  return (float)($row['bal'] ?? 0);
 }
 
-function get_re_for_dates($db, $start_date, $as_of)
+function get_cash_bal_for_as_of($db, $as_of)
+{
+  $loc_sql = rpt_location_sql('h');
+  $row = $db->fetchOne("
+        SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+        FROM journal_entries j
+        JOIN accounts a ON j.account_id = a.id
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE a.account_type = 'asset' AND a.account_subtype = 'Cash'
+          AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
+    ", [$as_of]);
+  return (float)($row['bal'] ?? 0);
+}
+
+function get_re_for_as_of($db, $as_of)
 {
   $loc_sql = rpt_location_sql('h');
   $revenue = -(float) ($db->fetchOne("
@@ -84,51 +100,51 @@ function get_re_for_dates($db, $start_date, $as_of)
         FROM journal_entries j 
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'income' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE a.account_type = 'income' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ", [$start_date, $as_of])['v'] ?? 0);
+    ", [$as_of])['v'] ?? 0);
 
   $expenses = (float) ($db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
         FROM journal_entries j 
         JOIN accounts a ON j.account_id = a.id 
         JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'expense' AND j.entry_date BETWEEN ? AND ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+        WHERE a.account_type = 'expense' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ", [$start_date, $as_of])['v'] ?? 0);
+    ", [$as_of])['v'] ?? 0);
 
   return $revenue - $expenses;
 }
 
 function get_inv_reserve_for_dates($db, $start_date, $as_of)
 {
-  // Inventory adjustments are now included in their original accounts directly.
+  // Inventory adjustments are included in their original accounts directly.
   return 0.0;
 }
 
 // ─── 1. ASSETS ───────────────────────────────────────────────────────────────
-$cash_this = get_gl_bal_for_dates($db, 'acc-1010', $start_date_this, $as_of_this);
-$cash_prev = $prev_fy ? get_gl_bal_for_dates($db, 'acc-1010', $start_date_prev, $as_of_prev) : 0.0;
+// Cash on Hand (account_subtype = 'Cash')
+$cash_this = get_cash_bal_for_as_of($db, $as_of_this);
+$cash_prev = $prev_fy ? get_cash_bal_for_as_of($db, $as_of_prev) : 0.0;
 
-$bank_this = get_bank_bal_for_dates($db, $start_date_this, $as_of_this);
-$bank_prev = $prev_fy ? get_bank_bal_for_dates($db, $start_date_prev, $as_of_prev) : 0.0;
+// Bank / Digital (account_subtype = 'Bank')
+$bank_this = get_bank_bal_for_as_of($db, $as_of_this);
+$bank_prev = $prev_fy ? get_bank_bal_for_as_of($db, $as_of_prev) : 0.0;
 
-$ar_this = get_gl_bal_for_dates($db, 'Accounts Receivable', $start_date_this, $as_of_this, false);
-$ar_prev = $prev_fy ? get_gl_bal_for_dates($db, 'Accounts Receivable', $start_date_prev, $as_of_prev, false) : 0.0;
+$ar_this = get_gl_bal_for_as_of($db, 'Accounts Receivable', $as_of_this, false);
+$ar_prev = $prev_fy ? get_gl_bal_for_as_of($db, 'Accounts Receivable', $as_of_prev, false) : 0.0;
 
-$inv_this = get_gl_bal_for_dates($db, 'Inventory Asset', $start_date_this, $as_of_this, false);
-$inv_prev = $prev_fy ? get_gl_bal_for_dates($db, 'Inventory Asset', $start_date_prev, $as_of_prev, false) : 0.0;
+$inv_this = get_gl_bal_for_as_of($db, 'Inventory Asset', $as_of_this, false);
+$inv_prev = $prev_fy ? get_gl_bal_for_as_of($db, 'Inventory Asset', $as_of_prev, false) : 0.0;
 
 $total_curr_assets_this = $cash_this + $bank_this + $ar_this + $inv_this;
 $total_curr_assets_prev = $cash_prev + $bank_prev + $ar_prev + $inv_prev;
 
-// Other Assets
+// Other Assets — exclude Cash, Bank, AR, Inventory subtypes (they are already shown above)
 $other_asset_accounts = $db->fetchAll("
-    SELECT id, REPLACE(id, 'acc-', '') as account_code, account_name FROM accounts 
+    SELECT id, account_name FROM accounts 
     WHERE account_type = 'asset' 
-      AND account_subtype NOT IN ('Accounts Receivable', 'Inventory Asset') 
-      AND id != 'acc-1010' 
-      AND account_subtype != 'Bank'
+      AND account_subtype NOT IN ('Accounts Receivable', 'Inventory Asset', 'Cash', 'Bank')
       AND is_deleted = 0 AND is_active = 1
     ORDER BY account_name ASC
 ");
@@ -137,8 +153,8 @@ $other_assets_total_this = 0.0;
 $other_assets_total_prev = 0.0;
 
 foreach ($other_asset_accounts as $acc) {
-  $val_this = get_gl_bal_for_dates($db, $acc['id'], $start_date_this, $as_of_this);
-  $val_prev = $prev_fy ? get_gl_bal_for_dates($db, $acc['id'], $start_date_prev, $as_of_prev) : 0.0;
+  $val_this = get_gl_bal_for_as_of($db, $acc['id'], $as_of_this);
+  $val_prev = $prev_fy ? get_gl_bal_for_as_of($db, $acc['id'], $as_of_prev) : 0.0;
   if (abs($val_this) < 0.005 && abs($val_prev) < 0.005)
     continue;
 
@@ -155,11 +171,11 @@ $total_assets_this = $total_curr_assets_this + $other_assets_total_this;
 $total_assets_prev = $total_curr_assets_prev + $other_assets_total_prev;
 
 // ─── 2. LIABILITIES ──────────────────────────────────────────────────────────
-$ap_this = -get_gl_bal_for_dates($db, 'Accounts Payable', $start_date_this, $as_of_this, false);
-$ap_prev = $prev_fy ? -get_gl_bal_for_dates($db, 'Accounts Payable', $start_date_prev, $as_of_prev, false) : 0.0;
+$ap_this = -get_gl_bal_for_as_of($db, 'Accounts Payable', $as_of_this, false);
+$ap_prev = $prev_fy ? -get_gl_bal_for_as_of($db, 'Accounts Payable', $as_of_prev, false) : 0.0;
 
-$tax_this = -get_gl_bal_for_dates($db, 'Other Current Liability', $start_date_this, $as_of_this, false);
-$tax_prev = $prev_fy ? -get_gl_bal_for_dates($db, 'Other Current Liability', $start_date_prev, $as_of_prev, false) : 0.0;
+$tax_this = -get_gl_bal_for_as_of($db, 'Other Current Liability', $as_of_this, false);
+$tax_prev = $prev_fy ? -get_gl_bal_for_as_of($db, 'Other Current Liability', $as_of_prev, false) : 0.0;
 
 // Other Liabilities
 $other_liability_accounts = $db->fetchAll("
@@ -174,8 +190,8 @@ $other_liab_total_this = 0.0;
 $other_liab_total_prev = 0.0;
 
 foreach ($other_liability_accounts as $acc) {
-  $val_this = -get_gl_bal_for_dates($db, $acc['id'], $start_date_this, $as_of_this);
-  $val_prev = $prev_fy ? -get_gl_bal_for_dates($db, $acc['id'], $start_date_prev, $as_of_prev) : 0.0;
+  $val_this = -get_gl_bal_for_as_of($db, $acc['id'], $as_of_this);
+  $val_prev = $prev_fy ? -get_gl_bal_for_as_of($db, $acc['id'], $as_of_prev) : 0.0;
   if (abs($val_this) < 0.005 && abs($val_prev) < 0.005)
     continue;
 
@@ -192,8 +208,8 @@ $total_liabilities_this = $ap_this + $tax_this + $other_liab_total_this;
 $total_liabilities_prev = $ap_prev + $tax_prev + $other_liab_total_prev;
 
 // ─── 3. EQUITY ───────────────────────────────────────────────────────────────
-$re_this = get_re_for_dates($db, $start_date_this, $as_of_this);
-$re_prev = $prev_fy ? get_re_for_dates($db, $start_date_prev, $as_of_prev) : 0.0;
+$re_this = get_re_for_as_of($db, $as_of_this);
+$re_prev = $prev_fy ? get_re_for_as_of($db, $as_of_prev) : 0.0;
 
 // Other Equity Accounts
 $equity_accounts_list = $db->fetchAll("
@@ -207,8 +223,8 @@ $equity_total_this = 0.0;
 $equity_total_prev = 0.0;
 
 foreach ($equity_accounts_list as $acc) {
-  $val_this = -get_gl_bal_for_dates($db, $acc['id'], $start_date_this, $as_of_this, true, false);
-  $val_prev = $prev_fy ? -get_gl_bal_for_dates($db, $acc['id'], $start_date_prev, $as_of_prev, true, false) : 0.0;
+  $val_this = -get_gl_bal_for_as_of($db, $acc['id'], $as_of_this);
+  $val_prev = $prev_fy ? -get_gl_bal_for_as_of($db, $acc['id'], $as_of_prev) : 0.0;
   if (abs($val_this) < 0.005 && abs($val_prev) < 0.005)
     continue;
 

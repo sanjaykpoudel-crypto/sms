@@ -10,7 +10,7 @@ $db = db();
 $fy         = rpt_get_current_fiscal_year_dates();
 $today      = date('Y-m-d');
 $date_from  = $_GET['date_from'] ?? $fy['start_date'];
-$date_to    = $_GET['date_to']   ?? $fy['end_date'];
+$date_to    = $_GET['date_to']   ?? $today;
 
 $loc_sql = rpt_location_sql('h');
 $loc_sql_th = rpt_location_sql('th');
@@ -21,8 +21,8 @@ $pos_sales_rows = $db->fetchAll("
     SELECT
         DATE(pe.date_time) as txn_date,
         SUM(pi.net_amount - pi.tax)                            as total_sales,
-        SUM(pi.quantity * i.cost_price)                        as total_cogs,
-        SUM((pi.net_amount - pi.tax) - (pi.quantity * i.cost_price)) as gross_profit
+        SUM(COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price) as total_cogs,
+        SUM((pi.net_amount - pi.tax) - (COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price)) as gross_profit
     FROM pos_items pi
     JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
     JOIN pos_entry pe ON pi.pos_id = pe.id
@@ -36,8 +36,8 @@ $non_pos_sales_rows = $db->fetchAll("
     SELECT
         h.txn_date,
         SUM(l.line_total)             as total_sales,
-        SUM(l.cost_price * l.quantity) as total_cogs,
-        SUM(l.gross_profit)           as gross_profit
+        SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))) as total_cogs,
+        SUM(COALESCE(l.gross_profit, l.line_total - (l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))))) as gross_profit
     FROM transaction_lines l
     JOIN transaction_headers h ON l.header_id = h.id
     WHERE h.txn_type = 'customer_invoice'
@@ -123,9 +123,9 @@ $dt_inv_txns = $db->fetchAll("
         CASE WHEN h.txn_number LIKE 'INV-POS-%' OR h.txn_number LIKE 'POS-%' THEN 'POS Invoice' ELSE 'Invoice' END as type_label,
         COALESCE(NULLIF(TRIM(c.full_name), ''), NULLIF(TRIM(h.memo), ''), 'Customer Invoice') as party_name,
         COALESCE(NULLIF(SUM(l.line_total), 0), h.net_amount) as sales,
-        COALESCE(SUM(l.cost_price * l.quantity), 0.00) as cogs,
+        COALESCE(SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0.00) as cogs,
         0.00 as expense,
-        (COALESCE(NULLIF(SUM(l.line_total), 0), h.net_amount) - COALESCE(SUM(l.cost_price * l.quantity), 0.00)) as net_profit,
+        (COALESCE(NULLIF(SUM(l.line_total), 0), h.net_amount) - COALESCE(SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0.00)) as net_profit,
         NULL as pos_id,
         h.id as header_id
     FROM transaction_headers h

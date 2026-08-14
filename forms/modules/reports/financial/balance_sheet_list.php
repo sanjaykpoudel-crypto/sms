@@ -1,155 +1,168 @@
 <?php
+/**
+ * Balance Sheet Report
+ * ─────────────────────────────────────────────────────────────
+ * AUTHORITATIVE SOURCE: ReportingEngine.php → re_get_balance_sheet()
+ *
+ * Rules:
+ *  - Assets, Liabilities, Equity are ALL derived from account_type in COA.
+ *  - Cash vs Bank split: account_subtype 'Cash' = Cash on Hand; 'Bank' = Bank/Digital.
+ *  - No hardcoded account IDs or names.
+ *  - Net Income comes from re_get_pnl() (same engine as P&L report).
+ *  - Balance Sheet MUST show reconciliation error banner if Assets ≠ Liabilities + Equity.
+ */
 require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 require_once 'api/reference_helper.php';
+require_once 'api/ReportingEngine.php';
+
 $db = db();
 
-$fy        = rpt_get_current_fiscal_year_dates();
-$today     = date('Y-m-d');
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$fy       = rpt_get_current_fiscal_year_dates();
+$today    = date('Y-m-d');
+$date_to  = $_GET['date_to']  ?? $today;
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
+$user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
 
-$start_date = $date_from;
-$as_of      = $date_to;
+$as_of = $date_to;
 
-/**
- * Helper to get GL balance for an account or subtype as of date
- */
-function get_gl_bal($db, $id_or_subtype, $as_of, $start_date = null, $is_id = true) {
-    $field = $is_id ? 'j.account_id' : 'a.account_subtype';
-    $loc_sql = rpt_location_sql('h');
-    $row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE $field = ? AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-          AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ", [$id_or_subtype, $as_of]);
-    return (float)($row['bal'] ?? 0);
+// ── Central Engine Calls ─────────────────────────────────────
+$bs  = re_get_balance_sheet($db, $as_of, $location_id);
+$pnl = re_get_pnl($db, $date_from, $as_of, $location_id);
+
+// ── Classify assets by subtype (exactly matching actual COA subtypes) ───
+// COA actual subtypes: Cash, Bank, Accounts Receivable, Inventory Asset,
+//                      Fixed Asset, Contra Asset, Other Current Asset
+$cash_subtypes         = ['Cash'];                   // Only account_subtype = 'Cash'
+$bank_subtypes         = ['Bank'];                   // Only account_subtype = 'Bank'
+$inv_subtypes          = ['Inventory Asset'];         // Only account_subtype = 'Inventory Asset'
+$ar_subtypes           = ['Accounts Receivable'];     // Only account_subtype = 'Accounts Receivable'
+$fixed_asset_subtypes  = ['Fixed Asset'];             // Property/Equipment
+$contra_subtypes       = ['Contra Asset'];            // Accumulated Depreciation (deducted)
+
+$cash_on_hand   = 0; $bank_balance  = 0; $ar_balance = 0;
+$inventory_val  = 0; $fixed_assets  = 0; $contra_assets = 0;
+$other_assets   = [];
+
+foreach ($bs['assets'] as $a) {
+    $sub = $a['subtype'] ?? '';
+    if (in_array($sub, $cash_subtypes)) {
+        $cash_on_hand += $a['balance'];
+    } elseif (in_array($sub, $bank_subtypes)) {
+        $bank_balance += $a['balance'];
+    } elseif (in_array($sub, $ar_subtypes)) {
+        $ar_balance += $a['balance'];
+    } elseif (in_array($sub, $inv_subtypes)) {
+        $inventory_val += $a['balance'];
+    } elseif (in_array($sub, $fixed_asset_subtypes)) {
+        $fixed_assets += $a['balance'];
+    } elseif (in_array($sub, $contra_subtypes)) {
+        // Accumulated Depreciation is debit-normal but always negative on BS
+        // The GL returns it as a positive debit balance; we negate it to show as deduction
+        $contra_assets += $a['balance'];
+    } else {
+        $other_assets[] = $a;
+    }
 }
 
-$loc_sql = rpt_location_sql('h');
-$src_filter = "AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening'))";
+$net_fixed_assets     = $fixed_assets - $contra_assets; // Net Book Value
+$total_current_assets = $cash_on_hand + $bank_balance + $ar_balance + $inventory_val;
+$total_other_assets   = $net_fixed_assets + array_sum(array_column($other_assets, 'balance'));
+$total_assets         = $bs['total_assets'];
 
-// ─── ASSETS ───────────────────────────────────────────────────────────────────
-$cash_on_hand   = get_gl_bal($db, 'acc-1010', $as_of);
-// Other bank accounts (anything subtype bank except the main cash account)
-$bank_balance   = (float)($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND a.id != 'acc-1010' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-", [$as_of])['bal'] ?? 0);
+// ── Liabilities: AP vs Tax/VAT vs Other ──────────────────────
+$ap_subtypes  = ['Accounts Payable', 'payable'];
+$tax_keywords = ['VAT', 'Tax', 'Duty', 'Excise'];
 
-$ar             = get_gl_bal($db, 'Accounts Receivable', $as_of, null, false);
-$inventory_val  = get_gl_bal($db, 'Inventory Asset', $as_of, null, false);
+$ap_balance     = 0; $tax_payable    = 0; $other_liabilities = [];
 
-// Other Assets (Fixed assets, Accumulated Depreciation, etc.)
-$other_assets_list = $db->fetchAll("
-    SELECT a.account_name, SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'asset' 
-      AND a.account_subtype NOT IN ('Accounts Receivable', 'Inventory Asset') 
-      AND a.id != 'acc-1010' 
-      AND a.account_subtype != 'Bank'
-      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-    GROUP BY a.id, a.account_name
-    HAVING bal != 0
-", [$as_of]);
+foreach ($bs['liabilities'] as $l) {
+    $sub  = $l['subtype'] ?? '';
+    $name = $l['name'] ?? '';
+    if (in_array($sub, $ap_subtypes)) {
+        $ap_balance += $l['balance'];
+    } else {
+        $is_tax = false;
+        foreach ($tax_keywords as $kw) {
+            if (stripos($name, $kw) !== false || stripos($sub, $kw) !== false) {
+                $is_tax = true; break;
+            }
+        }
+        if ($is_tax) {
+            $tax_payable += $l['balance'];
+        } else {
+            $other_liabilities[] = $l;
+        }
+    }
+}
 
-$other_assets = array_sum(array_column($other_assets_list, 'bal'));
+$total_liabilities = $bs['total_liabilities'];
 
-$total_current_assets = $cash_on_hand + $bank_balance + $ar + $inventory_val;
-$total_assets         = $total_current_assets + $other_assets;
+// ── Equity ───────────────────────────────────────────────────
+$total_equity_accts = $bs['total_equity_accts'];
+$net_income         = $pnl['net_profit']; // P&L for the period — same engine
+$total_equity       = $total_equity_accts + $net_income;
+$total_liab_equity  = $total_liabilities + $total_equity;
+$difference         = abs($total_assets - $total_liab_equity);
+$is_balanced        = $difference < 0.05;
 
-// ─── LIABILITIES ──────────────────────────────────────────────────────────────
-$ap             = -get_gl_bal($db, 'Accounts Payable', $as_of, null, false);
-$tax_payable    = -get_gl_bal($db, 'Other Current Liability', $as_of, null, false);
+// ── AR / AP / Inventory Reconciliation ───────────────────────
+$ar_subledger   = re_get_ar_balance($db, $as_of, $location_id);
+$ar_gl          = re_get_ar_gl_balance($db, $as_of);
+$ar_ok          = abs($ar_subledger - $ar_gl) < 0.05;
 
-// Other Liabilities
-$other_liabilities_list = $db->fetchAll("
-    SELECT a.account_name, -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'liability' 
-      AND a.account_subtype NOT IN ('Accounts Payable', 'Other Current Liability')
-      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-    GROUP BY a.id, a.account_name
-    HAVING bal != 0
-", [$as_of]);
+$ap_subledger   = re_get_ap_balance($db, $as_of, $location_id);
+$ap_gl          = re_get_ap_gl_balance($db, $as_of);
+$ap_ok          = abs($ap_subledger - $ap_gl) < 0.05;
 
-$other_liabilities = array_sum(array_column($other_liabilities_list, 'bal'));
-$total_liabilities = $ap + $tax_payable + $other_liabilities;
-
-// ─── EQUITY ───────────────────────────────────────────────────────────────────
-// Use Type-based balances for Income and Expenses (including CA Audit Adjustments, excluding period close journals)
-$revenue = -(float)($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'income' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-", [$as_of])['v'] ?? 0);
-
-$expenses = (float)($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense' AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-", [$as_of])['v'] ?? 0);
-
-$retained_earnings = $revenue - $expenses;
-
-// General Ledger Equity Accounts
-$equity_accounts_list = $db->fetchAll("
-    SELECT a.account_name, -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'equity'
-      AND j.entry_date <= ? AND a.is_deleted = 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$src_filter} {$loc_sql}
-    GROUP BY a.id, a.account_name
-    HAVING bal != 0
-", [$as_of]);
-
-// Inventory adjustments are now included in their original accounts directly.
-$inventory_adjustment_reserve = 0.0;
-
-$total_other_equity = array_sum(array_column($equity_accounts_list, 'bal'));
-$total_equity = $total_other_equity + $retained_earnings + $inventory_adjustment_reserve;
-
-$total_liabilities_equity = $total_liabilities + $total_equity;
-$is_balanced = abs($total_assets - $total_liabilities_equity) < 0.05;
+$inv_subledger  = re_get_inventory_subledger($db);
+$inv_gl         = re_get_inventory_gl_balance($db, $as_of);
+$inv_ok         = abs($inv_subledger - $inv_gl) < 0.05;
 ?>
 <style>
-.bs-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:960px;margin:0 auto}
-@media(max-width:700px){.bs-grid{grid-template-columns:1fr}}
-.bs-card{background:#fff;border:1px solid #dde2e8;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.bs-head{text-align:center;padding:18px 20px;border-bottom:2px solid #003087;background:#f8f9fa}
-.bs-head-title{font-size:16px;font-weight:800;color:#003087;letter-spacing:.5px}
-.bs-head-sub{font-size:11px;color:#888;margin-top:3px}
-.bs-section{background:#003087;color:#fff;padding:9px 20px;font-weight:700;font-size:12px;letter-spacing:.8px}
-.bs-row{display:flex;justify-content:space-between;align-items:center;padding:9px 20px;border-bottom:1px solid #f4f5f7;font-size:13px;color:#333}
-.bs-row:hover{background:#f8f9fa}
-.bs-row-label{color:#555}
-.bs-subtotal{display:flex;justify-content:space-between;align-items:center;padding:11px 20px;font-weight:700;background:#eef2ff;border-top:2px solid #c8d3f5;font-size:13px;color:#003087}
-.bs-total{display:flex;justify-content:space-between;align-items:center;padding:13px 20px;font-weight:900;font-size:15px;background:#003087;color:#fff}
-.bs-balance-ok{text-align:center;padding:12px 20px;margin:16px auto;max-width:960px;background:#d4edda;color:#1a7f37;font-weight:700;border-radius:6px;font-size:13px}
-.bs-balance-err{text-align:center;padding:12px 20px;margin:16px auto;max-width:960px;background:#f8d7da;color:#842029;font-weight:700;border-radius:6px;font-size:13px}
-@media print{ .bs-grid{grid-template-columns:1fr 1fr!important} }
+.bs-grid      { display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1000px;margin:0 auto }
+@media(max-width:700px){ .bs-grid{grid-template-columns:1fr} }
+.bs-card      { background:#fff;border:1px solid #dde2e8;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06) }
+.bs-head      { text-align:center;padding:18px 20px;border-bottom:2px solid #003087;background:#f8f9fa }
+.bs-head-title{ font-size:16px;font-weight:800;color:#003087;letter-spacing:.5px }
+.bs-head-sub  { font-size:11px;color:#888;margin-top:3px }
+.bs-section   { background:#003087;color:#fff;padding:9px 20px;font-weight:700;font-size:12px;letter-spacing:.8px }
+.bs-row       { display:flex;justify-content:space-between;align-items:center;padding:9px 20px;border-bottom:1px solid #f4f5f7;font-size:13px;color:#333 }
+.bs-row:hover { background:#f8f9fa }
+.bs-subtotal  { display:flex;justify-content:space-between;align-items:center;padding:11px 20px;font-weight:700;background:#eef2ff;border-top:2px solid #c8d3f5;font-size:13px;color:#003087 }
+.bs-total     { display:flex;justify-content:space-between;align-items:center;padding:13px 20px;font-weight:900;font-size:15px;background:#003087;color:#fff }
+.bs-balance-ok  { text-align:center;padding:12px 20px;margin:14px auto;max-width:1000px;background:#d4edda;color:#1a7f37;font-weight:700;border-radius:6px;font-size:13px }
+.bs-balance-err { text-align:center;padding:12px 20px;margin:14px auto;max-width:1000px;background:#f8d7da;color:#842029;font-weight:700;border-radius:6px;font-size:13px }
+.bs-recon-warn  { text-align:center;padding:8px 20px;margin:6px auto;max-width:1000px;background:#fff3cd;color:#856404;font-weight:600;border-radius:6px;font-size:12px }
+@media print { .bs-grid{grid-template-columns:1fr 1fr!important} }
 </style>
 
 <?php rpt_filter_bar('Balance Sheet', [
-    ['name'=>'date_from','label'=>'From Date','type'=>'date','default'=>$date_from],
-    ['name'=>'date_to',  'label'=>'To Date',  'type'=>'date','default'=>$date_to],
+    ['name' => 'date_from', 'label' => 'From Date', 'type' => 'date', 'default' => $date_from],
+    ['name' => 'date_to',   'label' => 'As of Date', 'type' => 'date', 'default' => $date_to],
     rpt_location_filter(),
 ], ''); ?>
+
+<!-- Balance Status Banner -->
+<?php if (!$is_balanced): ?>
+<div class="bs-balance-err">
+  <i class="fas fa-exclamation-triangle"></i>
+  BALANCE SHEET OUT OF BALANCE — Discrepancy of <?= rpt_currency($difference) ?>.
+  Total Assets: <?= rpt_currency($total_assets) ?> | Total Liabilities+Equity: <?= rpt_currency($total_liab_equity) ?>
+</div>
+<?php endif; ?>
+
+<!-- Subledger Reconciliation Warnings -->
+<?php if (!$ar_ok): ?>
+<div class="bs-recon-warn"><i class="fas fa-exclamation-circle"></i> AR RECONCILIATION ERROR — Subledger: <?= rpt_currency($ar_subledger) ?> | GL: <?= rpt_currency($ar_gl) ?> | Diff: <?= rpt_currency(abs($ar_subledger - $ar_gl)) ?></div>
+<?php endif; ?>
+<?php if (!$ap_ok): ?>
+<div class="bs-recon-warn"><i class="fas fa-exclamation-circle"></i> AP RECONCILIATION ERROR — Subledger: <?= rpt_currency($ap_subledger) ?> | GL: <?= rpt_currency($ap_gl) ?> | Diff: <?= rpt_currency(abs($ap_subledger - $ap_gl)) ?></div>
+<?php endif; ?>
+<?php if (!$inv_ok): ?>
+<div class="bs-recon-warn"><i class="fas fa-exclamation-circle"></i> INVENTORY RECONCILIATION ERROR — Subledger: <?= rpt_currency($inv_subledger) ?> | GL: <?= rpt_currency($inv_gl) ?> | Diff: <?= rpt_currency(abs($inv_subledger - $inv_gl)) ?></div>
+<?php endif; ?>
 
 <div class="bs-grid">
   <!-- LEFT: ASSETS -->
@@ -161,38 +174,63 @@ $is_balanced = abs($total_assets - $total_liabilities_equity) < 0.05;
 
     <div class="bs-section">CURRENT ASSETS</div>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-coins" style="color:#9a6700;margin-right:6px"></i>Cash on Hand</span>
+      <span><i class="fas fa-coins" style="color:#9a6700;margin-right:6px"></i>Cash on Hand</span>
       <span><?= rpt_currency($cash_on_hand) ?></span>
     </div>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-university" style="color:#003087;margin-right:6px"></i>Bank / Digital Balance</span>
+      <span><i class="fas fa-university" style="color:#003087;margin-right:6px"></i>Bank / Digital Balance</span>
       <span><?= rpt_currency($bank_balance) ?></span>
     </div>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-file-invoice-dollar" style="color:#1a7f37;margin-right:6px"></i>Accounts Receivable (AR)</span>
-      <span style="color:<?= $ar > 0 ? '#1a7f37' : '#888' ?>;font-weight:600"><?= rpt_currency($ar) ?></span>
+      <span><i class="fas fa-file-invoice-dollar" style="color:#1a7f37;margin-right:6px"></i>
+        Accounts Receivable (AR)
+        <?php if (!$ar_ok): ?><span title="AR RECONCILIATION ERROR" style="color:#c00;font-size:10px;margin-left:4px">⚠</span><?php endif; ?>
+      </span>
+      <span style="color:<?= $ar_balance>0?'#1a7f37':'#888' ?>;font-weight:600"><?= rpt_currency($ar_balance) ?></span>
     </div>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-boxes" style="color:#6f42c1;margin-right:6px"></i>Inventory (at Cost)</span>
+      <span><i class="fas fa-boxes" style="color:#6f42c1;margin-right:6px"></i>
+        Inventory (at Cost)
+        <?php if (!$inv_ok): ?><span title="INVENTORY RECONCILIATION ERROR" style="color:#c00;font-size:10px;margin-left:4px">⚠</span><?php endif; ?>
+      </span>
       <span><?= rpt_currency($inventory_val) ?></span>
     </div>
     <div class="bs-subtotal">
       <span>Total Current Assets</span>
       <span><?= rpt_currency($total_current_assets) ?></span>
     </div>
-    <?php if (!empty($other_assets_list)): ?>
-      <div class="bs-section">NON-CURRENT & OTHER ASSETS</div>
-      <?php foreach ($other_assets_list as $oa): ?>
-        <div class="bs-row">
-          <span class="bs-row-label"><i class="fas fa-building" style="color:#4a5568;margin-right:6px"></i><?= htmlspecialchars($oa['account_name']) ?></span>
-          <span><?= rpt_currency($oa['bal']) ?></span>
-        </div>
-      <?php endforeach; ?>
-      <div class="bs-subtotal">
-        <span>Total Non-Current & Other Assets</span>
-        <span><?= rpt_currency($other_assets) ?></span>
-      </div>
+
+    <?php if ($fixed_assets > 0 || !empty($other_assets)): ?>
+    <div class="bs-section">NON-CURRENT &amp; OTHER ASSETS</div>
+    <?php if ($fixed_assets > 0 || $contra_assets > 0): ?>
+    <div class="bs-row">
+      <span><i class="fas fa-building" style="color:#4a5568;margin-right:6px"></i>Fixed Assets (Equipment)</span>
+      <span><?= rpt_currency($fixed_assets) ?></span>
+    </div>
+    <?php if ($contra_assets > 0): ?>
+    <div class="bs-row" style="color:#888">
+      <span style="padding-left:20px"><i class="fas fa-minus" style="margin-right:6px"></i>Less: Accumulated Depreciation</span>
+      <span style="color:#c00">( <?= rpt_currency($contra_assets) ?> )</span>
+    </div>
+    <div class="bs-row" style="font-weight:700;background:#f8fafc">
+      <span style="padding-left:20px">Net Book Value</span>
+      <span style="color:<?= $net_fixed_assets >= 0 ? '#003087' : '#c00' ?>"><?= rpt_currency($net_fixed_assets) ?></span>
+    </div>
     <?php endif; ?>
+    <?php endif; ?>
+    <?php foreach ($other_assets as $oa): ?>
+    <div class="bs-row">
+      <span><i class="fas fa-layer-group" style="color:#4a5568;margin-right:6px"></i><?= htmlspecialchars($oa['name']) ?></span>
+      <span><?= rpt_currency($oa['balance']) ?></span>
+    </div>
+    <?php endforeach; ?>
+    <div class="bs-subtotal">
+      <span>Total Non-Current &amp; Other Assets</span>
+      <span><?= rpt_currency($total_other_assets) ?></span>
+    </div>
+    <?php endif; ?>
+
+
     <div class="bs-total">
       <span>TOTAL ASSETS</span>
       <span><?= rpt_currency($total_assets) ?></span>
@@ -202,86 +240,64 @@ $is_balanced = abs($total_assets - $total_liabilities_equity) < 0.05;
   <!-- RIGHT: LIABILITIES + EQUITY -->
   <div class="bs-card">
     <div class="bs-head">
-      <div class="bs-head-title">LIABILITIES & EQUITY</div>
+      <div class="bs-head-title">LIABILITIES &amp; EQUITY</div>
       <div class="bs-head-sub">As of <?= rpt_date($as_of) ?></div>
     </div>
 
     <div class="bs-section">CURRENT LIABILITIES</div>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-file-invoice" style="color:#c00;margin-right:6px"></i>Accounts Payable (AP)</span>
-      <span style="color:<?= $ap > 0 ? '#c00' : '#888' ?>;font-weight:600"><?= rpt_currency($ap) ?></span>
+      <span><i class="fas fa-file-invoice" style="color:#c00;margin-right:6px"></i>
+        Accounts Payable (AP)
+        <?php if (!$ap_ok): ?><span title="AP RECONCILIATION ERROR" style="color:#c00;font-size:10px;margin-left:4px">⚠</span><?php endif; ?>
+      </span>
+      <span style="color:<?= $ap_balance>0?'#c00':'#888' ?>;font-weight:600"><?= rpt_currency($ap_balance) ?></span>
     </div>
+    <?php if ($tax_payable != 0): ?>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-percent" style="color:#e67e22;margin-right:6px"></i>Tax / VAT Payable</span>
-      <span style="color:<?= $tax_payable > 0 ? '#e67e22' : '#888' ?>;font-weight:600"><?= rpt_currency($tax_payable) ?></span>
+      <span><i class="fas fa-percent" style="color:#e67e22;margin-right:6px"></i>Tax / VAT Payable</span>
+      <span style="color:<?= $tax_payable>0?'#e67e22':'#888' ?>;font-weight:600"><?= rpt_currency($tax_payable) ?></span>
     </div>
-    <div class="bs-subtotal">
-      <span>Total Current Liabilities</span>
-      <span style="color:#c00"><?= rpt_currency($ap + $tax_payable) ?></span>
-    </div>
-    <?php if (!empty($other_liabilities_list)): ?>
-      <div class="bs-section">NON-CURRENT & OTHER LIABILITIES</div>
-      <?php foreach ($other_liabilities_list as $ol): ?>
-        <div class="bs-row">
-          <span class="bs-row-label"><i class="fas fa-wallet" style="color:#c00;margin-right:6px"></i><?= htmlspecialchars($ol['account_name']) ?></span>
-          <span style="color:<?= $ol['bal'] > 0 ? '#c00' : '#888' ?>;font-weight:600"><?= rpt_currency($ol['bal']) ?></span>
-        </div>
-      <?php endforeach; ?>
-      <div class="bs-subtotal">
-        <span>Total Non-Current & Other Liabilities</span>
-        <span style="color:#c00"><?= rpt_currency($other_liabilities) ?></span>
-      </div>
     <?php endif; ?>
+    <?php foreach ($other_liabilities as $ol): ?>
+    <div class="bs-row">
+      <span><i class="fas fa-wallet" style="color:#c00;margin-right:6px"></i><?= htmlspecialchars($ol['name']) ?></span>
+      <span style="color:<?= $ol['balance']>0?'#c00':'#888' ?>;font-weight:600"><?= rpt_currency($ol['balance']) ?></span>
+    </div>
+    <?php endforeach; ?>
     <div class="bs-subtotal" style="background:#fdf2f2;border-top-color:#e53e3e">
       <span>Total Liabilities</span>
-      <span style="color:#c00;font-weight:bold"><?= rpt_currency($total_liabilities) ?></span>
+      <span style="color:#c00"><?= rpt_currency($total_liabilities) ?></span>
     </div>
 
     <div class="bs-section">EQUITY</div>
-    <?php if (!empty($equity_accounts_list)): ?>
-      <?php foreach ($equity_accounts_list as $eq): ?>
-        <div class="bs-row">
-          <span class="bs-row-label"><i class="fas fa-coins" style="color:#6f42c1;margin-right:6px"></i><?= htmlspecialchars($eq['account_name']) ?></span>
-          <span style="color:<?= $eq['bal'] >= 0 ? '#1a7f37' : '#c00' ?>"><?= rpt_currency($eq['bal']) ?></span>
-        </div>
-      <?php endforeach; ?>
-    <?php endif; ?>
-    <?php if ($inventory_adjustment_reserve != 0): ?>
-      <div class="bs-row">
-        <span class="bs-row-label"><i class="fas fa-adjust" style="color:#2b6cb0;margin-right:6px"></i>Inventory Adjustment Reserves</span>
-        <span style="color:<?= $inventory_adjustment_reserve >= 0 ? '#1a7f37' : '#c00' ?>"><?= rpt_currency($inventory_adjustment_reserve) ?></span>
-      </div>
-    <?php endif; ?>
+    <?php foreach ($bs['equity'] as $eq): ?>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-chart-line" style="color:#1a7f37;margin-right:6px"></i>Revenue (to date)</span>
-      <span><?= rpt_currency($revenue) ?></span>
+      <span><i class="fas fa-coins" style="color:#6f42c1;margin-right:6px"></i><?= htmlspecialchars($eq['name']) ?></span>
+      <span style="color:<?= $eq['balance']>=0?'#1a7f37':'#c00' ?>"><?= rpt_currency($eq['balance']) ?></span>
     </div>
+    <?php endforeach; ?>
     <div class="bs-row">
-      <span class="bs-row-label"><i class="fas fa-minus-circle" style="color:#9a6700;margin-right:6px"></i>Less: Cost of Sales / Exp</span>
-      <span style="color:#9a6700">(<?= rpt_currency($expenses) ?>)</span>
-    </div>
-    <div class="bs-subtotal">
-      <span>Current Period Net Income</span>
-      <span style="color:<?= $retained_earnings >= 0 ? '#1a7f37' : '#c00' ?>"><?= rpt_currency($retained_earnings) ?></span>
+      <span><i class="fas fa-chart-line" style="color:#1a7f37;margin-right:6px"></i>Current Period Net <?= $pnl['is_profit']?'Profit':'Loss' ?> (<?= rpt_date($date_from).' – '.rpt_date($date_to) ?>)</span>
+      <span style="color:<?= $net_income>=0?'#1a7f37':'#c00' ?>;font-weight:700"><?= ($net_income<0?'(':'' ).rpt_currency(abs($net_income)).($net_income<0?')':'') ?></span>
     </div>
     <div class="bs-subtotal" style="background:#f0fff4;border-top-color:#1a7f37">
       <span>Total Equity</span>
-      <span style="color:<?= $total_equity >= 0 ? '#1a7f37' : '#c00' ?>"><?= rpt_currency($total_equity) ?></span>
+      <span style="color:<?= $total_equity>=0?'#1a7f37':'#c00' ?>"><?= rpt_currency($total_equity) ?></span>
     </div>
+
     <div class="bs-total">
       <span>TOTAL LIABILITIES + EQUITY</span>
-      <span><?= rpt_currency($total_liabilities_equity) ?></span>
+      <span><?= rpt_currency($total_liab_equity) ?></span>
     </div>
   </div>
 </div>
 
 <?php if ($is_balanced): ?>
-  <div class="bs-balance-ok"><i class="fas fa-check-circle"></i> Balance Sheet is BALANCED — General Ledger Integrity Verified</div>
-<?php else:
-  $diff = abs($total_assets - $total_liabilities_equity);
-?>
+  <div class="bs-balance-ok"><i class="fas fa-check-circle"></i> Balance Sheet is BALANCED — Assets = Liabilities + Equity (<?= rpt_currency($total_assets) ?>)</div>
+<?php else: ?>
   <div class="bs-balance-err">
     <i class="fas fa-exclamation-triangle"></i>
-    Discrepancy of <?= rpt_currency($diff) ?> — Syncing with General Ledger...
+    BALANCE SHEET OUT OF BALANCE — Discrepancy of <?= rpt_currency($difference) ?>.
+    Do not adjust manually — check journal entries for unbalanced postings.
   </div>
 <?php endif; ?>

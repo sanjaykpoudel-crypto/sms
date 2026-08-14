@@ -102,7 +102,8 @@ $all_items = $db->fetchAll("
                         <th width="40" style="text-align: center;">#</th>
                         <th>Item Name <span class="ns-required">*</span></th>
                         <th width="120" style="text-align: right;">Current Stock</th>
-                        <th width="130" style="text-align: right;">Transfer Qty <span class="ns-required">*</span></th>
+                        <th width="120" style="text-align: right;">Transfer Qty <span class="ns-required">*</span></th>
+                        <th width="90" style="text-align: center;">Unit</th>
                         <th width="130" style="text-align: right;">Unit Cost (Rs)</th>
                         <th width="130" style="text-align: right;">MRP (Rs)</th>
                         <th width="140" style="text-align: right;">Line Total (Rs)</th>
@@ -247,6 +248,7 @@ function addRow() {
         </td>
         <td><input type="text" class="ns-input stock-input ns-input-num" value="0.00" readonly style="text-align:right;"></td>
         <td><input type="number" step="any" name="quantity[]" class="ns-input qty-input ns-input-num" value="1" required min="0.01" style="text-align:right; font-weight:700;" oninput="calcLine(this)"></td>
+        <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="PCS" readonly tabindex="-1"></td>
         <td><input type="number" step="any" name="unit_cost[]" class="ns-input cost-input ns-input-num" value="0.00" required style="text-align:right;" oninput="calcLine(this)"></td>
         <td><input type="number" step="any" name="mrp[]" class="ns-input mrp-input ns-input-num" value="0.00" min="0" style="text-align:right; color:#0284c7; font-weight:600;" placeholder="0.00" title="MRP will update item master on save"></td>
         <td><input type="text" class="ns-input line-total ns-input-num" value="0.00" readonly style="text-align:right; font-weight:700; color:var(--ns-primary);"></td>
@@ -277,47 +279,85 @@ function updateRowNumbers() {
 }
 
 function onItemChange(select) {
-    const opt = select.options[select.selectedIndex];
     const tr = select.closest('tr');
     if (!tr) return;
-
-    const cost = opt ? parseFloat(opt.dataset.cost || 0) : 0;
-    const mrp = opt ? parseFloat(opt.dataset.mrp || 0) : 0;
-
-    tr.querySelector('.cost-input').value = cost.toFixed(2);
-    tr.querySelector('.mrp-input').value = mrp.toFixed(2);
-
     const itemId = select.value;
-    const fromLocSelect = document.getElementById('from_location_id');
-    const fromLocId = fromLocSelect ? fromLocSelect.value : '';
+    const fromLocId = document.getElementById('from_location_id')?.value || '';
 
-    const stockInput = tr.querySelector('.stock-input');
-
-    if (!itemId || !fromLocId) {
-        if (stockInput) stockInput.value = '0.00';
+    if (!itemId) {
+        tr.querySelector('.stock-input').value = '0.00';
+        tr.querySelector('.cost-input').value = '0.00';
         calcLine(select);
         return;
     }
 
-    if (stockInput) stockInput.value = '...';
-
-    fetch('api/get_item_location_stock.php?item_id=' + encodeURIComponent(itemId) + '&location_id=' + encodeURIComponent(fromLocId))
+    fetch('api/get_item_details.php?id=' + encodeURIComponent(itemId) + '&location_id=' + encodeURIComponent(fromLocId))
         .then(r => r.json())
         .then(data => {
-            if (stockInput) {
-                if (data && data.stock !== undefined) {
-                    stockInput.value = parseFloat(data.stock).toFixed(2);
-                } else {
-                    stockInput.value = '0.00';
-                }
-            }
-        })
-        .catch(err => {
-            console.error('Error fetching location stock:', err);
-            if (stockInput) stockInput.value = '0.00';
-        });
+            if (data.error) return;
+            tr.dataset.itemData = JSON.stringify(data);
+            
+            const cost = parseFloat(data.cost_price || 0);
+            const mrp  = parseFloat(data.mrp || 0);
+            tr.querySelector('.cost-input').value = cost.toFixed(2);
+            tr.querySelector('.mrp-input').value = mrp.toFixed(2);
 
+            const unitTd = tr.querySelector('.unit-input').closest('td');
+            const conv = parseInt(data.units_per_case || 1);
+            const baseUnit = data.unit_name || data.unit_type || 'PCS';
+            const caseUnit = data.case_unit_name || 'CASE';
+
+            if (conv > 1) {
+                unitTd.innerHTML = `
+                    <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="transferUnitChanged(this)">
+                        <option value="${baseUnit}">${baseUnit}</option>
+                        <option value="${caseUnit}">${caseUnit} (${conv} PCS)</option>
+                    </select>
+                `;
+            } else {
+                unitTd.innerHTML = `<input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="${baseUnit}" readonly tabindex="-1">`;
+            }
+
+            updateTransferStockDisplay(tr);
+            calcLine(select);
+        });
+}
+
+function transferUnitChanged(select) {
+    const tr = select.closest('tr');
+    if (!tr || !tr.dataset.itemData) return;
+    const data = JSON.parse(tr.dataset.itemData);
+    const selectedUnit = select.value;
+    const conv = parseInt(data.units_per_case || 1);
+    const caseUnit = data.case_unit_name || 'CASE';
+
+    let cost = parseFloat(data.cost_price || 0);
+    if (selectedUnit === caseUnit || selectedUnit === 'CASE') {
+        const casePrice = parseFloat(data.case_purchase_price || 0);
+        cost = casePrice > 0 ? casePrice : Math.round(cost * conv * 100) / 100;
+    }
+
+    tr.querySelector('.cost-input').value = cost.toFixed(2);
+    updateTransferStockDisplay(tr);
     calcLine(select);
+}
+
+function updateTransferStockDisplay(tr) {
+    if (!tr.dataset.itemData) return;
+    const data = JSON.parse(tr.dataset.itemData);
+    const unitEl = tr.querySelector('.unit-input');
+    const selectedUnit = unitEl ? unitEl.value : '';
+    const conv = parseInt(data.units_per_case || 1);
+    const caseUnit = data.case_unit_name || 'CASE';
+    const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
+
+    const baseStock = parseFloat(data.location_stock !== undefined ? data.location_stock : (data.current_stock || 0));
+
+    if (isCase && conv > 1) {
+        tr.querySelector('.stock-input').value = (baseStock / conv).toFixed(2);
+    } else {
+        tr.querySelector('.stock-input').value = baseStock.toFixed(2);
+    }
 }
 
 function calcLine(element) {

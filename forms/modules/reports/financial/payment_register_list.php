@@ -11,7 +11,7 @@ $db = db();
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 $flow_type = $_GET['flow_type'] ?? '';
 
 $loc_sql = rpt_location_sql('h');
@@ -30,7 +30,8 @@ $payments = $db->fetchAll("
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.id IN ('acc-1010', 'acc-1020') OR (a.account_type = 'asset' AND (a.account_name LIKE '%cash%' OR a.account_name LIKE '%bank%') AND a.account_name NOT LIKE '%receivable%'))
+    WHERE a.account_type = 'asset'
+      AND a.account_subtype IN ('Cash', 'Bank')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$where_flow} {$loc_sql}
     ORDER BY j.entry_date DESC, j.id DESC
 ", $params);

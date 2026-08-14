@@ -8,6 +8,8 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
 require_once __DIR__ . '/InventoryEngine.php';
+require_once __DIR__ . '/UnitConversionEngine.php';
+require_once __DIR__ . '/PromotionEngine.php';
 
 // Get JSON input
 $json = $GLOBALS['mock_pos_payload'] ?? file_get_contents('php://input');
@@ -136,23 +138,65 @@ try {
 
         $line_net  = round($line_amount - $line_disc + $line_tax, 2);
 
-        // Stock Validation against user's location via InventoryEngine
+        $raw_unit  = $item['unit'] ?? 'PCS';
+        $unit_info = uce_resolve_unit($item_id, $raw_unit);
+        $conversion_factor = (float)$unit_info['conversion_factor'];
+        $base_qty  = uce_calculate_base_qty($qty, $conversion_factor);
+
+        // Stock Validation against user's location via InventoryEngine (in base_qty PCS)
         $available = InventoryEngine::getInstance()->getAvailableStock($item_id, $location_id);
-        if ($available < $qty && !isset($data['force_save'])) {
+        if ($available < $base_qty && !isset($data['force_save'])) {
             $item_info  = $db->fetchOne("SELECT item_name FROM items WHERE id = ?", [$item_id]);
             $itemName = $item_info['item_name'] ?? ('Item #' . $item_id);
-            throw new Exception("Stock Warning: Item '" . $itemName . "' has only " . number_format($available, 2) . " available at this location.");
+            throw new Exception("Stock Warning: Item '" . $itemName . "' has only " . number_format($available, 2) . " PCS available at this location (Requested: " . number_format($base_qty, 2) . " PCS / " . $qty . " " . $unit_info['unit_name'] . ").");
+        }
+
+        $promo_id   = !empty($item['promotion_id']) ? (int)$item['promotion_id'] : null;
+        $promo_code = !empty($item['promo_code']) ? $item['promo_code'] : null;
+        $mrp_sale   = (float)($item['mrp_at_sale'] ?? 0);
+        $norm_sell  = (float)($item['normal_selling_price_at_sale'] ?? 0);
+        $promo_disc = (float)($item['promo_discount_amount'] ?? 0);
+
+        // Server-side promotion re-validation: evaluate the best applicable promotion
+        $serverPromoEval = PromotionEngine::getInstance()->evaluateItemPromotion($item_id, $location_id, $qty, $mrp_sale ?: null, $norm_sell ?: null);
+        if ($serverPromoEval['has_promotion']) {
+            // Use server-validated promo values (authoritative)
+            $promo_id   = $serverPromoEval['promotion']['id'];
+            $promo_code = $serverPromoEval['promotion']['promo_code'];
+            $promo_disc = $serverPromoEval['discount_amount_per_unit'];
+            if ($mrp_sale == 0)   $mrp_sale  = $serverPromoEval['mrp'];
+            if ($norm_sell == 0)  $norm_sell = $serverPromoEval['normal_selling_price'];
+            // If client sent the exact promo price, keep it; else override with server price
+            $expected_promo_price = round($serverPromoEval['promotional_selling_price'], 2);
+            $client_rate = round($rate, 2);
+            if (abs($client_rate - $expected_promo_price) > 0.02) {
+                // Override rate to server-computed promotional price (tamper protection)
+                $rate = $expected_promo_price;
+            }
+        } else {
+            // No server promotion, clear promo fields for integrity
+            $promo_id   = null;
+            $promo_code = null;
+            $promo_disc = 0;
+        }
+
+        if ($mrp_sale == 0 || $norm_sell == 0) {
+            $master_item = $db->fetchOne("SELECT mrp, selling_price FROM items WHERE id = ?", [$item_id]);
+            if ($master_item) {
+                if ($mrp_sale == 0) $mrp_sale = (float)$master_item['mrp'];
+                if ($norm_sell == 0) $norm_sell = (float)$master_item['selling_price'];
+            }
         }
 
         // pos_items
         $db->execute(
-            "INSERT INTO pos_items (pos_id, item_id, quantity, rate, amount, discount, tax, net_amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [$pos_id, $item_id, $qty, $rate, $qty * $rate, $line_disc, $line_tax, $line_net]
+            "INSERT INTO pos_items (pos_id, item_id, promotion_id, promo_code, quantity, txn_unit, conversion_factor, base_qty, rate, mrp_at_sale, normal_selling_price_at_sale, promo_discount_amount, amount, discount, tax, net_amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [$pos_id, $item_id, $promo_id, $promo_code, $qty, $unit_info['unit_name'], $conversion_factor, $base_qty, $rate, $mrp_sale, $norm_sell, $promo_disc, $qty * $rate, $line_disc, $line_tax, $line_net]
         );
 
-        // Issue stock via InventoryEngine
-        InventoryEngine::getInstance()->issueStock($item_id, $location_id, $qty, $pos_id, null, 'POS', $rate, date('Y-m-d', strtotime($txn_date_time)), [
+        // Issue stock via InventoryEngine using base_qty
+        InventoryEngine::getInstance()->issueStock($item_id, $location_id, $base_qty, $pos_id, null, 'POS', $rate, date('Y-m-d', strtotime($txn_date_time)), [
             'txn_number' => $txn_number,
             'force_issue' => isset($data['force_save'])
         ]);

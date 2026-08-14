@@ -6,7 +6,7 @@ $db = db();
 $fy         = rpt_get_current_fiscal_year_dates();
 $today      = date('Y-m-d');
 $date_from  = $_GET['date_from']   ?? $fy['start_date'];
-$date_to    = $_GET['date_to']     ?? $fy['end_date'];
+$date_to    = $_GET['date_to']     ?? $today;
 $customer_id = $_GET['customer_id'] ?? '';
 
 // Fetch customers for filter dropdown
@@ -52,7 +52,7 @@ $sql = "
         th.id as header_id,
         th.txn_date,
         th.txn_number,
-        c.full_name as customer_name,
+        COALESCE(c.full_name, 'Unknown Customer') as customer_name,
         th.txn_number as invoice_number,
         th.txn_date as invoice_date,
         th.txn_date as due_date,
@@ -60,21 +60,23 @@ $sql = "
         0.00 as subtotal,
         0.00 as discount_amount,
         0.00 as tax_amount,
-        SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
+        j.amount as total_amount,
         COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
-        (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
-        CASE WHEN (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
+        (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+        CASE WHEN (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
     FROM journal_entries j
     JOIN transaction_headers th ON j.header_id = th.id
     LEFT JOIN customers c ON COALESCE(j.party_id, th.party_id) = c.id
-    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
-    WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
+    LEFT JOIN accounts a ON j.account_id = a.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND (tl.link_type = CONCAT('payment:', j.id) OR tl.link_type LIKE CONCAT('payment:', j.id, ':%'))
+    WHERE (j.party_type = 'customer' OR a.account_subtype IN ('Accounts Receivable', 'AR'))
+      AND j.entry_type = 'debit'
       AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
       AND th.txn_type IN ('Journal', 'journal_entry')
       AND th.txn_date BETWEEN ? AND ? {$where_cust_j} {$loc_sql_th}
-    GROUP BY th.id, th.txn_date, th.txn_number, c.full_name
+    GROUP BY j.id, th.id, th.txn_date, th.txn_number, c.full_name
     ORDER BY txn_date DESC, txn_number DESC
 ";
 $params = [$date_from, $date_to, $date_from, $date_to];

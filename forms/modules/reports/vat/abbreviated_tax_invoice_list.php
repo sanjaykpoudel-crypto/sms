@@ -4,8 +4,9 @@ require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
 $fy        = rpt_get_current_fiscal_year_dates();
+$today     = date('Y-m-d');
 $from_date = $_GET['from_date'] ?? $fy['start_date'];
-$to_date   = $_GET['to_date']   ?? $fy['end_date'];
+$to_date   = $_GET['to_date']   ?? $today;
 $payment_method = $_GET['payment_method'] ?? '';
 
 $sql = "

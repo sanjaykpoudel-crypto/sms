@@ -7,7 +7,7 @@ $data = [];
 $payment_lines = [];
 
 if ($id) {
-    $data = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
+    $data = $db->fetchOne("SELECT th.*, u.full_name as creator_name FROM transaction_headers th LEFT JOIN users u ON th.created_by = u.id WHERE th.id = ?", [$id]);
     $payment_lines = $db->fetchAll("SELECT * FROM payments WHERE header_id = ?", [$id]);
     $data['party_type'] = ($data['txn_type'] === 'vendor_payment') ? 'vendor' : 'customer';
     $first_line = $payment_lines[0] ?? [];
@@ -699,7 +699,7 @@ textarea.pm-control { height: 68px; resize: vertical; }
 
           <div class="pm-tab-content" id="tab-audit">
             <div style="font-size:13px;color:var(--text-slate);display:flex;flex-direction:column;gap:8px;">
-              <div><strong>Created By:</strong> <?php echo htmlspecialchars($data['created_by']??'Current User'); ?></div>
+              <div><strong>Created By:</strong> <?php echo htmlspecialchars($data['creator_name'] ?? $data['created_by'] ?? 'Current User'); ?></div>
               <div><strong>Created At:</strong> <?php echo !empty($data['created_at']) ? date('d M Y, H:i:s', strtotime($data['created_at'])) : date('d M Y, H:i:s'); ?></div>
               <div><strong>Status:</strong> <?php echo ucfirst($status); ?></div>
             </div>

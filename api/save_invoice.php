@@ -11,6 +11,7 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
 require_once __DIR__ . '/InventoryEngine.php';
+require_once __DIR__ . '/UnitConversionEngine.php';
 // Load system cache (provides sysinfo_get_batch, account_cache_get/set)
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
@@ -177,24 +178,29 @@ try {
             $item_info = $db->fetchOne("SELECT id, sku, cost_price, current_stock, item_name, income_account_id, cogs_account_id, inventory_account_id FROM items WHERE id = ?", [$item_id]);
         }
 
-        // Stock Validation
+        $unit_raw  = $_POST['unit'][$idx] ?? 'PCS';
+        $unit_info = uce_resolve_unit($item_id, $unit_raw);
+        $conversion_factor = (float)$unit_info['conversion_factor'];
+        $base_qty  = uce_calculate_base_qty($qty, $conversion_factor);
+
+        // Stock Validation (against base_qty in PCS)
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $available = (float)($item_info['current_stock'] ?? 0);
-            if ($available < $qty && !isset($_POST['force_save'])) {
+            if ($available < $base_qty && !isset($_POST['force_save'])) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 ob_end_clean();
-                $msg = "Item: " . $item_info['item_name'] . ". Available: " . number_format($available, 4) . ". Do you want to save anyway?";
+                $msg = "Item: " . $item_info['item_name'] . ". Available: " . number_format($available, 4) . " PCS. Required: " . number_format($base_qty, 4) . " PCS (" . $qty . " " . $unit_info['unit_name'] . "). Do you want to save anyway?";
                 echo json_encode(['status' => 'stock_warning', 'message' => $msg]);
                 exit;
             }
         }
 
-        $cost_price = ($item_info['sku'] ?? '') === 'I-00013' ? 0.00 : (float)($item_info['cost_price'] ?? 0);
-        $line_cogs    = $cost_price * $qty;
+        $cost_price   = ($item_info['sku'] ?? '') === 'I-00013' ? 0.00 : (float)($item_info['cost_price'] ?? 0);
+        $line_cogs    = $cost_price * $base_qty;
         $total_cogs  += $line_cogs;
         $gross_profit = $line_amount - $line_cogs;
 
-        // ── Resolve line accounts using pre-fetched data + cache ──
+        // Resolve line accounts using pre-fetched data + cache
         $sales_acc = !empty($item_info['income_account_id'])    ? $item_info['income_account_id']    : $acct_defaults['income'];
         $cogs_acc  = !empty($item_info['cogs_account_id'])      ? $item_info['cogs_account_id']      : $acct_defaults['cogs'];
         $inv_acc   = !empty($item_info['inventory_account_id']) ? $item_info['inventory_account_id'] : $acct_defaults['inventory'];
@@ -202,21 +208,36 @@ try {
         // Override with explicitly posted account if provided
         $line_account_id = !empty($_POST['account_id'][$idx] ?? null) ? $_POST['account_id'][$idx] : $sales_acc;
 
-        $unit = $_POST['unit'][$idx] ?? '';
+        // Promotion evaluation and snapshot storage
+        $promo_id   = !empty($_POST['promotion_id'][$idx] ?? null) ? (int)$_POST['promotion_id'][$idx] : null;
+        $promo_code = !empty($_POST['promo_code'][$idx] ?? null) ? $_POST['promo_code'][$idx] : null;
+        $mrp_sale   = !empty($_POST['mrp_at_sale'][$idx] ?? null) ? (float)$_POST['mrp_at_sale'][$idx] : (float)($item_info['mrp'] ?? 0);
+        $norm_sell  = !empty($_POST['normal_selling_price_at_sale'][$idx] ?? null) ? (float)$_POST['normal_selling_price_at_sale'][$idx] : (float)($item_info['selling_price'] ?? 0);
+        $promo_disc = !empty($_POST['promo_discount_amount'][$idx] ?? null) ? (float)$_POST['promo_discount_amount'][$idx] : 0.0;
+
+        if (!$promo_id && class_exists('PromotionEngine')) {
+            $pEval = PromotionEngine::getInstance()->evaluateItemPromotion($item_id, $location_id, $qty, $mrp_sale, $norm_sell, $txn_date);
+            if ($pEval['has_promotion']) {
+                $promo_id   = $pEval['promotion']['id'];
+                $promo_code = $pEval['promotion']['promo_code'];
+                $promo_disc = $pEval['discount_amount_per_unit'];
+            }
+        }
+
         $db->execute(
-            "INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit]
+            "INSERT INTO transaction_lines (id, header_id, item_id, promotion_id, promo_code, account_id, line_number, quantity, unit, conversion_factor, base_qty, base_unit_price, unit_price, mrp_at_sale, normal_selling_price_at_sale, promo_discount_amount, tax_rate, tax_amount, line_total, cost_price, gross_profit)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [generate_uuid(), $id, $item_id, $promo_id, $promo_code, $line_account_id, $idx + 1, $qty, $unit_info['unit_name'], $conversion_factor, $base_qty, $cost_price, $rate, $mrp_sale, $norm_sell, $promo_disc, $tax_rate, $tax_amount, $line_total, $cost_price, $gross_profit]
         );
 
-        // Deduct new stock and update inventory_balances via InventoryEngine
+        // Deduct new stock and update inventory_balances via InventoryEngine using base_qty
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-            InventoryEngine::getInstance()->issueStock($item_id, $location_id, $qty, $id, null, 'SALE', $rate, $txn_date, [
+            InventoryEngine::getInstance()->issueStock($item_id, $location_id, $base_qty, $id, null, 'SALE', $rate, $txn_date, [
                 'txn_number' => $txn_number,
                 'force_issue' => isset($_POST['force_save'])
             ]);
             if (isset($item_data_map[$item_id])) {
-                $item_data_map[$item_id]['current_stock'] -= $qty;
+                $item_data_map[$item_id]['current_stock'] -= $base_qty;
             }
         }
         $synced_items[] = $item_id;

@@ -351,6 +351,11 @@ class InventoryEngine
         $stmt->execute([$itemId]);
         $unitCost = $newRate > 0 ? $newRate : (float)($stmt->fetchColumn() ?: 0.0);
 
+        if ($newRate > 0) {
+            $stmtUp = $this->pdo->prepare("UPDATE items SET cost_price = ? WHERE id = ?");
+            $stmtUp->execute([$newRate, $itemId]);
+        }
+
         $mType = $adjustmentQty > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
         $qtyIn = $adjustmentQty > 0 ? $adjustmentQty : 0.0;
         $qtyOut = $adjustmentQty < 0 ? abs($adjustmentQty) : 0.0;

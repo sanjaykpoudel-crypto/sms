@@ -6,7 +6,7 @@ $db = db();
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 $raw_account = $_GET['account_id'] ?? ($_GET['account_type'] ?? '');
 $account_ids = [];
 
@@ -14,7 +14,7 @@ if ($raw_account === 'bank' || $raw_account === 'all_bank') {
   $bank_rows = $db->fetchAll("SELECT id FROM accounts WHERE account_subtype = 'Bank' AND is_active=1 AND is_deleted=0");
   $account_ids = array_column($bank_rows, 'id');
 } elseif ($raw_account === 'cash' || $raw_account === 'all_cash') {
-  $cash_rows = $db->fetchAll("SELECT id FROM accounts WHERE account_subtype = 'Bank' AND is_active=1 AND is_deleted=0");
+  $cash_rows = $db->fetchAll("SELECT id FROM accounts WHERE account_subtype = 'Cash' AND is_active=1 AND is_deleted=0");
   $account_ids = array_column($cash_rows, 'id');
 } elseif (is_array($raw_account)) {
   $account_ids = array_values(array_filter($raw_account));
@@ -85,12 +85,10 @@ $sql = "
         COALESCE(
             CASE WHEN j.party_type = 'customer' THEN (SELECT full_name FROM customers WHERE id = j.party_id LIMIT 1) END,
             CASE WHEN j.party_type = 'vendor' THEN (SELECT company_name FROM vendors WHERE id = j.party_id LIMIT 1) END,
-            (SELECT full_name FROM customers WHERE id = j.party_id LIMIT 1),
-            (SELECT company_name FROM vendors WHERE id = j.party_id LIMIT 1),
+            CASE WHEN j.party_type = 'user' THEN (SELECT full_name FROM users WHERE id = j.party_id LIMIT 1) END,
             CASE WHEN h.party_type = 'customer' THEN (SELECT full_name FROM customers WHERE id = h.party_id LIMIT 1) END,
             CASE WHEN h.party_type = 'vendor' THEN (SELECT company_name FROM vendors WHERE id = h.party_id LIMIT 1) END,
-            (SELECT full_name FROM customers WHERE id = h.party_id LIMIT 1),
-            (SELECT company_name FROM vendors WHERE id = h.party_id LIMIT 1),
+            CASE WHEN h.party_type = 'user' THEN (SELECT full_name FROM users WHERE id = h.party_id LIMIT 1) END,
             (SELECT c.full_name FROM customer_invoices ci JOIN customers c ON ci.customer_id = c.id WHERE ci.header_id = h.id LIMIT 1),
             (SELECT v.company_name FROM vendor_bills vb JOIN vendors v ON vb.vendor_id = v.id WHERE vb.header_id = h.id LIMIT 1),
             (SELECT c.full_name FROM credit_memos cm JOIN customers c ON cm.customer_id = c.id WHERE cm.header_id = h.id LIMIT 1),

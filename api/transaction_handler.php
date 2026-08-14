@@ -411,6 +411,153 @@ function handleTransaction($json, $pdo, $db)
                     }
                 }
 
+                // ── Customers: check linked invoices, payments, journal entries ──
+                if ($tableName === 'customers') {
+                    $cname = $oldData['full_name'] ?? $oldData['company_name'] ?? $primaryValue;
+
+                    $linked = [];
+
+                    $inv_rows = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM customer_invoices ci
+                        JOIN transaction_headers h ON ci.header_id = h.id
+                        WHERE ci.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided')
+                        ORDER BY h.txn_date DESC LIMIT 10
+                    ");
+                    $inv_rows->execute([$primaryValue]);
+                    foreach ($inv_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = ucfirst(str_replace('_',' ',$r['txn_type'])) . " #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    $pay_rows = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM payments p
+                        JOIN transaction_headers h ON p.header_id = h.id
+                        WHERE p.customer_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided')
+                        ORDER BY h.txn_date DESC LIMIT 5
+                    ");
+                    $pay_rows->execute([$primaryValue]);
+                    foreach ($pay_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = "Payment #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    if (!empty($linked)) {
+                        $total = count($linked);
+                        $sample = array_slice($linked, 0, 5);
+                        $msg = implode('; ', $sample);
+                        if ($total > 5) $msg .= " and " . ($total - 5) . " more";
+                        throw new Exception("Cannot delete customer '{$cname}'. There are {$total} related record(s): {$msg}. Please remove these records first.");
+                    }
+                }
+
+                // ── Vendors: check linked bills, payments, journal entries ──
+                if ($tableName === 'vendors') {
+                    $vname = $oldData['company_name'] ?? $oldData['full_name'] ?? $primaryValue;
+
+                    $linked = [];
+
+                    $bill_rows = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM vendor_bills vb
+                        JOIN transaction_headers h ON vb.header_id = h.id
+                        WHERE vb.vendor_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided')
+                        ORDER BY h.txn_date DESC LIMIT 10
+                    ");
+                    $bill_rows->execute([$primaryValue]);
+                    foreach ($bill_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = ucfirst(str_replace('_',' ',$r['txn_type'])) . " #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    $pay_rows = $pdo->prepare("
+                        SELECT h.txn_number, h.txn_type, h.txn_date
+                        FROM payments p
+                        JOIN transaction_headers h ON p.header_id = h.id
+                        WHERE p.vendor_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided')
+                        ORDER BY h.txn_date DESC LIMIT 5
+                    ");
+                    $pay_rows->execute([$primaryValue]);
+                    foreach ($pay_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = "Payment #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    if (!empty($linked)) {
+                        $total = count($linked);
+                        $sample = array_slice($linked, 0, 5);
+                        $msg = implode('; ', $sample);
+                        if ($total > 5) $msg .= " and " . ($total - 5) . " more";
+                        throw new Exception("Cannot delete vendor '{$vname}'. There are {$total} related record(s): {$msg}. Please remove these records first.");
+                    }
+                }
+
+                // ── Locations: check linked transactions and inventory balances ──
+                if ($tableName === 'locations') {
+                    $lname = $oldData['name'] ?? $primaryValue;
+                    $linked = [];
+
+                    $txn_rows = $pdo->prepare("
+                        SELECT txn_number, txn_type, txn_date FROM transaction_headers
+                        WHERE location_id = ? AND is_deleted = 0 AND status NOT IN ('void','voided')
+                        ORDER BY txn_date DESC LIMIT 10
+                    ");
+                    $txn_rows->execute([$primaryValue]);
+                    foreach ($txn_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = ucfirst(str_replace('_',' ',$r['txn_type'])) . " #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    $inv_cnt = $pdo->prepare("SELECT COUNT(*) as c FROM inventory_balances WHERE location_id = ? AND quantity_on_hand != 0");
+                    $inv_cnt->execute([$primaryValue]);
+                    $inv_c = (int)($inv_cnt->fetch(PDO::FETCH_ASSOC)['c'] ?? 0);
+                    if ($inv_c > 0) $linked[] = "{$inv_c} inventory balance record(s)";
+
+                    if (!empty($linked)) {
+                        $total = count($linked);
+                        $sample = array_slice($linked, 0, 5);
+                        $msg = implode('; ', $sample);
+                        if ($total > 5) $msg .= " and " . ($total - 5) . " more";
+                        throw new Exception("Cannot delete location '{$lname}'. There are {$total} related record(s): {$msg}. Please reassign or delete these records first.");
+                    }
+                }
+
+                // ── Users: check linked transactions and activities ──
+                if ($tableName === 'users') {
+                    $uname = $oldData['username'] ?? $oldData['full_name'] ?? $primaryValue;
+                    $linked = [];
+
+                    $txn_rows = $pdo->prepare("
+                        SELECT txn_number, txn_type, txn_date FROM transaction_headers
+                        WHERE created_by = ? AND is_deleted = 0
+                        ORDER BY txn_date DESC LIMIT 5
+                    ");
+                    $txn_rows->execute([$primaryValue]);
+                    foreach ($txn_rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        $linked[] = ucfirst(str_replace('_',' ',$r['txn_type'])) . " #{$r['txn_number']} ({$r['txn_date']})";
+                    }
+
+                    if (!empty($linked)) {
+                        $total = count($linked);
+                        $sample = array_slice($linked, 0, 5);
+                        $msg = implode('; ', $sample);
+                        if ($total > 5) $msg .= " and " . ($total - 5) . " more";
+                        throw new Exception("Cannot delete user '{$uname}'. This user has created {$total} transaction(s): {$msg}. Please reassign these records first.");
+                    }
+                }
+
+                // ── Roles: check if any user is assigned this role ──
+                if ($tableName === 'roles') {
+                    $rname = $oldData['name'] ?? $primaryValue;
+
+                    $user_rows = $pdo->prepare("SELECT username FROM users WHERE role_id = ? AND is_deleted = 0 LIMIT 10");
+                    $user_rows->execute([$primaryValue]);
+                    $users_assigned = $user_rows->fetchAll(PDO::FETCH_COLUMN);
+
+                    if (!empty($users_assigned)) {
+                        $total = count($users_assigned);
+                        $sample = implode(', ', array_slice($users_assigned, 0, 5));
+                        if ($total > 5) $sample .= " and " . ($total - 5) . " more";
+                        throw new Exception("Cannot delete role '{$rname}'. It is assigned to {$total} user(s): {$sample}. Please reassign users to another role first.");
+                    }
+                }
+
                 // Check if deleting an account that is system core or has linked records
                 if ($tableName === 'accounts') {
                     $acc_code = $oldData['account_code'] ?? '';

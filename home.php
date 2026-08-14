@@ -160,10 +160,10 @@
         <div class="dv4-card dv4-col-12" id="widget-bank-account-detail">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-university" style="color: #6366f1; font-size: 15px; margin-right: 6px;"></i> Bank Account Details<span id="ba-header-account-name" style="font-weight: 500; font-size: 13px; color: var(--dv4-text-muted); margin-left: 8px;"></span>
+                    <i class="fas fa-university" style="color: #6366f1; font-size: 15px; margin-right: 6px;"></i> Bank & Cash Account Details<span id="ba-header-account-name" style="font-weight: 500; font-size: 13px; color: var(--dv4-text-muted); margin-left: 8px;"></span>
                 </div>
-                <select id="bank-account-select" class="dv4-select" style="min-width: 220px;">
-                    <option value="">Select Bank Account...</option>
+                <select id="bank-account-select" class="dv4-select" style="min-width: 240px;">
+                    <option value="">Select Account (Bank / Cash)...</option>
                 </select>
             </div>
             <div class="dv4-card-body" style="padding: 20px;">

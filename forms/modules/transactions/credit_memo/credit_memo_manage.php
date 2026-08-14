@@ -456,31 +456,76 @@ foreach ($raw_invoice_lines as $rl) {
 
     function cmFetchItem(select) {
         const tr = select.closest('tr');
-        const opt = select.options[select.selectedIndex];
+        const itemId = select.value;
+        if (!tr || !itemId) return;
 
-        if (!opt || !select.value) return;
-
-        const rateInput = tr.querySelector('.rate-input');
-        const costInput = tr.querySelector('.cost-input');
-
-        if (rateInput && (!parseFloat(rateInput.value) || parseFloat(rateInput.value) === 0)) {
-            rateInput.value = parseFloat(opt.dataset.price || 0).toFixed(2);
-        }
-        if (costInput) {
-            costInput.value = parseFloat(opt.dataset.cost || 0).toFixed(2);
-        }
-
-        fetch('api/transaction_handler.php?action=get_item_stock&item_id=' + select.value)
+        fetch('api/get_item_details.php?id=' + itemId)
             .then(r => r.json())
             .then(data => {
-                if (data && data.stock !== undefined) {
-                    const stockIn = tr.querySelector('.stock-input');
-                    if (stockIn) stockIn.value = data.stock;
-                }
-            })
-            .catch(err => {});
+                if (data.error) return;
+                tr.dataset.itemData = JSON.stringify(data);
+                
+                const rateInput = tr.querySelector('.rate-input');
+                const costInput = tr.querySelector('.cost-input');
+                if (rateInput) rateInput.value = parseFloat(data.selling_price || 0).toFixed(2);
+                if (costInput) costInput.value = parseFloat(data.cost_price || 0).toFixed(2);
 
-        cmCalcRow(select);
+                const unitTd = tr.querySelector('.unit-input').closest('td');
+                const conv = parseInt(data.units_per_case || 1);
+                const baseUnit = data.unit_name || data.unit_type || 'PCS';
+                const caseUnit = data.case_unit_name || 'CASE';
+
+                if (conv > 1) {
+                    unitTd.innerHTML = `
+                        <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="cmUnitChanged(this)">
+                            <option value="${baseUnit}">${baseUnit}</option>
+                            <option value="${caseUnit}">${caseUnit} (${conv} PCS)</option>
+                        </select>
+                    `;
+                } else {
+                    unitTd.innerHTML = `<input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="${baseUnit}" readonly tabindex="-1">`;
+                }
+
+                updateCmStockDisplay(tr);
+                cmCalcRow(tr.querySelector('.qty-input'));
+            });
+    }
+
+    function cmUnitChanged(select) {
+        const tr = select.closest('tr');
+        if (!tr || !tr.dataset.itemData) return;
+        const data = JSON.parse(tr.dataset.itemData);
+        const selectedUnit = select.value;
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+
+        let rate = parseFloat(data.selling_price || 0);
+        if (selectedUnit === caseUnit || selectedUnit === 'CASE') {
+            const casePrice = parseFloat(data.case_selling_price || 0);
+            rate = casePrice > 0 ? casePrice : Math.round(rate * conv * 100) / 100;
+        }
+
+        tr.querySelector('.rate-input').value = rate.toFixed(2);
+        updateCmStockDisplay(tr);
+        cmCalcRow(tr.querySelector('.qty-input'));
+    }
+
+    function updateCmStockDisplay(tr) {
+        if (!tr.dataset.itemData) return;
+        const data = JSON.parse(tr.dataset.itemData);
+        const unitEl = tr.querySelector('.unit-input');
+        const selectedUnit = unitEl ? unitEl.value : '';
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+        const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
+
+        const baseStock = parseFloat(data.current_stock || 0);
+
+        if (isCase && conv > 1) {
+            tr.querySelector('.stock-input').value = (baseStock / conv).toFixed(2);
+        } else {
+            tr.querySelector('.stock-input').value = baseStock.toFixed(2);
+        }
     }
 
     function cmCalcRow(element) {

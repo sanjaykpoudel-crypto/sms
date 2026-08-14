@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
 require_once __DIR__ . '/InventoryEngine.php';
+require_once __DIR__ . '/UnitConversionEngine.php';
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
 }
@@ -113,18 +114,23 @@ try {
 
         $line_account_id = !empty($_POST['account_id'][$idx] ?? null) ? $_POST['account_id'][$idx] : get_effective_account($item_id, 'inventory');
 
-        $unit = $_POST['unit'][$idx] ?? '';
-        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit, $rate, $tax_rate, $tax_amount, $line_total, $rate, 0
+        $unit_raw  = $_POST['unit'][$idx] ?? 'PCS';
+        $unit_info = uce_resolve_unit($item_id, $unit_raw);
+        $conversion_factor = (float)$unit_info['conversion_factor'];
+        $base_qty  = uce_calculate_base_qty($qty, $conversion_factor);
+        $base_cost = uce_calculate_base_unit_cost($line_amount, $base_qty);
+
+        $db->execute("INSERT INTO transaction_lines (id, header_id, item_id, account_id, line_number, quantity, unit, conversion_factor, base_qty, base_unit_price, unit_price, tax_rate, tax_amount, line_total, cost_price, gross_profit) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            generate_uuid(), $id, $item_id, $line_account_id, $idx + 1, $qty, $unit_info['unit_name'], $conversion_factor, $base_qty, $base_cost, $rate, $tax_rate, $tax_amount, $line_total, $base_cost, 0
         ]);
         
-        // Add new stock and update moving-average cost via InventoryEngine
+        // Add new stock and update moving-average cost via InventoryEngine (using base_qty and base_cost)
         if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
             $item_sku = $db->fetchOne("SELECT sku FROM items WHERE id = ?", [$item_id])['sku'] ?? '';
-            $new_cost = ($item_sku === 'I-00013') ? 0.00 : $rate;
+            $new_cost = ($item_sku === 'I-00013') ? 0.00 : $base_cost;
             
-            InventoryEngine::getInstance()->receiveStock($item_id, $location_id, $qty, $new_cost, $id, null, 'PURCHASE', $txn_date, [
+            InventoryEngine::getInstance()->receiveStock($item_id, $location_id, $base_qty, $new_cost, $id, null, 'PURCHASE', $txn_date, [
                 'txn_number' => $txn_number
             ]);
 

@@ -66,6 +66,18 @@ if (!$pos) {
     ", [$id]);
 }
 
+// Fetch payment lines (for split payment breakdown)
+$payments_rows = [];
+if (!empty($id) && is_numeric($id)) {
+    $payments_rows = $db->fetchAll("
+        SELECT pp.payment_mode, pp.amount, pp.reference_no, a.account_name
+        FROM pos_payments pp
+        LEFT JOIN accounts a ON pp.account_id = a.id
+        WHERE pp.pos_id = ? AND pp.amount > 0
+        ORDER BY pp.id ASC
+    ", [$id]);
+}
+
 // Fetch System Info (Company Details)
 $sys_info = $db->fetchAll("SELECT meta_field, meta_value FROM system_info");
 $sys = [];
@@ -73,11 +85,11 @@ foreach($sys_info as $row) {
     $sys[$row['meta_field']] = $row['meta_value'];
 }
 
-$company_name = $sys['name'] ?? ($sys['company_name'] ?? 'MNS Liquors');
+$company_name    = $sys['name'] ?? ($sys['company_name'] ?? 'MNS Liquors');
 $company_address = $sys['address'] ?? ($sys['company_address'] ?? 'Gokarneshwor 9, Kathmandu Nepal');
-$company_phone = $sys['contact'] ?? ($sys['company_phone'] ?? '');
-$company_pan = $sys['pan_no'] ?? ($sys['company_pan'] ?? ($sys['pan_vat_number'] ?? '106984242'));
-$fy_label = $sys['current_fiscal_year'] ?? '2081/82';
+$company_phone   = $sys['contact'] ?? ($sys['company_phone'] ?? '');
+$company_pan     = $sys['pan_no'] ?? ($sys['company_pan'] ?? ($sys['pan_vat_number'] ?? '106984242'));
+$fy_label        = $sys['current_fiscal_year'] ?? '2081/82';
 
 $net_total     = (float)($pos['net_amount'] ?? ($pos['total_amount'] ?? 0));
 $discount      = (float)($pos['discount_amount'] ?? ($pos['discount'] ?? 0));
@@ -88,6 +100,16 @@ $vat_13        = round($net_total - $taxable, 2);
 $amount_paid   = (float)($pos['amount_paid'] ?? $net_total);
 $change_due    = (float)($pos['change_due'] ?? 0);
 $payment_method = strtoupper($pos['payment_method'] ?? ($pos['sale_type'] ?? 'CASH'));
+
+// Compute total promotional savings across all items
+$total_promo_savings = 0.0;
+foreach ($items as $it) {
+    $pdisc = (float)($it['promo_discount_amount'] ?? 0);
+    $pqty  = (float)($it['quantity'] ?? 1);
+    if (!empty($it['promo_code']) && $pdisc > 0) {
+        $total_promo_savings += round($pdisc * $pqty, 2);
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="ne">
@@ -227,13 +249,39 @@ $payment_method = strtoupper($pos['payment_method'] ?? ($pos['sale_type'] ?? 'CA
     </thead>
     <tbody>
         <?php foreach ($items as $item): 
-            $item_qty  = (float)($item['quantity'] ?? 1);
-            $item_rate = (float)($item['rate'] ?? ($item['unit_price'] ?? 0));
-            $item_amt  = (float)($item['amount'] ?? ($item['net_amount'] ?? ($item_qty * $item_rate)));
+            $item_qty      = (float)($item['quantity'] ?? 1);
+            $item_rate     = (float)($item['rate'] ?? ($item['unit_price'] ?? 0));
+            $item_amt      = (float)($item['amount'] ?? ($item['net_amount'] ?? ($item_qty * $item_rate)));
+            $item_mrp      = (float)($item['mrp_at_sale'] ?? 0);
+            $item_norm     = (float)($item['normal_selling_price_at_sale'] ?? 0);
+            $item_pdisc    = (float)($item['promo_discount_amount'] ?? 0);
+            $item_savings  = round($item_pdisc * $item_qty, 2);
+            $has_promo     = !empty($item['promo_code']);
         ?>
         <tr>
             <td colspan="4" class="bold" style="padding-top:3px;"><?php echo htmlspecialchars($item['item_name']); ?></td>
         </tr>
+        <?php if ($has_promo): ?>
+        <tr>
+            <td colspan="4" style="font-size:10px; color:#555;">
+                * Promo: <strong><?php echo htmlspecialchars($item['promo_code']); ?></strong>
+                <?php if ($item_mrp > 0): ?> | MRP: Rs <?php echo number_format($item_mrp, 2); ?><?php endif; ?>
+            </td>
+        </tr>
+        <?php if ($item_norm > 0 && $item_norm != $item_rate): ?>
+        <tr>
+            <td colspan="2" style="font-size:10px; color:#888;">Normal Rate:</td>
+            <td class="text-right" style="font-size:10px; color:#888; text-decoration:line-through;">Rs <?php echo number_format($item_norm, 2); ?></td>
+            <td class="text-right" style="font-size:10px; color:#888;"></td>
+        </tr>
+        <?php endif; ?>
+        <?php if ($item_savings > 0): ?>
+        <tr>
+            <td colspan="3" style="font-size:10px; color:#000; font-weight:bold;">  You Save:</td>
+            <td class="text-right" style="font-size:10px; font-weight:bold; color:#000;">-Rs <?php echo number_format($item_savings, 2); ?></td>
+        </tr>
+        <?php endif; ?>
+        <?php endif; ?>
         <tr>
             <td style="color:#444;">#<?php echo htmlspecialchars($item['sku'] ?? ''); ?></td>
             <td class="text-right"><?php echo number_format($item_qty, 0); ?></td>
@@ -252,6 +300,12 @@ $payment_method = strtoupper($pos['payment_method'] ?? ($pos['sale_type'] ?? 'CA
         <td>Sub Total:</td>
         <td class="text-right">Rs <?php echo number_format($subtotal, 2); ?></td>
     </tr>
+    <?php if ($total_promo_savings > 0): ?>
+    <tr>
+        <td style="font-weight:bold;">* Promo Savings:</td>
+        <td class="text-right" style="font-weight:bold;">- Rs <?php echo number_format($total_promo_savings, 2); ?></td>
+    </tr>
+    <?php endif; ?>
     <?php if ($discount > 0): ?>
     <tr>
         <td>Discount:</td>
@@ -270,14 +324,46 @@ $payment_method = strtoupper($pos['payment_method'] ?? ($pos['sale_type'] ?? 'CA
         <td style="padding-top: 4px; border-top: 1px dashed #000;">GRAND TOTAL:</td>
         <td class="text-right" style="padding-top: 4px; border-top: 1px dashed #000;">Rs <?php echo number_format($net_total, 2); ?></td>
     </tr>
-    <?php if ($payment_method === 'CASH'): ?>
+</table>
+
+<div class="divider"></div>
+
+<!-- PAYMENT BREAKDOWN -->
+<?php
+$has_split = count($payments_rows) > 1;
+$total_tendered = 0.0;
+foreach ($payments_rows as $pr) { $total_tendered += (float)$pr['amount']; }
+$computed_change = round($total_tendered - $net_total, 2);
+?>
+<table class="summary-table">
     <tr>
-        <td>Tendered Amount:</td>
-        <td class="text-right">Rs <?php echo number_format($amount_paid, 2); ?></td>
+        <td colspan="2" style="font-size:10px; font-weight:bold; padding-bottom:2px;">PAYMENT DETAIL<?php echo $has_split ? 'S (Split)' : ''; ?>:</td>
     </tr>
+    <?php if (!empty($payments_rows)): ?>
+        <?php foreach ($payments_rows as $pr):
+            $pmode = strtoupper($pr['account_name'] ?? $pr['payment_mode'] ?? 'CASH');
+            $pamt  = (float)$pr['amount'];
+        ?>
+        <tr>
+            <td style="font-size:10px;"><?php echo htmlspecialchars($pmode); ?><?php if (!empty($pr['reference_no']) && $pr['reference_no'] !== 'Change Return'): ?> <small>(Ref: <?php echo htmlspecialchars($pr['reference_no']); ?>)</small><?php endif; ?></td>
+            <td class="text-right" style="font-size:10px; font-weight:bold;">Rs <?php echo number_format($pamt, 2); ?></td>
+        </tr>
+        <?php endforeach; ?>
+    <?php else: ?>
     <tr>
-        <td>Change Return:</td>
-        <td class="text-right">Rs <?php echo number_format($change_due, 2); ?></td>
+        <td style="font-size:10px;"><?php echo htmlspecialchars($payment_method); ?></td>
+        <td class="text-right" style="font-size:10px; font-weight:bold;">Rs <?php echo number_format($net_total, 2); ?></td>
+    </tr>
+    <?php endif; ?>
+    <?php if ($computed_change > 0.01): ?>
+    <tr>
+        <td style="font-size:10px;">Change Return:</td>
+        <td class="text-right" style="font-size:10px;">Rs <?php echo number_format($computed_change, 2); ?></td>
+    </tr>
+    <?php elseif ($change_due > 0.01): ?>
+    <tr>
+        <td style="font-size:10px;">Change Return:</td>
+        <td class="text-right" style="font-size:10px;">Rs <?php echo number_format($change_due, 2); ?></td>
     </tr>
     <?php endif; ?>
 </table>

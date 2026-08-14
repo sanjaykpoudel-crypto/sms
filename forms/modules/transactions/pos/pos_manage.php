@@ -28,13 +28,15 @@ if (empty($pos_location_id)) {
 
 $all_locations = $db->fetchAll("SELECT id, name FROM locations WHERE is_deleted = 0 ORDER BY name ASC");
 
+require_once 'api/PromotionEngine.php';
+
 // Fetch active items with category names, location-specific stock, cost, and selling price
 $items = $db->fetchAll("
     SELECT i.id, i.sku, i.item_name, r.name as category_name, 
         CAST(COALESCE(ib.selling_price, i.selling_price) AS DECIMAL(12,2)) as selling_price, 
         CAST(COALESCE(ib.average_cost, i.cost_price) AS DECIMAL(12,2)) as cost_price, 
         CAST(COALESCE(ib.mrp, i.mrp, 0) AS DECIMAL(12,2)) as mrp,
-        i.tax_rate, i.barcode,
+        i.tax_rate, i.barcode, i.unit_type, i.units_per_case, i.case_unit_name, i.case_selling_price, i.case_barcode,
         CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
     FROM items i 
     LEFT JOIN reference_codes r ON i.item_category = r.id AND r.type = 'category'
@@ -42,6 +44,19 @@ $items = $db->fetchAll("
     WHERE i.is_active = 1 AND i.is_deleted = 0 AND COALESCE(ib.quantity_on_hand, 0) > 0
     ORDER BY i.item_name ASC
 ", [$pos_location_id]);
+
+$promoEngine = PromotionEngine::getInstance();
+foreach ($items as &$it) {
+    $promoEval = $promoEngine->evaluateItemPromotion($it['id'], $pos_location_id, 1, (float)$it['mrp'], (float)$it['selling_price']);
+    $it['has_promotion'] = $promoEval['has_promotion'];
+    if ($promoEval['has_promotion']) {
+        $it['promotion_id'] = $promoEval['promotion']['id'];
+        $it['promo_code'] = $promoEval['promotion']['promo_code'];
+        $it['promo_name'] = $promoEval['promotion']['name'];
+        $it['promotional_price'] = $promoEval['promotional_selling_price'];
+        $it['promo_discount_amount'] = $promoEval['discount_amount_per_unit'];
+    }
+}
 
 // Fetch bank/cash accounts for payment
 $payment_accounts = $db->fetchAll("SELECT id, account_name, account_subtype FROM accounts WHERE (account_type_id = 1 OR account_subtype IN ('Bank', 'Cash')) AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
@@ -59,6 +74,103 @@ sort($categories);
 
 $txn_number = 'POS-' . date('Ymd') . '-' . rand(1000, 9999);
 $txn_date = date('Y-m-d');
+
+$edit_id = $_GET['id'] ?? null;
+$edit_pos = null;
+$edit_items = [];
+$edit_payments = [];
+
+if ($edit_id) {
+    $edit_pos = $db->fetchOne("SELECT * FROM pos_entry WHERE id = ? AND is_deleted = 0", [$edit_id]);
+    if ($edit_pos) {
+        $txn_number = $edit_pos['invoice_no'];
+        $txn_date = date('Y-m-d', strtotime($edit_pos['date_time']));
+        if (!empty($edit_pos['location_id'])) {
+            $pos_location_id = $edit_pos['location_id'];
+        }
+        
+        $edit_items_rows = $db->fetchAll("
+            SELECT pi.*, i.sku, i.item_name, i.barcode, i.tax_rate, i.unit_type, i.units_per_case, i.case_unit_name, i.case_selling_price, i.case_barcode,
+                   CAST(COALESCE(ib.selling_price, i.selling_price) AS DECIMAL(12,2)) as selling_price,
+                   CAST(COALESCE(ib.quantity_on_hand, 0) AS DECIMAL(12,2)) as current_stock
+            FROM pos_items pi
+            JOIN items i ON pi.item_id = i.id
+            LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = ?
+            WHERE pi.pos_id = ?
+        ", [$pos_location_id, $edit_id]);
+
+        foreach ($edit_items_rows as $e_row) {
+            $edit_items[] = [
+                'id' => $e_row['item_id'],
+                'item_id' => $e_row['item_id'],
+                'sku' => $e_row['sku'],
+                'name' => $e_row['item_name'],
+                'item_name' => $e_row['item_name'],
+                'price' => (float)$e_row['rate'],
+                'qty' => (float)$e_row['quantity'],
+                'unit' => $e_row['txn_unit'] ?: 'PCS',
+                'conversion_factor' => (float)($e_row['conversion_factor'] ?: 1),
+                'discount' => (float)$e_row['discount'],
+                'tax' => (float)$e_row['tax'],
+                'tax_rate' => (float)$e_row['tax_rate'],
+                'net' => (float)$e_row['net_amount'],
+                'unit_type' => $e_row['unit_type'],
+                'units_per_case' => $e_row['units_per_case'],
+                'case_unit_name' => $e_row['case_unit_name'],
+                'case_selling_price' => $e_row['case_selling_price'],
+                'case_barcode' => $e_row['case_barcode'],
+                'selling_price' => $e_row['selling_price'],
+                'current_stock' => (float)$e_row['current_stock'],
+                // Restore promo fields from saved pos_items
+                'has_promotion' => !empty($e_row['promotion_id']),
+                'promotion_id' => $e_row['promotion_id'] ?? null,
+                'promo_code' => $e_row['promo_code'] ?? null,
+                'mrp_at_sale' => (float)($e_row['mrp_at_sale'] ?? 0),
+                'normal_selling_price_at_sale' => (float)($e_row['normal_selling_price_at_sale'] ?? 0),
+                'promo_discount_amount' => (float)($e_row['promo_discount_amount'] ?? 0)
+            ];
+            
+            $exists_in_items = false;
+            foreach ($items as &$it) {
+                if ($it['id'] == $e_row['item_id']) {
+                    $exists_in_items = true;
+                    break;
+                }
+            }
+            if (!$exists_in_items) {
+                $items[] = [
+                    'id' => $e_row['item_id'],
+                    'sku' => $e_row['sku'],
+                    'item_name' => $e_row['item_name'],
+                    'category_name' => 'Other',
+                    'selling_price' => number_format((float)$e_row['rate'], 2, '.', ''),
+                    'cost_price' => '0.00',
+                    'mrp' => '0.00',
+                    'tax_rate' => $e_row['tax_rate'],
+                    'barcode' => $e_row['barcode'],
+                    'unit_type' => $e_row['unit_type'],
+                    'units_per_case' => $e_row['units_per_case'],
+                    'case_unit_name' => $e_row['case_unit_name'],
+                    'case_selling_price' => $e_row['case_selling_price'],
+                    'case_barcode' => $e_row['case_barcode'],
+                    'current_stock' => (float)$e_row['current_stock']
+                ];
+            }
+        }
+        
+        $edit_payments_rows = $db->fetchAll("
+            SELECT * FROM pos_payments WHERE pos_id = ?
+        ", [$edit_id]);
+        foreach ($edit_payments_rows as $p_row) {
+            $edit_payments[] = [
+                'account_id' => $p_row['account_id'],
+                'amount' => (float)$p_row['amount'],
+                'mode' => $p_row['payment_mode'],
+                'reference' => $p_row['reference_no'] ?? ''
+            ];
+        }
+    }
+}
 ?>
 <style>
     /* POS Shell Styles */
@@ -80,12 +192,16 @@ $txn_date = date('Y-m-d');
     .pos-cat-btn { padding: 8px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 20px; font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; white-space: nowrap; transition: 0.2s; }
     .pos-cat-btn.active, .pos-cat-btn:hover { background: var(--ns-primary); border-color: var(--ns-primary); color: #fff; }
 
-    .pos-grid { padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; overflow-y: auto; flex: 1; align-content: start; }
-    .pos-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; transition: 0.2s; display: flex; flex-direction: column; justify-content: flex-start; min-height: 120px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .pos-grid { padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; overflow-y: auto; flex: 1; align-content: start; }
+    .pos-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 10px 10px; cursor: pointer; transition: 0.2s; display: flex; flex-direction: column; justify-content: flex-start; min-height: 140px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); box-sizing: border-box; overflow: hidden; }
     .pos-card:hover { border-color: var(--ns-primary); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,85,170,0.08); }
-    .pos-card-name { font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 15px; font-weight: 800; color: #ea580c; margin-bottom: 8px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex-shrink: 0; letter-spacing: 0.2px; }
-    .pos-card-price { font-size: 15px; font-weight: 700; color: var(--ns-accent); }
-    .pos-card-sku { font-size: 11px; color: #94a3b8; margin-top: 4px; font-weight: 500; }
+    .pos-card.has-promo { border-color: #dc2626; border-width: 2px; }
+    .pos-card-name { font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 13px; font-weight: 800; color: #ea580c; margin-bottom: 6px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex-shrink: 0; letter-spacing: 0.2px; text-align: center; word-break: break-word; }
+    .pos-card-price { font-size: 13px; font-weight: 700; color: var(--ns-accent); }
+    .pos-card-sku { font-size: 10px; color: #94a3b8; margin-top: 3px; font-weight: 500; }
+    .pos-card-detail { font-size: 10px; display: flex; justify-content: space-between; margin-top: 2px; color: #475569; }
+    .pos-card-detail span:last-child { font-weight: 700; }
+    .pos-promo-badge { display: inline-block; background: #dc2626; color: #fff; border-radius: 3px; padding: 1px 4px; font-size: 9px; font-weight: 800; margin-top: 4px; letter-spacing: 0.5px; }
 
     /* Right: Cart & Payment */
     .pos-sidebar { flex: 4; display: flex; flex-direction: column; background: #fff; border-left: 1px solid #e0e6ed; min-width: 400px; max-width: 500px; box-shadow: -4px 0 15px rgba(0,0,0,0.03); }
@@ -194,7 +310,7 @@ $txn_date = date('Y-m-d');
 
     <div class="pos-sidebar">
         <div class="pos-cart-hdr">
-            <h2><i class="fas fa-shopping-basket"></i> POS Cart</h2>
+            <h2><i class="fas fa-shopping-basket"></i> <?php echo $edit_pos ? 'Edit POS Sale' : 'POS Cart'; ?></h2>
             <div style="font-size: 12px; font-weight: 600; opacity: 0.9;"><?php echo $txn_number; ?></div>
         </div>
         
@@ -213,6 +329,10 @@ $txn_date = date('Y-m-d');
                 <div class="pos-summary-line">
                     <span>Subtotal</span>
                     <span id="txt-subtotal">Rs 0.00</span>
+                </div>
+                <div class="pos-summary-line" id="promo-disc-line" style="display:none; color:#dc2626;">
+                    <span><i class="fas fa-tag" style="font-size:11px; margin-right:3px;"></i>Promo Discount</span>
+                    <span id="txt-promo-disc" style="font-weight:700;">- Rs 0.00</span>
                 </div>
                 <div class="pos-summary-line">
                     <span>Discount (Total)</span>
@@ -260,7 +380,7 @@ $txn_date = date('Y-m-d');
             </div>
 
             <button id="btn-checkout" class="pos-action-btn" onclick="completeSale()" disabled>
-                <i class="fas fa-check-double"></i> Complete Sale (F10)
+                <i class="fas fa-check-double"></i> <?php echo $edit_pos ? 'Update POS Sale (F10)' : 'Complete Sale (F10)'; ?>
             </button>
         </div>
     </div>
@@ -292,8 +412,14 @@ $txn_date = date('Y-m-d');
 const items = <?php echo json_encode($items); ?>;
 const accounts = <?php echo json_encode($payment_accounts); ?>;
 const defaultCashAccountId = <?php echo json_encode((string)$default_cash_account_id); ?>;
-let cart = [];
-let payments = [];
+
+const posId = <?php echo json_encode($edit_id); ?>;
+const editPosData = <?php echo json_encode($edit_pos); ?>;
+const initialCart = <?php echo json_encode($edit_items); ?>;
+const initialPayments = <?php echo json_encode($edit_payments); ?>;
+
+let cart = initialCart.length > 0 ? initialCart : [];
+let payments = initialPayments.length > 0 ? initialPayments : [];
 let activeCat = 'all';
 
 function changePosLocation(locId) {
@@ -336,18 +462,45 @@ function getCartQty(itemId) {
 
 function init() {
     renderGrid();
-    addPaymentLine(); // Initial payment line
-    refreshPosItems(); // Real-time fetch stock & prices
+    if (initialPayments.length > 0) {
+        renderPayments();
+    } else {
+        addPaymentLine();
+    }
+    if (initialCart.length > 0) {
+        if (editPosData) {
+            if (editPosData.discount_type) {
+                const discTypeEl = document.getElementById('discount-type');
+                if (discTypeEl) discTypeEl.value = editPosData.discount_type;
+            }
+            if (editPosData.discount_value !== undefined && editPosData.discount_value !== null) {
+                const discValEl = document.getElementById('discount-val');
+                if (discValEl) discValEl.value = editPosData.discount_value;
+            }
+        }
+        renderCart();
+        calculateTotals();
+    }
+    refreshPosItems();
     
     // Search listener
     document.getElementById('pos-search').addEventListener('input', (e) => {
         renderGrid(e.target.value);
-        // Simulate barcode scanner (if search matches exactly one SKU, add it)
-        const match = items.filter(i => i.sku && i.sku.toLowerCase() === e.target.value.toLowerCase());
-        if(match.length === 1 && e.target.value.length > 3) {
-            addToCart(match[0]);
-            e.target.value = '';
-            renderGrid();
+        const query = e.target.value.trim().toLowerCase();
+        if (query.length > 2) {
+            // Check exact match for SKU, PCS Barcode, or CASE Barcode
+            const pcsMatch  = items.find(i => (i.sku && i.sku.toLowerCase() === query) || (i.barcode && i.barcode.toLowerCase() === query));
+            const caseMatch = items.find(i => i.case_barcode && i.case_barcode.toLowerCase() === query);
+            
+            if (caseMatch) {
+                addToCart(caseMatch, 'CASE');
+                e.target.value = '';
+                renderGrid();
+            } else if (pcsMatch) {
+                addToCart(pcsMatch, 'PCS');
+                e.target.value = '';
+                renderGrid();
+            }
         }
     });
 
@@ -360,52 +513,95 @@ function init() {
     });
 }
 
+function getCartBaseQty(itemId) {
+    let baseQty = 0;
+    cart.filter(c => c.id === itemId).forEach(c => {
+        const conv = parseFloat(c.conversion_factor || 1);
+        baseQty += (parseFloat(c.qty || 0) * conv);
+    });
+    return baseQty;
+}
+
+function getCartQtyLabel(itemId) {
+    const found = cart.filter(c => c.id === itemId);
+    if (found.length === 0) return '';
+    return found.map(c => `${c.qty} ${c.unit}`).join(', ');
+}
+
 function renderGrid(search = '') {
     const grid = document.getElementById('pos-grid');
+    if (!grid) return;
     grid.innerHTML = '';
     
+    const searchLower = (search || '').toLowerCase().trim();
+
     const filtered = items.filter(i => {
+        if (!i) return false;
         const itemCat = i.category_name || 'Other';
-        const matchCat = (activeCat === 'all' || itemCat === activeCat);
-        const matchSearch = i.item_name.toLowerCase().includes(search.toLowerCase()) || (i.sku && i.sku.toLowerCase().includes(search.toLowerCase()));
-        const totalStock = parseFloat(i.current_stock || 0);
-        const inCart = getCartQty(i.id);
-        const availStock = totalStock - inCart;
-        return matchCat && matchSearch && availStock > 0;
+        const matchCat = (activeCat === 'all' || itemCat.toLowerCase() === activeCat.toLowerCase());
+        const itemName = (i.item_name || i.name || '').toLowerCase();
+        const itemSku = (i.sku || '').toLowerCase();
+        const matchSearch = searchLower === '' || itemName.includes(searchLower) || itemSku.includes(searchLower);
+        return matchCat && matchSearch;
     });
 
     filtered.forEach(item => {
-        const totalStock = parseFloat(item.current_stock || 0);
-        const inCart = getCartQty(item.id);
-        const availStock = totalStock - inCart;
+        const totalStockPCS = parseFloat(item.current_stock || 0);
+        const inCartBasePCS = getCartBaseQty(item.id);
+        const availStockPCS = totalStockPCS - inCartBasePCS;
+
+        const convFactor   = parseInt(item.units_per_case || 1);
+        const caseUnitName = item.case_unit_name || 'CASE';
+        const baseUnitName = item.unit_type || 'PCS';
 
         const div = document.createElement('div');
         div.className = 'pos-card';
         div.onclick = () => addToCart(item);
-        const stockColor = availStock <= 0 ? '#ef4444' : (availStock <= 5 ? '#f59e0b' : '#10b981');
-        const costPrice = parseFloat(item.cost_price || 0);
-        const sellPrice = parseFloat(item.selling_price || 0);
-        const mrpPrice  = parseFloat(item.mrp || 0);
+
+        const stockColor = availStockPCS <= 0 ? '#ef4444' : (availStockPCS <= (convFactor > 1 ? convFactor : 5) ? '#f59e0b' : '#10b981');
+        const costPrice  = parseFloat(item.cost_price || 0);
+        const sellPrice  = parseFloat(item.selling_price || 0);
+        const mrpPrice   = parseFloat(item.mrp || 0);
+
+        const cartText = getCartQtyLabel(item.id);
+        const cartBadge = cartText ? `<small style="color:#64748b;font-weight:normal">(${cartText} in cart)</small>` : '';
+
+        let stockDisp = '';
+        if (convFactor > 1) {
+            const cases = Math.floor(availStockPCS / convFactor);
+            const remPcs = availStockPCS % convFactor;
+            if (availStockPCS <= 0) {
+                stockDisp = `0 PCS`;
+            } else if (cases > 0 && remPcs > 0) {
+                stockDisp = `${cases} ${caseUnitName} ${remPcs} ${baseUnitName}`;
+            } else if (cases > 0) {
+                stockDisp = `${cases} ${caseUnitName} (${availStockPCS.toFixed(0)} ${baseUnitName})`;
+            } else {
+                stockDisp = `${availStockPCS.toFixed(0)} ${baseUnitName}`;
+            }
+        } else {
+            stockDisp = `${Math.max(0, availStockPCS).toFixed(0)} ${baseUnitName}`;
+        }
+
+        const hasPromo = Boolean(item.has_promotion && item.promotional_price !== undefined && item.promotional_price !== null);
+        const promoPrice = hasPromo ? parseFloat(item.promotional_price || sellPrice) : sellPrice;
+        const displayName = item.item_name || item.name || 'Item';
+
+        if (hasPromo) div.classList.add('has-promo');
+
+        // Sell price display: strikethrough if promo
+        const sellRow = hasPromo
+            ? `<span style="text-decoration:line-through;color:#94a3b8;">Rs ${sellPrice.toFixed(2)}</span>&nbsp;<span style="color:#16a34a;font-weight:800;">Rs ${promoPrice.toFixed(2)}</span>`
+            : `<span style="color:#16a34a;font-weight:700;">Rs ${sellPrice.toFixed(2)}</span>`;
 
         div.innerHTML = `
-            <div class="pos-card-name" style="margin-bottom: 4px;">${item.item_name}</div>
-            <div style="font-size: 11px; text-align: left; margin: 5px 0; color: #475569; display: flex; flex-direction: column; gap: 3px; flex-shrink: 0;">
-                <div style="display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding-bottom: 2px;">
-                    <span style="font-weight: 600;">Stock:</span> 
-                    <span style="color: ${stockColor}; font-weight: 800;">${availStock.toFixed(0)} ${inCart > 0 ? `<small style="color:#64748b;font-weight:normal">(${inCart} in cart)</small>` : ''}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span style="font-weight: 600;">Cost:</span> 
-                    <span style="font-weight: 700; color: #0284c7;">Rs ${costPrice.toFixed(2)}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span style="font-weight: 600;">Sell:</span> 
-                    <span style="font-weight: 700; color: #16a34a;">Rs ${sellPrice.toFixed(2)}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; border-top: 1px dashed #e2e8f0; padding-top: 2px;">
-                    <span style="font-weight: 600;">MRP:</span> 
-                    <span style="font-weight: 700; color: #7c3aed;">Rs ${mrpPrice.toFixed(2)}</span>
-                </div>
+            <div class="pos-card-name">${displayName}</div>
+            ${hasPromo ? `<div style="text-align:center;"><span class="pos-promo-badge">&#127991; ${item.promo_code || 'PROMO'}</span></div>` : ''}
+            <div style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:1px; font-size:10px; color:#475569; margin-top:5px;">
+                <div class="pos-card-detail"><span>Stock:</span><span style="color:${stockColor};">${stockDisp}${cartText ? ` <small style='color:#64748b'>(${cartText})</small>` : ''}</span></div>
+                <div class="pos-card-detail"><span>Cost:</span><span style="color:#0284c7;">Rs ${costPrice.toFixed(2)}</span></div>
+                <div class="pos-card-detail"><span>Sell:</span><span>${sellRow}</span></div>
+                <div class="pos-card-detail"><span>MRP:</span><span style="color:#7c3aed;">Rs ${mrpPrice.toFixed(2)}</span></div>
             </div>
         `;
         grid.appendChild(div);
@@ -414,19 +610,54 @@ function renderGrid(search = '') {
 
 function filterCategory(cat) {
     activeCat = cat;
-    document.querySelectorAll('.pos-cat-btn').forEach(b => b.classList.toggle('active', b.innerText.toLowerCase() === cat.toLowerCase() || (cat === 'all' && b.innerText.includes('All'))));
-    renderGrid();
+    document.querySelectorAll('.pos-cat-btn').forEach(b => {
+        const btnText = b.innerText.trim().toLowerCase();
+        const isAll = (cat.toLowerCase() === 'all' && (btnText.includes('all') || btnText === 'all products'));
+        b.classList.toggle('active', btnText === cat.toLowerCase() || isAll);
+    });
+    renderGrid(document.getElementById('pos-search')?.value || '');
 }
 
-function addToCart(item) {
+function addToCart(item, requestedUnit = 'PCS') {
     if (parseFloat(item.selling_price || 0) === 0) {
         alert("Warning: Selling price is not set for this item.");
     }
-    const idx = cart.findIndex(c => c.id === item.id);
-    if(idx > -1) {
+    
+    const convFactor = parseInt(item.units_per_case || 1);
+    const baseUnit   = item.unit_type || 'PCS';
+    const caseUnit   = item.case_unit_name || 'CASE';
+    const isCaseReq  = (requestedUnit === 'CASE' || requestedUnit === 'BOX' || requestedUnit === caseUnit);
+    
+    const targetUnit = isCaseReq ? caseUnit : baseUnit;
+    const targetConv = isCaseReq ? (convFactor > 0 ? convFactor : 1) : 1;
+    
+    let defaultPrice = parseFloat(item.selling_price || 0);
+    if (item.has_promotion && parseFloat(item.promotional_price) > 0) {
+        defaultPrice = parseFloat(item.promotional_price);
+    }
+    if (isCaseReq) {
+        defaultPrice = item.case_selling_price && parseFloat(item.case_selling_price) > 0 
+                       ? parseFloat(item.case_selling_price) 
+                       : Math.round(defaultPrice * targetConv * 100) / 100;
+    }
+
+    const idx = cart.findIndex(c => c.id === item.id && c.unit === targetUnit);
+    if (idx > -1) {
         cart[idx].qty += 1;
     } else {
-        cart.push({ ...item, qty: 1, price: parseFloat(item.selling_price), discount: 0 });
+        cart.push({
+            ...item,
+            unit: targetUnit,
+            conversion_factor: targetConv,
+            qty: 1,
+            price: defaultPrice,
+            discount: 0,
+            promotion_id: item.has_promotion ? item.promotion_id : (item.promotion_id || null),
+            promo_code: item.has_promotion ? item.promo_code : (item.promo_code || null),
+            mrp_at_sale: parseFloat(item.mrp || 0),
+            normal_selling_price_at_sale: parseFloat(item.selling_price || 0),
+            promo_discount_amount: item.has_promotion ? parseFloat(item.promo_discount_amount || 0) : 0
+        });
     }
     renderCart();
 }
@@ -449,10 +680,35 @@ function renderCart() {
     cart.forEach((c, i) => {
         const div = document.createElement('div');
         div.className = 'cart-item';
+        const isMultiUnit = (parseInt(c.units_per_case || 1) > 1);
+        let unitLabel = c.unit || (c.unit_type || 'PCS');
+        if (!unitLabel || /^\d+$/.test(unitLabel)) {
+            unitLabel = (c.unit === c.case_unit_name) ? (c.case_unit_name || 'CASE') : 'PCS';
+        }
+        const unitBadge = isMultiUnit 
+            ? `<button type="button" onclick="toggleCartUnit(${i})" title="Click to switch unit (Case vs PCS)" style="font-size: 10px; font-weight: 800; background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; border-radius: 4px; padding: 2px 6px; cursor: pointer; margin-top: 2px;"><i class="fas fa-sync-alt" style="font-size: 9px; margin-right: 3px;"></i>${unitLabel}${c.conversion_factor > 1 ? ` (${c.conversion_factor} PCS)` : ''}</button>` 
+            : `<span style="font-size: 10px; color: #64748b; font-weight: 600;">${unitLabel}</span>`;
+        
+        const normalPrice = parseFloat(c.normal_selling_price_at_sale || c.selling_price || 0);
+        const isPromoItem = Boolean(c.has_promotion || c.promo_code);
+        const promoDisc = parseFloat(c.promo_discount_amount || 0);
+        const promoTag = isPromoItem
+            ? `<div style="font-size:10px;color:#dc2626;font-weight:800;margin-top:2px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                <i class="fas fa-tag" style="font-size:9px;"></i>
+                <span>PROMO: ${c.promo_code || ''}</span>
+                ${normalPrice > 0 && normalPrice !== parseFloat(c.price) ? `<span style="color:#94a3b8;text-decoration:line-through;font-weight:500;">Rs ${normalPrice.toFixed(2)}</span>` : ''}
+                ${promoDisc > 0 ? `<span style="background:#fef2f2;border-radius:3px;padding:0 3px;color:#b91c1c;">-Rs ${promoDisc.toFixed(2)}/unit</span>` : ''}
+               </div>`
+            : '';
+
         div.innerHTML = `
             <div class="cart-item-info" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 6px;">
-                <div class="cart-item-name" style="font-size: 13px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; flex: 1; min-width: 0;" title="${c.item_name}">${c.item_name}</div>
-                <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                <div style="flex: 1; min-width: 0;">
+                    <div class="cart-item-name" style="font-size: 13px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0;" title="${c.item_name || c.name || ''}">${c.item_name || c.name || ''}</div>
+                    ${unitBadge}
+                    ${promoTag}
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
                     <div class="cart-qty-ctrl" style="margin: 0; padding: 1px; display: flex; align-items: center;">
                         <button class="cart-qty-btn" style="width: 24px; height: 24px;" onclick="updateQty(${i}, -1)"><i class="fas fa-minus" style="font-size: 10px;"></i></button>
                         <input class="cart-qty-val" style="width: 25px; font-size: 12px;" type="number" value="${c.qty}" onchange="setQty(${i}, this.value)">
@@ -477,6 +733,25 @@ function setPrice(idx, val) {
     renderCart();
 }
 
+function toggleCartUnit(idx) {
+    const c = cart[idx];
+    const baseUnit   = c.unit_type || 'PCS';
+    const caseUnit   = c.case_unit_name || 'CASE';
+    const convFactor = parseInt(c.units_per_case || 1);
+    
+    if (c.unit === caseUnit || c.unit === 'CASE' || c.unit === 'BOX') {
+        c.unit = baseUnit;
+        c.conversion_factor = 1;
+        c.price = parseFloat(c.selling_price || 0);
+    } else {
+        c.unit = caseUnit;
+        c.conversion_factor = convFactor > 0 ? convFactor : 1;
+        const caseSell = parseFloat(c.case_selling_price || 0);
+        c.price = caseSell > 0 ? caseSell : Math.round(parseFloat(c.selling_price || 0) * c.conversion_factor * 100) / 100;
+    }
+    renderCart();
+}
+
 function updateQty(idx, delta) {
     cart[idx].qty += delta;
     if(cart[idx].qty <= 0) cart.splice(idx, 1);
@@ -497,6 +772,24 @@ function removeLine(idx) {
 function calculateTotals() {
     let subtotal = 0;
     cart.forEach(c => subtotal += (c.qty * c.price));
+
+    // Calculate total promo discount across all promotional items
+    let promoDiscTotal = 0;
+    cart.forEach(c => {
+        if (c.has_promotion || c.promo_code) {
+            promoDiscTotal += parseFloat(c.promo_discount_amount || 0) * parseFloat(c.qty || 1);
+        }
+    });
+    const promoDiscLine = document.getElementById('promo-disc-line');
+    const promoDiscText = document.getElementById('txt-promo-disc');
+    if (promoDiscLine && promoDiscText) {
+        if (promoDiscTotal > 0) {
+            promoDiscLine.style.display = 'flex';
+            promoDiscText.innerText = '- Rs ' + promoDiscTotal.toFixed(2);
+        } else {
+            promoDiscLine.style.display = 'none';
+        }
+    }
     
     const discType = document.getElementById('discount-type').value;
     const discVal = parseFloat(document.getElementById('discount-val').value) || 0;
@@ -659,22 +952,25 @@ function closePosQrModal() {
     document.getElementById('pos-qr-modal').style.display = 'none';
 }
 
-function completeSale() {
-    if(document.getElementById('btn-checkout').disabled) return;
+function completeSale(forceSave = false) {
+    if (document.getElementById('btn-checkout').disabled && !forceSave) return;
     
     // Check if any cart item has 0 price
     const zeroPriceItems = cart.filter(c => parseFloat(c.price || 0) === 0);
-    if (zeroPriceItems.length > 0) {
+    if (zeroPriceItems.length > 0 && !forceSave) {
         if (!confirm("Warning: Selling price is not set for some items in the cart. Do you want to proceed?")) {
             return;
         }
     }
     
+    closePosErrorModal();
+
     const btn = document.getElementById('btn-checkout');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Transaction...';
 
     const payload = {
+        id: posId || null,
         txn_number: '<?php echo $txn_number; ?>',
         txn_date: '<?php echo $txn_date; ?>',
         gross_amount: parseFloat(document.getElementById('txt-subtotal').innerText.replace('Rs ', '')),
@@ -684,6 +980,7 @@ function completeSale() {
         tax_amount: parseFloat(document.getElementById('tax-amount-val').value),
         net_amount: parseFloat(document.getElementById('txt-total').innerText.replace('Rs ', '')),
         include_tax: document.getElementById('include-tax').checked,
+        force_save: forceSave ? true : false,
         items: cart.map(c => {
             const lineSub = c.qty * c.price;
             const lineDisc = (lineSub / (parseFloat(document.getElementById('txt-subtotal').innerText.replace('Rs ', '')) || 1)) * (parseFloat(document.getElementById('discount-val').value) || 0); // Simplified disc
@@ -692,13 +989,21 @@ function completeSale() {
             return {
                 id: c.id,
                 qty: c.qty,
+                unit: c.unit || 'PCS',
+                conversion_factor: c.conversion_factor || 1,
+                base_qty: c.qty * (c.conversion_factor || 1),
                 price: parseFloat(c.price),
                 tax: tax,
-                net: lineSub - lineDisc + tax
+                net: lineSub - lineDisc + tax,
+                promotion_id: c.promotion_id || null,
+                promo_code: c.promo_code || null,
+                mrp_at_sale: parseFloat(c.mrp_at_sale || c.mrp || 0),
+                normal_selling_price_at_sale: parseFloat(c.normal_selling_price_at_sale || c.selling_price || 0),
+                promo_discount_amount: parseFloat(c.promo_discount_amount || 0)
             };
         }),
         payments: payments.filter(p => p.amount > 0),
-        customer_id: null // Can add customer selector later
+        customer_id: null
     };
 
     let httpStatusCode = 200;
@@ -713,35 +1018,60 @@ function completeSale() {
     })
     .then(res => {
         if (httpStatusCode === 200 && res.status === 'success') {
-            nsNotify('Sale Completed! Transaction: ' + res.txn_number);
+            nsNotify('Sale Saved Successfully! Transaction: ' + res.txn_number);
 
-            const posId = res.pos_id || '';
+            const resPosId = res.pos_id || posId || '';
             const invoiceNo = res.txn_number || '';
             
-            // Short confirmation prompt to print Abbreviated Tax Invoice
             const shouldPrint = confirm('Want invoice print?');
-            
             if (shouldPrint) {
-                if (posId) {
-                    window.open('api/print_pos.php?id=' + posId, '_blank');
+                if (resPosId) {
+                    window.open('api/print_pos.php?id=' + resPosId, '_blank');
                 } else if (invoiceNo) {
                     window.open('api/print_pos.php?invoice_no=' + invoiceNo, '_blank');
                 }
             }
 
-            setTimeout(() => location.reload(), 500);
+            setTimeout(() => location.href = '?page=transactions/pos', 500);
         } else {
             const errText = res.message || 'Transaction failed';
-            nsNotify('Error: ' + errText, 'error');
+            const isStockWarning = errText.toLowerCase().includes('stock warning');
+            showPosErrorModal(errText, isStockWarning);
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-check-double"></i> Complete Sale (F10)';
         }
     })
     .catch(err => {
-        nsNotify('Error: ' + (err.message || 'Network / Server Error'), 'error');
+        showPosErrorModal(err.message || 'Network / Server Error', false);
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-check-double"></i> Complete Sale (F10)';
     });
+}
+
+function showPosErrorModal(message, isStockWarning = false) {
+    const modal = document.getElementById('pos-error-modal');
+    const msgEl = document.getElementById('pos-err-msg');
+    const forceBtn = document.getElementById('btn-force-save-pos');
+    const titleEl = document.getElementById('pos-err-title');
+    const subEl = document.getElementById('pos-err-subtext');
+
+    if (isStockWarning) {
+        titleEl.textContent = 'Insufficient Stock Warning';
+        subEl.textContent = 'The requested quantity exceeds available location stock.';
+        if (forceBtn) forceBtn.style.display = 'inline-flex';
+    } else {
+        titleEl.textContent = 'Transaction Failed';
+        subEl.textContent = 'An error occurred while saving the POS transaction.';
+        if (forceBtn) forceBtn.style.display = 'none';
+    }
+
+    msgEl.textContent = message;
+    modal.style.display = 'flex';
+}
+
+function closePosErrorModal() {
+    const modal = document.getElementById('pos-error-modal');
+    if (modal) modal.style.display = 'none';
 }
 
 if (document.readyState === 'loading') {
@@ -750,3 +1080,25 @@ if (document.readyState === 'loading') {
     init();
 }
 </script>
+
+<!-- POS Error / Stock Warning Modal -->
+<div id="pos-error-modal" style="display:none; position:fixed; z-index:10008; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.6); justify-content:center; align-items:center; backdrop-filter:blur(3px);">
+    <div style="background:#fff; border-radius:12px; box-shadow:0 20px 40px rgba(0,0,0,0.3); width:520px; max-width:92%; font-family:inherit; overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#dc2626,#b91c1c); padding:18px 22px; color:#fff; display:flex; align-items:center; gap:12px;">
+            <i class="fas fa-exclamation-triangle" style="font-size:24px;"></i>
+            <div>
+                <div id="pos-err-title" style="font-size:16px; font-weight:700;">Stock Warning</div>
+                <div id="pos-err-subtext" style="font-size:11px; opacity:0.85; margin-top:2px;">Attention required before finalizing sale</div>
+            </div>
+            <button onclick="closePosErrorModal()" style="margin-left:auto; background:rgba(255,255,255,0.2); border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center;">&times;</button>
+        </div>
+        <div style="padding:22px;">
+            <div id="pos-err-msg" style="font-size:13px; color:#1e293b; font-weight:600; line-height:1.6; background:#fef2f2; border-left:4px solid #ef4444; padding:14px 16px; border-radius:6px; margin-bottom:12px;"></div>
+            <p style="font-size:12px; color:#64748b; margin:0;">You can edit your cart quantities or click <strong>Force Save</strong> to override stock checks and complete this transaction anyway.</p>
+        </div>
+        <div style="background:#f8fafc; padding:14px 22px; display:flex; justify-content:flex-end; gap:10px; border-top:1px solid #e2e8f0;">
+            <button onclick="closePosErrorModal()" class="ns-btn" style="padding:8px 20px; font-weight:600;"><i class="fas fa-pencil-alt" style="margin-right:5px;"></i> Edit Cart</button>
+            <button id="btn-force-save-pos" onclick="completeSale(true)" class="ns-btn ns-btn-primary" style="background:#dc2626; border-color:#dc2626; padding:8px 20px; font-weight:700; display:none;"><i class="fas fa-bolt" style="margin-right:5px;"></i> Force Save & Complete</button>
+        </div>
+    </div>
+</div>

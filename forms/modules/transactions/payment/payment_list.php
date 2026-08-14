@@ -17,13 +17,15 @@ $sql = "
         h.txn_date, 
         h.txn_number, 
         h.txn_type,
-        COALESCE(NULLIF(SUM(p.amount), 0), NULLIF(h.net_amount, 0), 0) as total_amount,
+        COALESCE(NULLIF((SELECT SUM(amount) FROM payments WHERE header_id = h.id), 0), NULLIF(h.net_amount, 0), 0) as total_amount,
         GROUP_CONCAT(DISTINCT COALESCE(acc.account_name, p.payment_method) SEPARATOR ', ') as methods,
         MAX(COALESCE(c.full_name, v.company_name)) as party_name,
         h.created_by,
+        COALESCE(u.full_name, u.username, h.created_by, 'System') as creator_name,
         GROUP_CONCAT(DISTINCT COALESCE(ci.invoice_number, cm.memo_number, vb.vendor_invoice_number) ORDER BY COALESCE(ci.invoice_number, cm.memo_number, vb.vendor_invoice_number) SEPARATOR ', ') as applied_refs,
         MAX(CASE WHEN ch.txn_type IN ('credit_memo', 'Credit Memo') OR tl.link_type LIKE 'payment:-%' THEN 1 ELSE 0 END) as is_refund
     FROM transaction_headers h
+    LEFT JOIN users u ON h.created_by = u.id
     LEFT JOIN payments p ON h.id = p.header_id
     LEFT JOIN accounts acc ON p.bank_account_id = acc.id
     LEFT JOIN customers c ON p.customer_id = c.id
@@ -40,72 +42,6 @@ $sql = "
 
 $list = $db->fetchAll($sql);
 ?>
-<style>
-    .ns-portlet,
-    .ns-portlet-content {
-        overflow: visible !important;
-    }
-
-    .ns-action-btn {
-        padding: 4px 10px;
-        font-size: 11px;
-        font-weight: 600;
-        background: #ffffff;
-        border: 1px solid #cbd5e1;
-        border-radius: 4px;
-        color: #0f172a;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        transition: all 0.15s ease;
-    }
-
-    .ns-action-btn:hover {
-        background: #f1f5f9;
-        border-color: #94a3b8;
-        color: #0284c7;
-    }
-
-    .ns-action-dropdown-menu {
-        display: none;
-        position: fixed;
-        background: #ffffff;
-        border: 1px solid #cbd5e1;
-        border-radius: 6px;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-        min-width: 160px;
-        z-index: 99999;
-        padding: 4px 0;
-    }
-
-    .ns-action-dropdown-menu.show {
-        display: block;
-    }
-
-    .ns-action-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 12px;
-        font-size: 12px;
-        color: #334155;
-        text-decoration: none;
-        font-weight: 500;
-        transition: background 0.15s ease;
-    }
-
-    .ns-action-item:hover {
-        background: #f1f5f9;
-        color: #0284c7;
-        text-decoration: none;
-    }
-
-    .ns-action-item.danger:hover {
-        background: #fef2f2;
-        color: #dc2626;
-    }
-</style>
 
 <div class="ns-page-header" style="display: flex; align-items: center; gap: 15px;">
     <h1 class="ns-page-title" style="margin: 0; font-size: 20px; font-weight: 800;">
@@ -180,7 +116,7 @@ $list = $db->fetchAll($sql);
                             <?php echo htmlspecialchars($row['applied_refs'] ?: '-'); ?></td>
                         <td style="text-align: right; font-weight: bold;">
                             <?php echo number_format($row['total_amount'], 2); ?></td>
-                        <td><?php echo htmlspecialchars($row['created_by']); ?></td>
+                        <td><?php echo htmlspecialchars($row['creator_name'] ?? $row['created_by'] ?? 'System'); ?></td>
                         <td style="text-align: center;">
                             <div style="position: relative; display: inline-block;">
                                 <button type="button" class="ns-action-btn ns-dropdown-toggle">
@@ -217,39 +153,3 @@ $list = $db->fetchAll($sql);
         </table>
     </div>
 </div>
-
-<script>
-    function nsPositionDropdown(toggle, menu) {
-        const btnRect = toggle.getBoundingClientRect();
-        const menuH = 120;
-        const spaceBelow = window.innerHeight - btnRect.bottom;
-        menu.style.left = (btnRect.right - 160) + 'px';
-        if (spaceBelow < menuH + 10) {
-            menu.style.top = (btnRect.top - menuH) + 'px';
-        } else {
-            menu.style.top = (btnRect.bottom + 4) + 'px';
-        }
-    }
-
-    document.addEventListener('click', function (e) {
-        const toggle = e.target.closest('.ns-dropdown-toggle');
-        const allMenus = document.querySelectorAll('.ns-action-dropdown-menu');
-
-        if (toggle) {
-            e.stopPropagation();
-            const menu = toggle.nextElementSibling;
-            const isOpen = menu.classList.contains('show');
-            allMenus.forEach(m => m.classList.remove('show'));
-            if (!isOpen) {
-                menu.classList.add('show');
-                nsPositionDropdown(toggle, menu);
-            }
-        } else {
-            allMenus.forEach(m => m.classList.remove('show'));
-        }
-    });
-
-    window.addEventListener('scroll', function () {
-        document.querySelectorAll('.ns-action-dropdown-menu.show').forEach(m => m.classList.remove('show'));
-    }, true);
-</script>

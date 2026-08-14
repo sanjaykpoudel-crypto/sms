@@ -122,6 +122,10 @@ try {
             generate_uuid(), $id, $item_id, $inventory_account_id, $line_loc, $idx + 1, $qty, $rate, $line_total, $rate
         ]);
 
+        if ($rate > 0) {
+            $db->execute("UPDATE items SET cost_price = ? WHERE id = ?", [$rate, $item_id]);
+        }
+
         // Post stock adjustment via InventoryEngine
         InventoryEngine::getInstance()->adjustStock($item_id, $line_loc, $qty, $rate, $id, null, $memo, $txn_date, [
             'txn_number' => $txn_number
@@ -159,6 +163,10 @@ try {
         $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
             generate_uuid(), $id, $adjustment_account_id, null, $total_adjustment_debit, 'Inventory Adj Offset DR - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
         ]);
+    }
+
+    if (function_exists('sync_daily_pos_summary')) {
+        sync_daily_pos_summary($txn_date);
     }
 
     $pdo->commit();

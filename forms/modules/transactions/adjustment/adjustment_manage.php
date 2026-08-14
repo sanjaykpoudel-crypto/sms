@@ -235,22 +235,37 @@ $default_loc_id = get_user_default_location_id();
             });
     });
 
+    function updateAdjRowStockDisplay(row) {
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const unitEl = row.querySelector('.unit-input');
+        const selectedUnit = unitEl ? unitEl.value : '';
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+        const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
+
+        const baseStock = parseFloat(row.dataset.baseStock || 0);
+        const qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
+
+        const stockInput = row.querySelector('.stock-input');
+        const newStockEl = row.querySelector('.new-stock-input');
+
+        if (isCase && conv > 1) {
+            const caseStock = baseStock / conv;
+            if (stockInput) stockInput.value = caseStock.toFixed(2);
+            if (newStockEl) newStockEl.value = (caseStock + qty).toFixed(2);
+        } else {
+            if (stockInput) stockInput.value = baseStock.toFixed(2);
+            if (newStockEl) newStockEl.value = (baseStock + qty).toFixed(2);
+        }
+    }
+
     function adjCalcRow(el) {
         const row = el.closest('tr');
-        const stockInput = row.querySelector('.stock-input');
-        const stockVal = stockInput ? stockInput.value : '';
-        const stock = parseFloat(stockVal);
+        updateAdjRowStockDisplay(row);
+
         const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
         const newCost = parseFloat(row.querySelector('.new-cost-input').value) || 0;
-
-        const newStockEl = row.querySelector('.new-stock-input');
-        if (newStockEl) {
-            if (stockVal === '' || isNaN(stock)) {
-                newStockEl.value = '';
-            } else {
-                newStockEl.value = (stock + qty).toFixed(2);
-            }
-        }
 
         const amount = qty * newCost;
         row.querySelector('.amount-input').value = amount.toFixed(2);
@@ -280,18 +295,51 @@ $default_loc_id = get_user_default_location_id();
             return;
         }
 
-        // Fetch item details (cost, unit)
         fetch('api/get_item_details.php?id=' + itemId)
             .then(r => r.json())
             .then(data => {
                 if (data.error) return;
-                row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
+                row.dataset.itemData = JSON.stringify(data);
+                
+                const unitTd = row.querySelector('.unit-input').closest('td');
+                const conv = parseInt(data.units_per_case || 1);
+                const baseUnit = data.unit_name || data.unit_type || 'PCS';
+                const caseUnit = data.case_unit_name || 'CASE';
+
+                if (conv > 1) {
+                    unitTd.innerHTML = `
+                        <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="adjUnitChanged(this)">
+                            <option value="${baseUnit}">${baseUnit}</option>
+                            <option value="${caseUnit}">${caseUnit} (${conv} PCS)</option>
+                        </select>
+                    `;
+                } else {
+                    unitTd.innerHTML = `<input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="${baseUnit}" readonly tabindex="-1">`;
+                }
+
                 row.querySelector('.current-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
                 row.querySelector('.new-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
 
-                // Now fetch location-specific stock
                 adjFetchLocationStock(row.querySelector('.loc-select'));
             });
+    }
+
+    function adjUnitChanged(select) {
+        const row = select.closest('tr');
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const selectedUnit = select.value;
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+
+        let cost = parseFloat(data.cost_price || 0);
+        if (selectedUnit === caseUnit || selectedUnit === 'CASE') {
+            const casePrice = parseFloat(data.case_purchase_price || 0);
+            cost = casePrice > 0 ? casePrice : Math.round(cost * conv * 100) / 100;
+        }
+
+        row.querySelector('.new-cost-input').value = cost.toFixed(2);
+        adjCalcRow(row.querySelector('.qty-input'));
     }
 
     function adjFetchLocationStock(locSelect) {
@@ -306,6 +354,7 @@ $default_loc_id = get_user_default_location_id();
         if (!itemId || !locId) {
             stockInput.value = '';
             if (newStockEl) newStockEl.value = '';
+            row.dataset.baseStock = "0";
             return;
         }
 
@@ -313,14 +362,14 @@ $default_loc_id = get_user_default_location_id();
         fetch('api/get_item_location_stock.php?item_id=' + encodeURIComponent(itemId) + '&location_id=' + encodeURIComponent(locId))
             .then(r => r.json())
             .then(data => {
-                if (data.error) {
-                    stockInput.value = '0.00';
-                } else {
-                    stockInput.value = parseFloat(data.stock).toFixed(2);
-                }
+                const baseStock = (data && !data.error && data.stock !== undefined) ? parseFloat(data.stock) : 0;
+                row.dataset.baseStock = baseStock.toString();
                 adjCalcRow(row.querySelector('.qty-input'));
             })
-            .catch(() => { stockInput.value = '0.00'; adjCalcRow(row.querySelector('.qty-input')); });
+            .catch(() => { 
+                row.dataset.baseStock = "0";
+                adjCalcRow(row.querySelector('.qty-input')); 
+            });
     }
 
     function adjCheckEnter(e) {

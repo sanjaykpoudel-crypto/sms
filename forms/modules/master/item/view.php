@@ -56,6 +56,7 @@ $movements = $db->fetchAll("
     WHERE l.item_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     ORDER BY h.txn_date DESC, h.created_at DESC LIMIT 50
 ", [$id]);
+
 // Fetch Audit Logs
 $audit_logs = $db->fetchAll("
     SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
@@ -94,54 +95,67 @@ function getDiff($oldJson, $newJson) {
         margin-bottom: 20px;
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
+        align-items: center;
     }
     .view-title h1 {
         margin: 0;
-        font-size: 24px;
-        color: #333;
+        font-size: 22px;
+        color: #1e293b;
         display: flex;
         align-items: center;
         gap: 10px;
-    }
-    .view-subtitle {
-        margin-top: 5px;
-        color: #666;
-        font-size: 14px;
     }
     .view-actions {
         display: flex;
         gap: 10px;
     }
     
-    /* Tabs System */
+    /* Standardized Tabs System */
     .ns-tabs {
         display: flex;
+        gap: 6px;
         border-bottom: 2px solid #e2e8f0;
         margin-bottom: 20px;
+        background: #f8fafc;
+        padding: 6px 10px 0 10px;
+        border-radius: 8px 8px 0 0;
+        overflow-x: auto;
     }
     .ns-tab {
-        padding: 12px 20px;
+        padding: 10px 18px;
         font-weight: 600;
+        font-size: 13px;
         color: #64748b;
         cursor: pointer;
-        border-bottom: 2px solid transparent;
-        margin-bottom: -2px;
-        transition: all 0.2s;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+        transition: all 0.2s ease-in-out;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
     }
     .ns-tab:hover {
-        color: var(--ns-primary);
+        color: #0369a1;
+        background: #f1f5f9;
     }
     .ns-tab.active {
-        color: var(--ns-primary);
-        border-bottom-color: var(--ns-primary);
+        color: #0369a1;
+        background: #ffffff;
+        border-color: #cbd5e1;
+        border-bottom: 2px solid #ffffff;
+        margin-bottom: -2px;
+        font-weight: 700;
+        box-shadow: 0 -2px 4px rgba(0,0,0,0.02);
     }
     .ns-tab-content {
         display: none;
-        background: #fff;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        background: #ffffff;
+        padding: 24px;
+        border-radius: 0 0 8px 8px;
+        border: 1px solid #e2e8f0;
+        border-top: none;
     }
     .ns-tab-content.active {
         display: block;
@@ -149,49 +163,51 @@ function getDiff($oldJson, $newJson) {
     
     .detail-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
         gap: 20px;
     }
     .detail-group {
-        margin-bottom: 15px;
+        margin-bottom: 16px;
     }
     .detail-label {
-        font-size: 12px;
+        font-size: 11px;
         color: #64748b;
-        font-weight: 600;
+        font-weight: 700;
         margin-bottom: 4px;
         text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
     .detail-value {
         font-size: 14px;
         color: #1e293b;
-        font-weight: 500;
+        font-weight: 600;
     }
 </style>
 
 <div class="view-header">
     <div>
         <div class="view-title">
-            <h1><?php echo htmlspecialchars($item['item_name']); ?></h1>
+            <h1><i class="fas fa-box" style="color: #0284c7;"></i> <?php echo htmlspecialchars($item['item_name']); ?></h1>
         </div>
     </div>
     <div class="view-actions">
         <a href="?page=master/item/manage&id=<?php echo $id; ?>" class="ns-btn ns-btn-primary"><i class="fas fa-edit"></i> Edit</a>
-        <a href="?page=master/item" class="ns-btn"><i class="fas fa-times"></i> Cancel</a>
+        <a href="?page=master/item" class="ns-btn"><i class="fas fa-times"></i> Back to List</a>
     </div>
 </div>
 
 <div class="ns-tabs">
-    <div class="ns-tab active" onclick="nsOpenTab('tab-primary', this)">Primary Information</div>
-    <div class="ns-tab" onclick="nsOpenTab('tab-inventory', this)">Inventory Details <span style="background:#e0f2fe;padding:2px 6px;border-radius:10px;font-size:10px;color:#0369a1;"><?php echo count($inv_balances); ?></span></div>
-    <div class="ns-tab" onclick="nsOpenTab('tab-related', this)">Stock Movements <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($movements); ?></span></div>
-    <div class="ns-tab" onclick="nsOpenTab('tab-system', this)">System Information</div>
+    <div class="ns-tab active" onclick="nsOpenTab('tab-primary', this)"><i class="fas fa-box"></i> Primary Information</div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-pricing', this)"><i class="fas fa-tags"></i> Pricing & Inventory</div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-location', this)"><i class="fas fa-map-marker-alt"></i> Location-Specific Pricing & Stock <span style="background:#e0f2fe;padding:2px 6px;border-radius:10px;font-size:10px;color:#0369a1;"><?php echo count($inv_balances); ?></span></div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-movements', this)"><i class="fas fa-exchange-alt"></i> Stock Movements / Related Records <span style="background:#e2e8f0;padding:2px 6px;border-radius:10px;font-size:10px;color:#1e293b;"><?php echo count($movements); ?></span></div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-accounting', this)"><i class="fas fa-file-invoice-dollar"></i> Accounting Configuration</div>
+    <div class="ns-tab" onclick="nsOpenTab('tab-system', this)"><i class="fas fa-info-circle"></i> System Information & Audit Logs</div>
 </div>
 
-<!-- Primary Information -->
+<!-- Tab 1: Primary Information -->
 <div id="tab-primary" class="ns-tab-content active">
     <div class="detail-grid">
-        <!-- Column 1 -->
         <div>
             <div class="detail-group">
                 <div class="detail-label">Item Name</div>
@@ -202,123 +218,156 @@ function getDiff($oldJson, $newJson) {
                 <div class="detail-value"><?php echo htmlspecialchars($item['category_name'] ?? ($item['item_category'] ? ucfirst($item['item_category']) : 'Uncategorized')); ?></div>
             </div>
             <div class="detail-group">
-                <div class="detail-label">Unit Type</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['unit_name'] ?? ($item['unit_type'] ?? '')); ?></div>
+                <div class="detail-label">Brand</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['brand'] ?? 'N/A'); ?></div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Status</div>
-                <div class="detail-value" style="color: <?php echo $item['is_active'] ? '#080' : '#c00'; ?>; font-weight: 600;">
+                <div class="detail-value" style="color: <?php echo $item['is_active'] ? '#080' : '#c00'; ?>; font-weight: 700;">
                     <?php echo $item['is_active'] ? 'Active' : 'Inactive'; ?>
                 </div>
             </div>
         </div>
-        <!-- Column 2 -->
         <div>
             <div class="detail-group">
-                <div class="detail-label">Cost Price</div>
+                <div class="detail-label">Unit Type</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['unit_name'] ?? ($item['unit_type'] ?? 'PCS')); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Bottle Size (ML)</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['bottle_size_ml'] ?? 'N/A'); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Case Packaging Unit</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['case_unit_name'] ?? 'CASE'); ?> (<?php echo (int)($item['units_per_case'] ?? 1); ?> PCS per Case)</div>
+            </div>
+        </div>
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">PCS Barcode / UPC</div>
+                <div class="detail-value" style="font-family: monospace;"><?php echo htmlspecialchars($item['barcode'] ?? 'N/A'); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">CASE Barcode</div>
+                <div class="detail-value" style="font-family: monospace;"><?php echo htmlspecialchars($item['case_barcode'] ?? 'N/A'); ?></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab 2: Pricing & Inventory Control -->
+<div id="tab-pricing" class="ns-tab-content">
+    <div class="detail-grid">
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">PCS Cost Price</div>
                 <div class="detail-value">Rs <?php echo number_format($item['cost_price'] ?? 0, 2); ?></div>
             </div>
             <div class="detail-group">
-                <div class="detail-label">Selling Price</div>
+                <div class="detail-label">CASE Purchase Price</div>
+                <div class="detail-value">Rs <?php echo number_format($item['case_purchase_price'] ?? (($item['cost_price'] ?? 0) * ($item['units_per_case'] ?? 1)), 2); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">PCS Selling Price</div>
                 <div class="detail-value">Rs <?php echo number_format($item['selling_price'] ?? 0, 2); ?></div>
             </div>
             <div class="detail-group">
-                <div class="detail-label">MRP (Max Retail Price)</div>
-                <div class="detail-value" style="color: #0284c7; font-weight: 600;">Rs <?php echo number_format($item['mrp'] ?? 0, 2); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Barcode</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['barcode'] ?? ''); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Description</div>
-                <div class="detail-value"><?php echo nl2br(htmlspecialchars($item['description'] ?? '')); ?></div>
+                <div class="detail-label">CASE Selling Price</div>
+                <div class="detail-value">Rs <?php echo number_format($item['case_selling_price'] ?? (($item['selling_price'] ?? 0) * ($item['units_per_case'] ?? 1)), 2); ?></div>
             </div>
         </div>
-        <!-- Column 3 -->
         <div>
             <div class="detail-group">
-                <div class="detail-label">Current Stock</div>
-                <div class="detail-value" style="font-size: 20px; font-weight: 800; color: <?php echo ($item['current_stock'] <= $item['reorder_level']) ? 'var(--accent-red)' : 'var(--accent-green)'; ?>;">
-                    <?php echo number_format($item['current_stock'] ?? 0, 0); ?>
+                <div class="detail-label">MRP (Max Retail Price)</div>
+                <div class="detail-value" style="color: #0284c7; font-weight: 700;">Rs <?php echo number_format($item['mrp'] ?? 0, 2); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Tax Rate</div>
+                <div class="detail-value"><?php echo number_format($item['tax_rate'] ?? 0, 2); ?>%</div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">Description / Notes</div>
+                <div class="detail-value"><?php echo nl2br(htmlspecialchars($item['description'] ?? 'None')); ?></div>
+            </div>
+        </div>
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">Total Current Stock (On Hand)</div>
+                <div class="detail-value" style="font-size: 20px; font-weight: 800; color: <?php echo ($item['current_stock'] <= $item['reorder_level']) ? '#e11d48' : '#059669'; ?>;">
+                    <?php echo number_format($item['current_stock'] ?? 0, 2); ?> <?php echo htmlspecialchars($item['unit_name'] ?? 'PCS'); ?>
+                    <?php if (($item['units_per_case'] ?? 1) > 1): ?>
+                        <span style="font-size: 13px; font-weight: 600; color: #0284c7; display: block;">(<?php echo number_format(($item['current_stock'] ?? 0) / $item['units_per_case'], 2); ?> <?php echo htmlspecialchars($item['case_unit_name'] ?? 'CASE'); ?>)</span>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Reorder Level</div>
                 <div class="detail-value"><?php echo number_format($item['reorder_level'] ?? 0, 0); ?></div>
             </div>
-            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
             <div class="detail-group">
-                <div class="detail-label">Income Account</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['income_account'] ?? ''); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">COGS Account</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['cogs_account'] ?? ''); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Inventory Account</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['inventory_account'] ?? ''); ?></div>
+                <div class="detail-label">Reorder Quantity</div>
+                <div class="detail-value"><?php echo number_format($item['reorder_qty'] ?? 0, 0); ?></div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Inventory Details (Per Location Balance) -->
-<div id="tab-inventory" class="ns-tab-content">
-    <table class="ns-table">
+<!-- Tab 3: Location-Specific Pricing & Stock Balances -->
+<div id="tab-location" class="ns-tab-content">
+    <h3 style="font-size: 15px; font-weight: 700; color: #1e293b; margin-top: 0; margin-bottom: 12px;">Location Inventory Balances & Price Overrides</h3>
+    <table class="ns-table" style="width: 100%; border-collapse: collapse;">
         <thead>
-            <tr>
-                <th>Location</th>
-                <th style="text-align: right;">QuantityOnHand</th>
-                <th style="text-align: right;">AvailableQty</th>
-                <th style="text-align: right;">AverageCost</th>
-                <th style="text-align: right;">Location Cost</th>
-                <th style="text-align: right;">Location Selling Price</th>
-                <th style="text-align: right;">Location MRP</th>
-                <th>LastUpdated</th>
+            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                <th style="padding: 10px; text-align: left;">Location</th>
+                <th style="padding: 10px; text-align: right;">Quantity On Hand</th>
+                <th style="padding: 10px; text-align: right;">Available Qty</th>
+                <th style="padding: 10px; text-align: right;">Average Cost</th>
+                <th style="padding: 10px; text-align: right;">Location Cost Price</th>
+                <th style="padding: 10px; text-align: right;">Location Selling Price</th>
+                <th style="padding: 10px; text-align: right;">Location MRP</th>
             </tr>
         </thead>
         <tbody>
             <?php if (empty($inv_balances)): ?>
-                <tr><td colspan="8" style="text-align:center; padding: 20px; color: #999;">No location inventory balances found.</td></tr>
+                <tr><td colspan="7" style="text-align:center; padding: 20px; color: #999;">No location inventory balances found.</td></tr>
             <?php else: foreach ($inv_balances as $bal): 
-                $eff_cost = ($bal['cost_price'] !== null && (float)$bal['cost_price'] > 0) ? number_format($bal['cost_price'], 2) : '<span style="color:#aaa;">(Base)</span>';
-                $eff_sell = ($bal['selling_price'] !== null && (float)$bal['selling_price'] > 0) ? number_format($bal['selling_price'], 2) : '<span style="color:#aaa;">(Base)</span>';
-                $eff_mrp  = ($bal['mrp'] !== null && (float)$bal['mrp'] > 0) ? number_format($bal['mrp'], 2) : '<span style="color:#aaa;">(Base)</span>';
+                $eff_cost = ($bal['cost_price'] !== null && (float)$bal['cost_price'] > 0) ? number_format($bal['cost_price'], 2) : '<span style="color:#aaa;">(Global Base)</span>';
+                $eff_sell = ($bal['selling_price'] !== null && (float)$bal['selling_price'] > 0) ? number_format($bal['selling_price'], 2) : '<span style="color:#aaa;">(Global Base)</span>';
+                $eff_mrp  = ($bal['mrp'] !== null && (float)$bal['mrp'] > 0) ? number_format($bal['mrp'], 2) : '<span style="color:#aaa;">(Global Base)</span>';
             ?>
-                <tr>
-                    <td><strong><?php echo htmlspecialchars($bal['location_name']); ?></strong></td>
-                    <td style="text-align: right; font-weight: 700; color: #080;"><?php echo number_format($bal['quantity_on_hand'], 2); ?></td>
-                    <td style="text-align: right; font-weight: 700; color: #0284c7;"><?php echo number_format($bal['available_qty'], 2); ?></td>
-                    <td style="text-align: right; font-weight: 600;">Rs <?php echo number_format($bal['average_cost'], 2); ?></td>
-                    <td style="text-align: right;">Rs <?php echo $eff_cost; ?></td>
-                    <td style="text-align: right; font-weight: 600; color: #2563eb;">Rs <?php echo $eff_sell; ?></td>
-                    <td style="text-align: right; font-weight: 600; color: #0284c7;">Rs <?php echo $eff_mrp; ?></td>
-                    <td style="font-size: 11px; color: #64748b;"><?php echo date('Y-m-d h:i A', strtotime($bal['last_updated'])); ?></td>
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 10px;"><strong><?php echo htmlspecialchars($bal['location_name']); ?></strong></td>
+                    <td style="padding: 10px; text-align: right; font-weight: 700; color: #059669;"><?php echo number_format($bal['quantity_on_hand'], 2); ?></td>
+                    <td style="padding: 10px; text-align: right; font-weight: 700; color: #0284c7;"><?php echo number_format($bal['available_qty'], 2); ?></td>
+                    <td style="padding: 10px; text-align: right; font-weight: 600;">Rs <?php echo number_format($bal['average_cost'], 2); ?></td>
+                    <td style="padding: 10px; text-align: right;">Rs <?php echo $eff_cost; ?></td>
+                    <td style="padding: 10px; text-align: right; font-weight: 600; color: #2563eb;">Rs <?php echo $eff_sell; ?></td>
+                    <td style="padding: 10px; text-align: right; font-weight: 600; color: #0284c7;">Rs <?php echo $eff_mrp; ?></td>
                 </tr>
             <?php endforeach; endif; ?>
         </tbody>
     </table>
 </div>
 
-<!-- Related Records -->
-<div id="tab-related" class="ns-tab-content">
-    <table class="ns-table">
+<!-- Tab 4: Stock Movements / Related Records -->
+<div id="tab-movements" class="ns-tab-content">
+    <h3 style="font-size: 15px; font-weight: 700; color: #1e293b; margin-top: 0; margin-bottom: 12px;">Stock Movements & Related Transaction History</h3>
+    <table class="ns-table" style="width: 100%; border-collapse: collapse;">
         <thead>
-            <tr>
-                <th>Date</th>
-                <th>Transaction #</th>
-                <th>Type</th>
-                <th>Location</th>
-                <th style="text-align: right;">Quantity</th>
-                <th style="text-align: right;">Unit Price</th>
-                <th style="text-align: right;">Line Total</th>
+            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                <th style="padding: 10px; text-align: left;">Date</th>
+                <th style="padding: 10px; text-align: left;">Transaction #</th>
+                <th style="padding: 10px; text-align: left;">Type</th>
+                <th style="padding: 10px; text-align: left;">Location</th>
+                <th style="padding: 10px; text-align: right;">Quantity</th>
+                <th style="padding: 10px; text-align: right;">Unit Price</th>
+                <th style="padding: 10px; text-align: right;">Line Total</th>
             </tr>
         </thead>
         <tbody>
-            <?php foreach($movements as $mov): 
-                // Determine if this movement adds or subtracts stock
+            <?php if (empty($movements)): ?>
+                <tr><td colspan="7" style="text-align:center; padding: 20px; color: #999;">No stock movements recorded yet.</td></tr>
+            <?php else: foreach($movements as $mov): 
                 if (in_array($mov['txn_type'], ['customer_invoice', 'Invoice', 'POS', 'Sale'])) {
                     $is_addition = false;
                 } elseif (in_array($mov['txn_type'], ['vendor_bill', 'Bill', 'Opening Stock'])) {
@@ -326,50 +375,78 @@ function getDiff($oldJson, $newJson) {
                 } else {
                     $is_addition = $mov['quantity'] > 0;
                 }
-                $qty_color = $is_addition ? '#080' : '#c00';
+                $qty_color = $is_addition ? '#059669' : '#e11d48';
                 $qty_prefix = $is_addition ? '+' : '-';
                 $display_qty = number_format(abs($mov['quantity']), 0);
             ?>
-            <tr>
-                <td><?php echo date('M d, Y', strtotime($mov['txn_date'])); ?></td>
-                <td style="font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($mov['id'] ?? ''); ?>" style="color: var(--ns-primary); text-decoration: none;"><?php echo htmlspecialchars($mov['txn_number']); ?></a></td>
-                <td><span style="background: #eef2f6; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; color: #475569;"><?php echo str_replace('_', ' ', htmlspecialchars($mov['txn_type'])); ?></span></td>
-                <td><span style="font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #f1f5f9; color: #334155; font-size: 11px;"><?php echo htmlspecialchars($mov['location_name']); ?></span></td>
-                <td style="text-align: right; font-weight: 600; color: <?php echo $qty_color; ?>;">
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+                <td style="padding: 10px;"><?php echo date('M d, Y', strtotime($mov['txn_date'])); ?></td>
+                <td style="padding: 10px; font-weight: 600;"><a href="?page=transactions/view&id=<?php echo htmlspecialchars($mov['id'] ?? ''); ?>" style="color: #0284c7; text-decoration: none;"><?php echo htmlspecialchars($mov['txn_number']); ?></a></td>
+                <td style="padding: 10px;"><span style="background: #eef2f6; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; color: #475569;"><?php echo str_replace('_', ' ', htmlspecialchars($mov['txn_type'])); ?></span></td>
+                <td style="padding: 10px;"><span style="font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #f1f5f9; color: #334155; font-size: 11px;"><?php echo htmlspecialchars($mov['location_name']); ?></span></td>
+                <td style="padding: 10px; text-align: right; font-weight: 600; color: <?php echo $qty_color; ?>;">
                     <?php echo $qty_prefix . $display_qty; ?>
                 </td>
-                <td style="text-align: right;">Rs <?php echo number_format($mov['unit_price'], 2); ?></td>
-                <td style="text-align: right;">Rs <?php echo number_format($mov['line_total'], 2); ?></td>
+                <td style="padding: 10px; text-align: right;">Rs <?php echo number_format($mov['unit_price'], 2); ?></td>
+                <td style="padding: 10px; text-align: right;">Rs <?php echo number_format($mov['line_total'], 2); ?></td>
             </tr>
-            <?php endforeach; ?>
+            <?php endforeach; endif; ?>
         </tbody>
     </table>
 </div>
 
-<!-- System Information -->
+<!-- Tab 5: Accounting Configuration -->
+<div id="tab-accounting" class="ns-tab-content">
+    <div class="detail-grid">
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">Inventory Account</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['inventory_account'] ?? 'acc-1200 (Inventory Asset)'); ?></div>
+            </div>
+        </div>
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">COGS Account</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['cogs_account'] ?? 'acc-5000 (Cost of Goods Sold)'); ?></div>
+            </div>
+        </div>
+        <div>
+            <div class="detail-group">
+                <div class="detail-label">Income Account</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['income_account'] ?? 'acc-4000 (Sales Income)'); ?></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab 6: System Information & Audit Logs -->
 <div id="tab-system" class="ns-tab-content">
     <div class="detail-grid" style="margin-bottom: 30px;">
         <div>
             <div class="detail-group">
                 <div class="detail-label">Date Created</div>
-                <div class="detail-value"><?php echo isset($item['created_at']) ? date('F d, Y h:i A', strtotime($item['created_at'])) : ''; ?></div>
+                <div class="detail-value"><?php echo isset($item['created_at']) ? date('F d, Y h:i A', strtotime($item['created_at'])) : 'N/A'; ?></div>
             </div>
             <div class="detail-group">
                 <div class="detail-label">Last Modified</div>
-                <div class="detail-value"><?php echo isset($item['updated_at']) ? date('F d, Y h:i A', strtotime($item['updated_at'])) : ''; ?></div>
+                <div class="detail-value"><?php echo isset($item['updated_at']) ? date('F d, Y h:i A', strtotime($item['updated_at'])) : 'N/A'; ?></div>
             </div>
         </div>
         <div>
             <div class="detail-group">
-                <div class="detail-label">Internal ID</div>
-                <div class="detail-value" style="font-family: monospace;"><?php echo $item['id']; ?></div>
+                <div class="detail-label">Internal Item ID</div>
+                <div class="detail-value" style="font-family: monospace;"><?php echo htmlspecialchars($item['id']); ?></div>
+            </div>
+            <div class="detail-group">
+                <div class="detail-label">SKU</div>
+                <div class="detail-value"><?php echo htmlspecialchars($item['sku'] ?? 'N/A'); ?></div>
             </div>
         </div>
     </div>
 
-    <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">System Notes / Change Log</h3>
+    <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px; font-size: 15px; color: #1e293b;">Audit Log / Change History</h3>
     <?php if(count($audit_logs) == 0): ?>
-        <p style="color: #888; font-style: italic;">No changes recorded yet.</p>
+        <p style="color: #888; font-style: italic;">No audit changes recorded yet.</p>
     <?php else: ?>
         <table class="ns-table" style="width: 100%; font-size: 13px;">
             <thead>

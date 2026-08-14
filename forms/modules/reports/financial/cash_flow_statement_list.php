@@ -12,13 +12,14 @@ $db = db();
 $fy        = rpt_get_current_fiscal_year_dates();
 $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
-$date_to   = $_GET['date_to']   ?? $fy['end_date'];
+$date_to   = $_GET['date_to']   ?? $today;
 
 $fy_start_date = get_report_start_date($date_from);
 $loc_sql       = rpt_location_sql('h');
 
-// Strict Cash & Bank Accounts WHERE clause (Includes all Bank subtype accounts, digital wallets & cash)
-$cash_where = "(a.account_subtype IN ('Bank', 'cash', 'Cash', 'bank', 'Bank Account', 'Cash & Bank') OR a.id IN ('acc-1010', 'acc-1020', 'acc-1030') OR (a.account_type = 'asset' AND (a.account_name LIKE '%cash%' OR a.account_name LIKE '%bank%' OR a.account_name LIKE '%esewa%' OR a.account_name LIKE '%khalti%' OR a.account_name LIKE '%fonepay%') AND a.account_name NOT LIKE '%receivable%'))";
+// Cash & Bank accounts — driven purely by account_subtype in COA
+// 'Cash' = Cash on Hand (e.g. Cash drawer), 'Bank' = Bank/digital wallets
+$cash_where = "(a.account_type = 'asset' AND a.account_subtype IN ('Cash', 'Bank'))";
 
 // Base static opening balances defined on Cash & Bank accounts
 $acct_op_balance = (float) ($db->fetchOne("
@@ -75,13 +76,13 @@ $operating_expenses_paid = (float) ($db->fetchOne("
 
 $net_operating_cash = $customer_collections - $vendor_payments - $operating_expenses_paid;
 
-// 3. Investing Activities (Fixed Assets purchases/disposals)
-$investing_cash = (float) ($db->fetchOne("
+// 3. Investing Activities — Fixed Asset accounts (account_subtype = 'Fixed Asset')
+$investing_cash = (float)($db->fetchOne("
     SELECT -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type IN ('fixed_asset')
+    WHERE a.account_type = 'asset' AND a.account_subtype = 'Fixed Asset'
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 

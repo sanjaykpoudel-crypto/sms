@@ -7,12 +7,12 @@
 require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 require_once 'api/reference_helper.php';
+require_once 'api/ReportingEngine.php';
 
 $db = db();
 
 // 1. Date Range Handling & Presets (Current Fiscal Year default)
 $today     = date('Y-m-d');
-$first_txn = $db->fetchOne("SELECT MIN(txn_date) as min_date FROM transaction_headers WHERE is_deleted = 0 AND status NOT IN ('void','voided','draft')")['min_date'] ?? '2026-01-01';
 
 // Active/Current Fiscal Year calculation
 $active_fy = $db->fetchOne("SELECT * FROM fiscal_years WHERE ? BETWEEN start_date AND end_date LIMIT 1", [$today]);
@@ -72,122 +72,41 @@ if (!empty($date_from_in) && !empty($date_to_in)) {
             $date_to       = $today;
             break;
         case 'all_time':
-            $date_from = $first_txn;
-            $date_to   = $today;
+            // Find the true earliest transaction across ALL sources
+            // (transaction_headers AND pos_entry to capture all data)
+            $first_th  = $db->fetchOne("SELECT MIN(txn_date) as d FROM transaction_headers WHERE is_deleted=0 AND status NOT IN ('void','voided','draft')")['d'] ?? null;
+            $first_pos = $db->fetchOne("SELECT DATE(MIN(date_time)) as d FROM pos_entry WHERE is_deleted=0")['d'] ?? null;
+            $candidates = array_filter([$first_th, $first_pos]);
+            $date_from  = !empty($candidates) ? min($candidates) : '2020-01-01';
+            $date_to    = $today;
             break;
         case 'fiscal_year':
         default:
             $date_from = $fy_start_date;
-            $date_to   = $fy_end_date;
+            // Cap fiscal year end at today so FY never shows a wider date range
+            // than All Time (which always ends at today too)
+            $date_to   = min($fy_end_date, $today);
             break;
     }
 }
 
-$loc_sql_h  = rpt_location_sql('h');
-$loc_sql_pe = rpt_location_sql('pe');
+$user_loc    = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
+$loc_sql_h   = rpt_location_sql('h');
 
-// 2. POS Sales & COGS for the period
-$pos_data = $db->fetchOne("
-    SELECT
-        COALESCE(SUM(pi.net_amount - pi.tax), 0) as sales,
-        COALESCE(SUM(pi.quantity * i.cost_price), 0) as cogs
-    FROM pos_items pi
-    JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
-    JOIN pos_entry pe ON pi.pos_id = pe.id
-    WHERE pe.is_deleted = 0 {$loc_sql_pe}
-      AND DATE(pe.date_time) BETWEEN ? AND ?
-", [$date_from, $date_to]);
+// 2. Authoritative PnL Engine Call — Ensures 100% match with Income Statement (P&L)
+$pnl = re_get_pnl($db, $date_from, $date_to, $location_id);
 
-// 3. Non-POS Customer Invoices Sales & COGS for the period
-$invoice_data = $db->fetchOne("
-    SELECT
-        COALESCE(SUM(l.line_total), 0) as sales,
-        COALESCE(SUM(l.cost_price * l.quantity), 0) as cogs
-    FROM transaction_lines l
-    JOIN transaction_headers h ON l.header_id = h.id
-    WHERE h.txn_type = 'customer_invoice'
-      AND h.txn_date BETWEEN ? AND ?
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_number NOT LIKE 'POS-%'
-      AND h.txn_number NOT LIKE 'INV-POS-%'
-      AND COALESCE(h.source, '') != 'pos_sync' {$loc_sql_h}
-", [$date_from, $date_to]);
-
-// 4. Sales Returns & Credit Memo COGS adjustment
-$credit_memo_data = $db->fetchOne("
-    SELECT 
-        COALESCE(SUM(cm.total_amount), 0) as sales_return,
-        COALESCE((
-            SELECT SUM(l.cost_price * l.quantity)
-            FROM transaction_lines l
-            WHERE l.header_id = cm.header_id
-        ), 0) as cogs_return
-    FROM credit_memos cm
-    JOIN transaction_headers h ON cm.header_id = h.id
-    WHERE h.txn_type = 'credit_memo'
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date BETWEEN ? AND ? {$loc_sql_h}
-", [$date_from, $date_to]);
-
-// 5. Additional Manual Journal Entries for Income & COGS
-$journal_data = $db->fetchOne("
-    SELECT 
-        COALESCE(SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0) as j_income,
-        COALESCE(SUM(CASE WHEN (a.id = 'acc-5100' OR a.account_subtype = 'Cost of Goods Sold' OR a.account_type = 'cost_of_goods_sold') THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0) as j_cogs
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE h.txn_type IN ('Journal', 'journal_entry')
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date BETWEEN ? AND ? {$loc_sql_h}
-", [$date_from, $date_to]);
-
-$gross_sales   = (float)$pos_data['sales'] + (float)$invoice_data['sales'] + (float)$journal_data['j_income'];
-$sales_returns = (float)$credit_memo_data['sales_return'];
-$net_sales     = max(0, $gross_sales - $sales_returns);
-$cogs          = max(0, (float)$pos_data['cogs'] + (float)$invoice_data['cogs'] + (float)$journal_data['j_cogs'] - (float)$credit_memo_data['cogs_return']);
-
-// 6. Gross Profit & Contribution Margin
-$gross_profit            = $net_sales - $cogs;
-$gross_margin_pct        = $net_sales > 0 ? ($gross_profit / $net_sales) * 100 : 0;
-$contribution_margin     = $gross_profit;
-$contribution_margin_pct = $net_sales > 0 ? ($contribution_margin / $net_sales) * 100 : 0;
-
-// 7. Operating Expenses & Fixed Costs
-$operating_expenses_list = $db->fetchAll("
-    SELECT a.id, a.account_name,
-           COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as amount
-    FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE a.account_type = 'expense'
-      AND a.id != 'acc-5100'
-      AND LOWER(a.account_name) NOT LIKE '%cost of goods%'
-      AND LOWER(a.account_name) NOT LIKE '%purchase%'
-      AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft') {$loc_sql_h}
-    GROUP BY a.id, a.account_name
-    HAVING amount > 0
-    ORDER BY amount DESC
-", [$date_from, $date_to]);
-
-$direct_expenses = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(e.amount), 0) as total
-    FROM expenses e
-    JOIN transaction_headers h ON e.header_id = h.id
-    WHERE h.txn_type = 'expense'
-      AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-      AND h.txn_date BETWEEN ? AND ? {$loc_sql_h}
-", [$date_from, $date_to])['total'] ?? 0);
-
-$total_operating_expenses = 0;
-foreach ($operating_expenses_list as $oe) {
-    $total_operating_expenses += (float)$oe['amount'];
-}
-if ($direct_expenses > $total_operating_expenses) {
-    $total_operating_expenses = $direct_expenses;
-}
-
-$fixed_costs = $total_operating_expenses;
+$net_sales                = $pnl['total_revenue'];
+$gross_sales              = $net_sales;
+$cogs                     = $pnl['total_cogs'];
+$gross_profit             = $pnl['gross_profit'];
+$gross_margin_pct         = $net_sales > 0 ? ($gross_profit / $net_sales) * 100 : 0;
+$contribution_margin      = $gross_profit;
+$contribution_margin_pct  = $net_sales > 0 ? ($contribution_margin / $net_sales) * 100 : 0;
+$total_operating_expenses = $pnl['total_expenses'];
+$fixed_costs              = $total_operating_expenses;
+$operating_expenses_list  = $pnl['expense_rows'] ?? [];
 
 if ($contribution_margin_pct > 0) {
     $break_even_sales = $fixed_costs / ($contribution_margin_pct / 100);
@@ -378,15 +297,16 @@ rpt_header('ERP Break-Even & Financial Performance Analysis');
 <div class="be-container">
 
     <!-- Quick Preset Date Filter Bar -->
+    <?php $loc_param = !empty($_GET['location_id']) ? '&location_id=' . urlencode($_GET['location_id']) : (!empty($_GET['location']) ? '&location=' . urlencode($_GET['location']) : ''); ?>
     <div class="be-preset-bar no-print">
         <span class="be-preset-label"><i class="fas fa-calendar-alt"></i> Date Preset:</span>
-        <a href="?page=reports/financial/break_even_payback&preset=fiscal_year" class="be-preset-btn <?php echo $preset === 'fiscal_year' ? 'active' : ''; ?>"><i class="fas fa-university"></i> Current Fiscal Year (<?php echo htmlspecialchars($fy_name); ?>)</a>
-        <a href="?page=reports/financial/break_even_payback&preset=today" class="be-preset-btn <?php echo $preset === 'today' ? 'active' : ''; ?>">Today</a>
-        <a href="?page=reports/financial/break_even_payback&preset=yesterday" class="be-preset-btn <?php echo $preset === 'yesterday' ? 'active' : ''; ?>">Yesterday</a>
-        <a href="?page=reports/financial/break_even_payback&preset=this_week" class="be-preset-btn <?php echo $preset === 'this_week' ? 'active' : ''; ?>">This Week</a>
-        <a href="?page=reports/financial/break_even_payback&preset=this_month" class="be-preset-btn <?php echo $preset === 'this_month' ? 'active' : ''; ?>">This Month</a>
-        <a href="?page=reports/financial/break_even_payback&preset=quarter" class="be-preset-btn <?php echo $preset === 'quarter' ? 'active' : ''; ?>">This Quarter</a>
-        <a href="?page=reports/financial/break_even_payback&preset=all_time" class="be-preset-btn <?php echo $preset === 'all_time' ? 'active' : ''; ?>">All Time</a>
+        <a href="?page=reports/financial/break_even_payback&preset=fiscal_year<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'fiscal_year' ? 'active' : ''; ?>"><i class="fas fa-university"></i> Current Fiscal Year (<?php echo htmlspecialchars($fy_name); ?>)</a>
+        <a href="?page=reports/financial/break_even_payback&preset=today<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'today' ? 'active' : ''; ?>">Today</a>
+        <a href="?page=reports/financial/break_even_payback&preset=yesterday<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'yesterday' ? 'active' : ''; ?>">Yesterday</a>
+        <a href="?page=reports/financial/break_even_payback&preset=this_week<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'this_week' ? 'active' : ''; ?>">This Week</a>
+        <a href="?page=reports/financial/break_even_payback&preset=this_month<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'this_month' ? 'active' : ''; ?>">This Month</a>
+        <a href="?page=reports/financial/break_even_payback&preset=quarter<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'quarter' ? 'active' : ''; ?>">This Quarter</a>
+        <a href="?page=reports/financial/break_even_payback&preset=all_time<?php echo $loc_param; ?>" class="be-preset-btn <?php echo $preset === 'all_time' ? 'active' : ''; ?>">All Time</a>
     </div>
 
     <!-- Filter Form -->

@@ -136,7 +136,7 @@ if ($txn_type == 'vendor_bill') {
 // Fetch Items
 $items = $db->fetchAll("
     SELECT tl.*, i.item_name, i.sku, a.account_name,
-           COALESCE(rc.name, tl.unit, '') as unit_display,
+           COALESCE(NULLIF(TRIM(tl.unit), ''), rc.name, 'PCS') as unit_display,
            loc.name as line_location_name
     FROM transaction_lines tl
     LEFT JOIN items i ON tl.item_id = i.id
@@ -697,7 +697,9 @@ if ($is_pos_summary):
                 <?php endif; ?>
                 <?php
                 $display_total_amount = $details['total_amount'] ?? null;
-                if ($display_total_amount === null || (in_array(strtolower($txn_type), ['journal', 'account_transfer']) && (float)$display_total_amount == 0)) {
+                if (strtolower($txn_type) == 'inventory_adjustment') {
+                    $display_total_amount = (float)($header['net_amount'] ?? 0);
+                } elseif ($display_total_amount === null || (in_array(strtolower($txn_type), ['journal', 'account_transfer']) && (float)$display_total_amount == 0)) {
                     $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit' AND account_id != 'acc-3300'", [$id])['s'] ?? 0;
                     if ($gl_debit_sum == 0) {
                         $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit'", [$id])['s'] ?? 0;

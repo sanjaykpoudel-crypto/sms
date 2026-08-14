@@ -19,6 +19,7 @@ header('Pragma: no-cache');
 
 require_once __DIR__ . '/../database/DBConnection.php';
 require_once __DIR__ . '/reference_helper.php';
+require_once __DIR__ . '/ReportingEngine.php';
 // Load tiered cache (safe to include multiple times)
 if (!function_exists('sysinfo_get')) {
     require_once __DIR__ . '/system_cache.php';
@@ -195,7 +196,7 @@ function get_daily_pnl_for_date($db, $date) {
     $pos = $db->fetchOne("
         SELECT
             COALESCE(SUM(pi.net_amount - pi.tax), 0)                             as sales,
-            COALESCE(SUM(pi.quantity * i.cost_price), 0)                        as cogs
+            COALESCE(SUM(COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price), 0) as cogs
         FROM pos_items pi
         JOIN items i ON pi.item_id = i.id AND i.is_deleted = 0
         JOIN pos_entry pe ON pi.pos_id = pe.id
@@ -207,7 +208,7 @@ function get_daily_pnl_for_date($db, $date) {
     $non_pos = $db->fetchOne("
         SELECT
             COALESCE(SUM(l.line_total), 0)              as sales,
-            COALESCE(SUM(l.cost_price * l.quantity), 0) as cogs
+            COALESCE(SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0) as cogs
         FROM transaction_lines l
         JOIN transaction_headers h ON l.header_id = h.id
         WHERE h.txn_type = 'customer_invoice'
@@ -251,7 +252,7 @@ function get_daily_pnl_for_date($db, $date) {
 
     // Reverse COGS for returned items (look at credit memo transaction lines if available)
     $credit_memo_cogs = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(l.cost_price * l.quantity), 0) as cogs
+        SELECT COALESCE(SUM(l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0) as cogs
         FROM transaction_lines l
         JOIN transaction_headers h ON l.header_id = h.id
         WHERE h.txn_type = 'credit_memo'
@@ -285,46 +286,48 @@ $sales_yest  = $pnl_yest['sales'];
 $profit_today = $pnl_today['gross_profit'];
 $profit_yest  = $pnl_yest['gross_profit'];
 
-// ── 1c. Cash / Bank / AR / AP — Single batch query ──
-// ── 1c. Cash / Bank / AR / AP — Single batch query ──
+// ── 1c. Cash / Bank / AR / AP — Central ReportingEngine ──
 function get_balances($db, $as_of) {
     global $selected_location_id;
-    $loc_sql_th = dash_loc_sql('th');
     $loc_sql_h  = dash_loc_sql('h');
 
-    $ar = get_total_receivables_balance($db, $as_of, $selected_location_id);
-    $ap = get_total_payables_balance($db, $as_of, $selected_location_id);
+    // AR and AP from central subledger (same as Balance Sheet)
+    $ar = re_get_ar_balance($db, $as_of, $selected_location_id);
+    $ap = re_get_ap_balance($db, $as_of, $selected_location_id);
 
+    // Cash: accounts with subtype 'Cash'
+    $cash = re_get_accounts_by_subtype($db, ['Cash', 'cash'], $as_of);
 
-    // Cash and Bank totals (excluding Fixed Deposit accounts)
-    $cash_bank_rows = $db->fetchAll("
-        SELECT 
-            LOWER(a.account_subtype) as bt,
-            COALESCE(SUM(CASE WHEN h.id IS NOT NULL THEN (CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END) ELSE 0 END), 0) as bal
+    // Bank: accounts with subtype 'Bank' (excl. Fixed Deposit)
+    $bank_rows = $db->fetchAll("
+        SELECT a.id, a.account_name,
+               SUM(CASE WHEN je.entry_type='debit' THEN je.amount ELSE -je.amount END) as bal
         FROM accounts a
         LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
-        LEFT JOIN transaction_headers h ON je.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+        LEFT JOIN transaction_headers h ON je.header_id = h.id
+            AND h.is_deleted = 0 AND h.status NOT IN ('voided','void','draft')
+            {$loc_sql_h}
         WHERE a.account_type = 'asset'
-          AND a.account_subtype IN ('Cash', 'Bank')
+          AND a.account_subtype = 'Bank'
           AND LOWER(a.account_name) NOT LIKE '%fixed deposit%'
           AND a.is_active = 1 AND a.is_deleted = 0
-        GROUP BY bt HAVING bt IS NOT NULL
+        GROUP BY a.id, a.account_name
     ", [$as_of]);
+    $bank = array_sum(array_column($bank_rows, 'bal'));
 
-    // Fixed Deposit total (specifically for Fixed Deposit account acc-1040)
+    // Fixed Deposit total
     $fd_val = (float)($db->fetchOne("
-        SELECT (a.opening_balance + COALESCE(SUM(CASE WHEN h.id IS NOT NULL THEN (CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END) ELSE 0 END), 0)) as bal
+        SELECT COALESCE(SUM(CASE WHEN je.entry_type='debit' THEN je.amount ELSE -je.amount END), 0) as bal
         FROM accounts a
         LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
-        LEFT JOIN transaction_headers h ON je.header_id = h.id AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-        WHERE (a.id = 'acc-1040' OR LOWER(a.account_name) LIKE '%fixed deposit%')
+        LEFT JOIN transaction_headers h ON je.header_id = h.id
+            AND h.is_deleted = 0 AND h.status NOT IN ('voided','void','draft')
+        WHERE LOWER(a.account_name) LIKE '%fixed deposit%'
           AND a.is_active = 1 AND a.is_deleted = 0
         GROUP BY a.id
     ", [$as_of])['bal'] ?? 0);
 
-    $r = ['cash' => 0, 'bank' => 0, 'fd' => $fd_val, 'ar' => $ar, 'ap' => $ap];
-    foreach ($cash_bank_rows as $row) { $r[$row['bt']] = (float)$row['bal']; }
-    return $r;
+    return ['cash' => (float)$cash, 'bank' => (float)$bank, 'fd' => $fd_val, 'ar' => $ar, 'ap' => $ap];
 }
 $bal_today = get_balances($db, $today);
 $bal_yest  = get_balances($db, $yesterday);
@@ -350,7 +353,7 @@ if (!empty($selected_location_id)) {
             SUM(CASE WHEN i.is_active = 1 AND i.reorder_level IS NOT NULL AND COALESCE(ib.quantity_on_hand, 0) <= i.reorder_level THEN 1 ELSE 0 END) as low_stock,
             SUM(CASE WHEN i.is_active = 1 AND COALESCE(ib.quantity_on_hand, 0) < 0 THEN 1 ELSE 0 END) as negative_stock,
             SUM(CASE WHEN i.is_active = 1 AND i.reorder_level IS NOT NULL AND COALESCE(ib.quantity_on_hand, 0) > (i.reorder_level * 3) THEN 1 ELSE 0 END) as overstock,
-            COALESCE(SUM(COALESCE(ib.quantity_on_hand, 0) * i.cost_price), 0) as inventory_value
+            COALESCE(SUM(COALESCE(ib.quantity_on_hand, 0) * COALESCE(ib.average_cost, i.cost_price)), 0) as inventory_value
         FROM items i
         LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = '$selected_location_id'
         WHERE i.is_deleted = 0
@@ -367,6 +370,10 @@ if (!empty($selected_location_id)) {
             COALESCE(SUM(current_stock * cost_price), 0) as inventory_value
         FROM items WHERE is_deleted = 0
     ");
+}
+// Override inventory_value with central engine (same as Balance Sheet & Inventory GL) when viewing all locations
+if (empty($selected_location_id)) {
+    $inv_stats['inventory_value'] = re_get_inventory_subledger($db);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -599,7 +606,7 @@ $bank_coa_rows = $db->fetchAll("
             ), 0)
         ) as total
     FROM accounts a
-    WHERE a.account_subtype = 'Bank' AND a.is_active = 1 AND a.is_deleted = 0
+    WHERE a.account_subtype IN ('Bank', 'Cash') AND a.is_active = 1 AND a.is_deleted = 0
     ORDER BY a.account_name ASC
 ", [$today, $today]);
 
@@ -1270,11 +1277,11 @@ $prefs = $db->fetchOne(
     [$user_id]
 );
 
-// ── BANK ACCOUNT DETAILS: Single aggregated query replaces N+1 loop ──
+// ── BANK & CASH ACCOUNT DETAILS: Single aggregated query ──
 $bank_accounts_list = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype
     FROM accounts a
-    WHERE a.account_subtype IN ('Bank') AND a.is_active = 1 AND a.is_deleted = 0
+    WHERE a.account_subtype IN ('Bank', 'Cash') AND a.is_active = 1 AND a.is_deleted = 0
     ORDER BY a.account_subtype ASC, a.account_name ASC
 ");
 

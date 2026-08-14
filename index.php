@@ -14,6 +14,26 @@ $_SESSION['last_activity'] = time();
 require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 
+// Single Active Device / Session Guard Check:
+if (isset($_SESSION['user_id'])) {
+    $db = db();
+    try {
+        $db_sess_row = $db->fetchOne("SELECT current_session_id FROM users WHERE id = :id AND is_deleted = 0", ['id' => $_SESSION['user_id']]);
+        $active_db_sess = $db_sess_row['current_session_id'] ?? null;
+        $current_token = $_SESSION['ns_session_token'] ?? session_id();
+
+        if (!empty($active_db_sess) && $active_db_sess !== $current_token) {
+            // Logged in from another device/browser!
+            session_unset();
+            session_destroy();
+            session_start();
+            $_SESSION['login_error'] = "Your account was logged into from another device or browser. You have been logged out.";
+            header('Location: index.php');
+            exit();
+        }
+    } catch (Exception $ex_sess) {}
+}
+
 // Auto-sync POS transactions: run at most once per 5 minutes per session to avoid
 // blocking every page load with an expensive full inventory recalculation.
 $_idx_last_sync = (int)($_SESSION['_pos_sync_ts'] ?? 0);
@@ -23,6 +43,11 @@ if (isset($_SESSION['user_id']) && (time() - $_idx_last_sync) > 300 && function_
 }
 
 $error = "";
+if (isset($_SESSION['login_error'])) {
+    $error = $_SESSION['login_error'];
+    unset($_SESSION['login_error']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
@@ -32,14 +57,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_SESSION['user_id'])) {
         $user = $db->fetchOne("SELECT * FROM users WHERE username = :username AND is_active = 1 AND is_deleted = 0", ['username' => $username]);
 
         if ($user && password_verify($password, $user['password_hash'])) {
+            session_regenerate_id(true);
+            $new_session_id = session_id();
+
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['username'] = $user['username'];
             $_SESSION['full_name'] = $user['full_name'];
             $_SESSION['role'] = $user['role'];
             $_SESSION['location_id'] = !empty($user['location_id']) ? $user['location_id'] : get_user_default_location_id();
+            $_SESSION['ns_session_token'] = $new_session_id;
 
-            // Update last login
-            $db->execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = :id", ['id' => $user['id']]);
+            // Update last login and set current_session_id to lock account to this session
+            $db->execute("UPDATE users SET last_login = CURRENT_TIMESTAMP, current_session_id = :sid WHERE id = :id", [
+                'sid' => $new_session_id,
+                'id'  => $user['id']
+            ]);
 
             header("Location: index.php");
             exit();
@@ -117,13 +149,13 @@ if ($is_logged_in) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>
-        <?php echo $is_logged_in ? ucwords(str_replace(['/', '_'], ' ', $page)) . " | NetSuite" : "Login | SMS ERP"; ?>
+        <?php echo $is_logged_in ? ucwords(str_replace(['/', '_'], ' ', $page)) . " | " . htmlspecialchars($sys_name) : "Login | " . htmlspecialchars($sys_name); ?>
     </title>
     <link rel="stylesheet" href="assets/css/style.css?v=<?php echo time(); ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
     <style>
-        /* Custom styling for DataTables to match NetSuite aesthetics */
+        /* Custom styling for DataTables to match ERP aesthetics */
         .dataTables_wrapper .dataTables_length select {
             padding: 4px;
             border: 1px solid #ccc;
@@ -731,6 +763,7 @@ if ($is_logged_in) {
                             <?php if (can_access_feature('credit_memo')): ?>
                             <a href="?page=transactions/credit_memo" class="ns-sub-dropdown-item"><i class="fas fa-list"></i> Credit Memo Register</a>
                             <?php endif; ?>
+                            <a href="?page=sales/promotions" class="ns-sub-dropdown-item"><i class="fas fa-tags" style="color: #0284c7;"></i> Promotional Discounts</a>
                         </div>
                     </div>
                     <?php endif; ?>
@@ -878,6 +911,7 @@ if ($is_logged_in) {
                             <a href="?page=reports/sales/by_customer" class="ns-sub-dropdown-item">Sales by Customer</a>
                             <a href="?page=reports/sales/register" class="ns-sub-dropdown-item">Sales Register</a>
                             <a href="?page=reports/sales/open_invoices" class="ns-sub-dropdown-item">Open Invoices</a>
+                            <a href="?page=reports/sales/promotion_performance" class="ns-sub-dropdown-item"><i class="fas fa-chart-pie" style="color: #0284c7; margin-right: 4px;"></i> Promotion Performance</a>
                         </div>
                     </div>
                     <?php endif; ?>
@@ -1106,6 +1140,27 @@ if ($is_logged_in) {
 
         </div>
 
+        <!-- ERP Global Application Footer -->
+        <footer class="ns-footer" style="margin: 30px 20px 20px 20px;">
+            <div class="ns-footer-content">
+                <div class="ns-footer-left">
+                    <span class="ns-footer-brand">
+                        <i class="fas fa-cube" style="color: #0284c7; margin-right: 6px;"></i>
+                        <strong><?php echo htmlspecialchars($sys_name ?? 'SMS ERP'); ?></strong>
+                    </span>
+                    <span class="ns-footer-sep">|</span>
+                    <span class="ns-footer-text">© <?php echo date('Y'); ?> All rights reserved.</span>
+                    <span class="ns-footer-sep">|</span>
+                    <span class="ns-footer-version"><i class="fas fa-code-branch" style="font-size: 10px; margin-right: 4px;"></i> ERP v4.2.0</span>
+                </div>
+                <div class="ns-footer-right">
+                    <span class="ns-footer-badge"><i class="fas fa-check-circle" style="color: #10b981; margin-right: 4px;"></i> System Operational</span>
+                    <span class="ns-footer-sep">|</span>
+                    <span class="ns-footer-text"><i class="fas fa-clock" style="font-size: 10px; margin-right: 4px;"></i> <?php echo date('M d, Y'); ?></span>
+                </div>
+            </div>
+        </footer>
+
     <?php endif; ?>
 
     <!-- Footer or Script includes -->
@@ -1158,7 +1213,7 @@ if ($is_logged_in) {
                 }
             }, true);
 
-            // NetSuite Grid Logic
+            // ERP Grid Logic
             function nsAddLine(tableId) {
                 const table = document.getElementById(tableId).getElementsByTagName('tbody')[0];
                 const template = table.rows[0];
@@ -1298,38 +1353,91 @@ if ($is_logged_in) {
         }
 
         function nsDelete(table, id, callback) {
-            if (!confirm('Are you sure you want to delete this record?')) return;
+            nsConfirm('Are you sure you want to delete this record? This action cannot be undone.', function() {
+                const payload = {
+                    action: 'delete',
+                    table: table,
+                    primary_key: 'id',
+                    primary_value: id
+                };
 
-            const payload = {
-                action: 'delete',
-                table: table,
-                primary_key: 'id',
-                primary_value: id
-            };
-
-            fetch('api/transaction_handler.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        const msg = data.message || 'Record deleted successfully.';
-                        sessionStorage.setItem('ns_flash_msg', msg);
-                        sessionStorage.setItem('ns_flash_type', 'success');
-                        nsNotify(msg, 'success');
-                        setTimeout(() => {
-                            if (callback) callback();
-                            else location.reload();
-                        }, 400);
-                    } else {
-                        nsNotify(data.message || 'Delete failed', 'error');
-                    }
+                fetch('api/transaction_handler.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 })
-                .catch(err => nsNotify('Network error', 'error'));
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            const msg = data.message || 'Record deleted successfully.';
+                            sessionStorage.setItem('ns_flash_msg', msg);
+                            sessionStorage.setItem('ns_flash_type', 'success');
+                            nsNotify(msg, 'success');
+                            setTimeout(() => {
+                                if (callback) callback();
+                                else location.reload();
+                            }, 400);
+                        } else {
+                            // Show rich blocking modal for related-record errors
+                            nsDeleteBlockedModal(data.message || 'Delete failed');
+                        }
+                    })
+                    .catch(err => nsNotify('Network error: ' + err, 'error'));
+            });
+        }
+
+        function nsDeleteBlockedModal(errorMessage) {
+            // Parse related records from message if they look like a list
+            const modal = document.getElementById('ns-delete-blocked-modal');
+            const titleEl = document.getElementById('dbl-title');
+            const msgEl = document.getElementById('dbl-message');
+            const listEl = document.getElementById('dbl-list');
+
+            // Try to extract the main message and the record list
+            // Pattern: "Cannot delete X. There are N related record(s): ITEM1; ITEM2; ..."
+            const listMatch = errorMessage.match(/:\s*(.+?)\.\s*Please/);
+            const mainMsg = errorMessage.replace(/:\s*.+/, '.').trim();
+
+            if (listMatch) {
+                // Split by '; ' or ', '
+                const items = listMatch[1].split(/;\s*|,\s*(?=[A-Z#])/).filter(s => s.trim());
+                listEl.innerHTML = items.map(item => `<li style="padding:4px 0; border-bottom:1px solid #f1f5f9; font-size:12px; color:#374151;">${item.trim()}</li>`).join('');
+                listEl.style.display = 'block';
+                msgEl.textContent = errorMessage.split('.')[0] + '.';
+            } else {
+                listEl.innerHTML = '';
+                listEl.style.display = 'none';
+                msgEl.textContent = errorMessage;
+            }
+
+            titleEl.textContent = 'Cannot Delete — Related Records Exist';
+            modal.style.display = 'flex';
         }
     </script>
+
+    <!-- Delete Blocked Modal -->
+    <div id="ns-delete-blocked-modal"
+        style="display:none; position:fixed; z-index:10005; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.55); justify-content:center; align-items:center;">
+        <div style="background:#fff; padding:0; border-radius:10px; box-shadow:0 16px 40px rgba(0,0,0,0.25); width:500px; max-width:94%; font-family:inherit; overflow:hidden;">
+            <div style="background:linear-gradient(135deg,#dc2626,#b91c1c); padding:16px 20px; display:flex; align-items:center; gap:12px;">
+                <i class="fas fa-ban" style="color:#fff; font-size:22px;"></i>
+                <div>
+                    <div id="dbl-title" style="font-size:15px; font-weight:700; color:#fff;">Cannot Delete</div>
+                    <div style="font-size:11px; color:rgba(255,255,255,0.8); margin-top:2px;">Remove or reassign linked records first</div>
+                </div>
+                <button onclick="document.getElementById('ns-delete-blocked-modal').style.display='none'"
+                    style="margin-left:auto; background:rgba(255,255,255,0.2); border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center;">&times;</button>
+            </div>
+            <div style="padding:18px 20px;">
+                <p id="dbl-message" style="margin:0 0 12px 0; font-size:13px; color:#1e293b; font-weight:600; line-height:1.5;"></p>
+                <ul id="dbl-list" style="margin:0; padding:0 0 0 4px; list-style:none; max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px;"></ul>
+            </div>
+            <div style="background:#f8fafc; padding:12px 20px; display:flex; justify-content:flex-end;">
+                <button onclick="document.getElementById('ns-delete-blocked-modal').style.display='none'"
+                    class="ns-btn ns-btn-primary" style="padding:7px 22px;">OK, Got It</button>
+            </div>
+        </div>
+    </div>
 
     <div id="ns-notification">
         <i></i>

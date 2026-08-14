@@ -355,15 +355,39 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             });
     });
 
+    function updateBillRowStockDisplay(row) {
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const unitEl = row.querySelector('.unit-input');
+        const selectedUnit = unitEl ? unitEl.value : '';
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+        const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
+
+        const baseStock = parseFloat(data.current_stock || 0);
+        const qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
+
+        if (isCase && conv > 1) {
+            const caseStock = baseStock / conv;
+            row.querySelector('.stock-input').value = caseStock.toFixed(2);
+            if (row.querySelector('.new-stock-input')) {
+                row.querySelector('.new-stock-input').value = (caseStock + qty).toFixed(2);
+            }
+        } else {
+            row.querySelector('.stock-input').value = baseStock.toFixed(2);
+            if (row.querySelector('.new-stock-input')) {
+                row.querySelector('.new-stock-input').value = (baseStock + qty).toFixed(2);
+            }
+        }
+    }
+
     function billCalcFromRate(el) {
         const row = el.closest('tr');
         const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
         const rate = parseFloat(row.querySelector('.rate-input').value) || 0;
         const taxPct = parseFloat(row.querySelector('.tax-pct-input').value) || 0;
 
-        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
-        const newStock = currentStock + qty;
-        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+        updateBillRowStockDisplay(row);
 
         const amount = qty * rate;
         const taxAmt = amount * (taxPct / 100);
@@ -386,9 +410,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
         const taxAmt = amount * (taxPct / 100);
         const grossAmt = amount + taxAmt;
 
-        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
-        const newStock = currentStock + qty;
-        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+        updateBillRowStockDisplay(row);
 
         row.querySelector('.rate-input').value = rate.toFixed(2);
         row.querySelector('.tax-amt-input').value = taxAmt.toFixed(2);
@@ -414,9 +436,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             rate = qty > 0 ? amount / qty : 0;
         }
 
-        const currentStock = parseFloat(row.querySelector('.stock-input').value) || 0;
-        const newStock = currentStock + qty;
-        row.querySelector('.new-stock-input').value = newStock.toFixed(2);
+        updateBillRowStockDisplay(row);
 
         row.querySelector('.rate-input').value = rate.toFixed(2);
         row.querySelector('.amount-input').value = amount.toFixed(2);
@@ -459,14 +479,48 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             .then(r => r.json())
             .then(data => {
                 if (data.error) return;
+                row.dataset.itemData = JSON.stringify(data);
                 row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
-                row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
-                row.querySelector('.rate-input').value = data.cost_price;
                 row.querySelector('.mrp-input').value = parseFloat(data.mrp || 0).toFixed(2);
                 row.querySelector('.tax-pct-input').value = data.tax_rate || 0;
 
+                const unitTd = row.querySelector('.unit-input').closest('td');
+                const conv = parseInt(data.units_per_case || 1);
+                const baseUnit = data.unit_name || data.unit_type || 'PCS';
+                const caseUnit = data.case_unit_name || 'CASE';
+
+                if (conv > 1) {
+                    unitTd.innerHTML = `
+                        <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="billUnitChanged(this)">
+                            <option value="${baseUnit}">${baseUnit}</option>
+                            <option value="${caseUnit}">${caseUnit} (${conv} PCS)</option>
+                        </select>
+                    `;
+                } else {
+                    unitTd.innerHTML = `<input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="${baseUnit}" readonly tabindex="-1">`;
+                }
+
+                row.querySelector('.rate-input').value = parseFloat(data.cost_price || 0).toFixed(2);
                 billCalcFromRate(row.querySelector('.qty-input'));
             });
+    }
+
+    function billUnitChanged(select) {
+        const row = select.closest('tr');
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const selectedUnit = select.value;
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+
+        let rate = parseFloat(data.cost_price || 0);
+        if (selectedUnit === caseUnit || selectedUnit === 'CASE') {
+            const casePrice = parseFloat(data.case_purchase_price || 0);
+            rate = casePrice > 0 ? casePrice : Math.round(rate * conv * 100) / 100;
+        }
+
+        row.querySelector('.rate-input').value = rate.toFixed(2);
+        billCalcFromRate(row.querySelector('.qty-input'));
     }
 
     function billCheckEnter(e) {

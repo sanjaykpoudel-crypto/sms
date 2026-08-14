@@ -258,9 +258,16 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                         $taxPct = $isNew ? 0 : $ti['tax_rate'];
                         $taxAmt = $isNew ? '0.00' : $ti['tax_amount'];
                         $grossAmt = $isNew ? '0.00' : $ti['line_total'];
-                        $unit = $isNew ? '' : ($ti['unit'] ?? '');
+                        $raw_unit = $ti['unit'] ?? '';
+                        if (!empty($raw_unit) && is_numeric($raw_unit)) {
+                            $ref = $db->fetchOne("SELECT name FROM reference_codes WHERE id = ? AND type = 'units'", [(int)$raw_unit]);
+                            if ($ref && !empty($ref['name'])) {
+                                $raw_unit = $ref['name'];
+                            }
+                        }
+                        $unit = $isNew ? '' : $raw_unit;
                         $selItem = $isNew ? '' : $ti['item_id'];
-                        $profit = $isNew ? '0.00' : (($ti['quantity'] * $ti['unit_price']) - ($ti['quantity'] * ($ti['cost_price'] ?? 0)));
+                        $profit = $isNew ? '0.00' : (isset($ti['gross_profit']) && (float)$ti['gross_profit'] != 0 ? number_format((float)$ti['gross_profit'], 2, '.', '') : number_format((float)(($ti['line_total'] - $ti['tax_amount']) - (((float)($ti['base_qty'] ?? 0) > 0 ? (float)$ti['base_qty'] : (float)$ti['quantity'] * (float)($ti['conversion_factor'] ?? 1)) * (float)($ti['cost_price'] ?? 0))), 2, '.', ''));
 
                         if (!$isNew) {
                             $init_subtotal += (float)($ti['line_total'] - $ti['tax_amount']);
@@ -539,15 +546,74 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
             .then(r => r.json())
             .then(data => {
                 if (data.error) return;
+                row.dataset.itemData = JSON.stringify(data);
                 row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
                 row.querySelector('.cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
-                row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
-                row.querySelector('.rate-input').value = data.selling_price;
                 row.querySelector('.tax-pct-input').value = data.tax_rate || 0;
 
+                const unitTd = row.querySelector('.unit-input').closest('td');
+                const conv = parseInt(data.units_per_case || 1);
+                const baseUnit = data.unit_name || data.unit_type || 'PCS';
+                const caseUnit = data.case_unit_name || 'CASE';
 
+                if (conv > 1) {
+                    unitTd.innerHTML = `
+                        <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="invoiceUnitChanged(this)">
+                            <option value="${baseUnit}">${baseUnit}</option>
+                            <option value="${caseUnit}">${caseUnit} (${conv} PCS)</option>
+                        </select>
+                    `;
+                } else {
+                    unitTd.innerHTML = `<input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;" value="${baseUnit}" readonly tabindex="-1">`;
+                }
+
+                row.querySelector('.rate-input').value = parseFloat(data.selling_price || 0).toFixed(2);
                 invoiceCalcFromRate(row.querySelector('.qty-input'));
             });
+    }
+
+    function updateInvoiceRowStockDisplay(row) {
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const unitEl = row.querySelector('.unit-input');
+        const selectedUnit = unitEl ? unitEl.value : '';
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+        const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
+
+        const baseStock = parseFloat(data.current_stock || 0);
+        const baseCost  = parseFloat(data.cost_price || 0);
+
+        if (isCase && conv > 1) {
+            row.querySelector('.stock-input').value = (baseStock / conv).toFixed(2);
+            const caseCost = parseFloat(data.case_purchase_price || 0) > 0 
+                             ? parseFloat(data.case_purchase_price) 
+                             : Math.round(baseCost * conv * 100) / 100;
+            row.querySelector('.cost-input').value = caseCost.toFixed(2);
+        } else {
+            row.querySelector('.stock-input').value = baseStock.toFixed(2);
+            row.querySelector('.cost-input').value = baseCost.toFixed(2);
+        }
+    }
+
+    function invoiceUnitChanged(select) {
+        const row = select.closest('tr');
+        if (!row.dataset.itemData) return;
+        const data = JSON.parse(row.dataset.itemData);
+        const selectedUnit = select.value;
+        const conv = parseInt(data.units_per_case || 1);
+        const caseUnit = data.case_unit_name || 'CASE';
+
+        updateInvoiceRowStockDisplay(row);
+
+        let rate = parseFloat(data.selling_price || 0);
+        if (selectedUnit === caseUnit || selectedUnit === 'CASE') {
+            const casePrice = parseFloat(data.case_selling_price || 0);
+            rate = casePrice > 0 ? casePrice : Math.round(rate * conv * 100) / 100;
+        }
+
+        row.querySelector('.rate-input').value = rate.toFixed(2);
+        invoiceCalcFromRate(row.querySelector('.qty-input'));
     }
 
     function invoiceCheckEnter(e) {
