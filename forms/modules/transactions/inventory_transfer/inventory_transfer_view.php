@@ -93,7 +93,6 @@ $company_name = function_exists('get_accounting_preference') ? (get_accounting_p
             <?php if (!empty($header['to_location_address'])): ?>
                 <div><strong>Address:</strong> <?php echo htmlspecialchars($header['to_location_address']); ?></div>
             <?php endif; ?>
-            <div><strong>Created By:</strong> <?php echo htmlspecialchars($header['creator_name'] ?? 'Administrator'); ?></div>
         </div>
     </div>
 

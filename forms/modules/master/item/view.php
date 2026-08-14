@@ -421,30 +421,13 @@ function getDiff($oldJson, $newJson) {
 
 <!-- Tab 6: System Information & Audit Logs -->
 <div id="tab-system" class="ns-tab-content">
-    <div class="detail-grid" style="margin-bottom: 30px;">
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Date Created</div>
-                <div class="detail-value"><?php echo isset($item['created_at']) ? date('F d, Y h:i A', strtotime($item['created_at'])) : 'N/A'; ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Last Modified</div>
-                <div class="detail-value"><?php echo isset($item['updated_at']) ? date('F d, Y h:i A', strtotime($item['updated_at'])) : 'N/A'; ?></div>
-            </div>
-        </div>
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Internal Item ID</div>
-                <div class="detail-value" style="font-family: monospace;"><?php echo htmlspecialchars($item['id']); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">SKU</div>
-                <div class="detail-value"><?php echo htmlspecialchars($item['sku'] ?? 'N/A'); ?></div>
-            </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px;">
+        <h3 style="margin: 0; color: var(--ns-primary);">Audit Log / Change History</h3>
+        <div style="font-size: 13px; color: #64748b;">
+            SKU: <strong style="color: #0369a1; background: #e0f2fe; padding: 2px 6px; border-radius: 4px; margin-right: 12px;"><?php echo htmlspecialchars($item['sku'] ?? 'N/A'); ?></strong>
+            Internal ID: <strong style="font-family: monospace; color: #1e293b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;"><?php echo htmlspecialchars($item['id']); ?></strong>
         </div>
     </div>
-
-    <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px; font-size: 15px; color: #1e293b;">Audit Log / Change History</h3>
     <?php if(count($audit_logs) == 0): ?>
         <p style="color: #888; font-style: italic;">No audit changes recorded yet.</p>
     <?php else: ?>

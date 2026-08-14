@@ -414,30 +414,18 @@ if (!function_exists('getItemAuditDiff')) {
 
         <!-- Tab 5: System Information -->
         <div id="tab-system" class="ns-tab-content">
-            <div class="ns-form-grid-2">
-                <div>
-                    <div class="ns-form-group" style="flex-direction: row !important; align-items: center !important; gap: 8px; margin-bottom: 18px;">
-                        <input type="checkbox" id="is_inactive" name="is_inactive" <?php echo (isset($data['is_active']) && $data['is_active'] == 0) ? 'checked' : ''; ?> style="width: 18px !important; height: 18px !important; cursor: pointer; accent-color: #e11d48;">
-                        <label for="is_inactive" class="ns-label" style="margin: 0 !important; cursor: pointer; font-weight: 600; color: #475569;">Inactive</label>
-                    </div>
-                    <div class="ns-form-group">
-                        <label class="ns-label">Item ID / Key</label>
-                        <input type="text" class="ns-input" value="<?php echo htmlspecialchars($data['id'] ?? 'Will be generated on save'); ?>" readonly style="background: #f8fafc; font-family: monospace;">
-                    </div>
-                    <div class="ns-form-group">
-                        <label class="ns-label">SKU</label>
-                        <input type="text" class="ns-input" value="<?php echo htmlspecialchars($data['sku'] ?? 'Auto-generated'); ?>" readonly style="background: #f8fafc;">
-                    </div>
+            <div style="max-width: 450px;">
+                <div class="ns-form-group" style="flex-direction: row !important; align-items: center !important; gap: 8px; margin-bottom: 18px;">
+                    <input type="checkbox" id="is_inactive" name="is_inactive" <?php echo (isset($data['is_active']) && $data['is_active'] == 0) ? 'checked' : ''; ?> style="width: 18px !important; height: 18px !important; cursor: pointer; accent-color: #e11d48;">
+                    <label for="is_inactive" class="ns-label" style="margin: 0 !important; cursor: pointer; font-weight: 600; color: #475569;">Inactive</label>
                 </div>
-                <div>
-                    <div class="ns-form-group">
-                        <label class="ns-label">Date Created</label>
-                        <input type="text" class="ns-input" value="<?php echo !empty($data['created_at']) ? date('F d, Y h:i A', strtotime($data['created_at'])) : 'N/A'; ?>" readonly style="background: #f8fafc;">
-                    </div>
-                    <div class="ns-form-group">
-                        <label class="ns-label">Last Updated</label>
-                        <input type="text" class="ns-input" value="<?php echo !empty($data['updated_at']) ? date('F d, Y h:i A', strtotime($data['updated_at'])) : 'N/A'; ?>" readonly style="background: #f8fafc;">
-                    </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">Item ID / Key</label>
+                    <input type="text" class="ns-input" value="<?php echo htmlspecialchars($data['id'] ?? 'Will be generated on save'); ?>" readonly style="background: #f8fafc; font-family: monospace;">
+                </div>
+                <div class="ns-form-group">
+                    <label class="ns-label">SKU</label>
+                    <input type="text" class="ns-input" value="<?php echo htmlspecialchars($data['sku'] ?? 'Auto-generated'); ?>" readonly style="background: #f8fafc;">
                 </div>
             </div>
 

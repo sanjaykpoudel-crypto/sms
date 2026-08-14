@@ -699,8 +699,6 @@ textarea.pm-control { height: 68px; resize: vertical; }
 
           <div class="pm-tab-content" id="tab-audit">
             <div style="font-size:13px;color:var(--text-slate);display:flex;flex-direction:column;gap:8px;">
-              <div><strong>Created By:</strong> <?php echo htmlspecialchars($data['creator_name'] ?? $data['created_by'] ?? 'Current User'); ?></div>
-              <div><strong>Created At:</strong> <?php echo !empty($data['created_at']) ? date('d M Y, H:i:s', strtotime($data['created_at'])) : date('d M Y, H:i:s'); ?></div>
               <div><strong>Status:</strong> <?php echo ucfirst($status); ?></div>
             </div>
           </div>

@@ -11,10 +11,12 @@ if (!$id) {
 $header = $db->fetchOne("
     SELECT t.*, 
            u_created.full_name as created_by_name,
+           u_updated.full_name as updated_by_name,
            COALESCE(c.full_name, v.company_name, u_party.full_name) as party_name,
            loc.name as location_name
     FROM transaction_headers t
     LEFT JOIN users u_created ON t.created_by = u_created.id
+    LEFT JOIN users u_updated ON t.updated_by = u_updated.id
     LEFT JOIN customers c ON t.party_id = c.id AND t.party_type = 'customer'
     LEFT JOIN vendors v ON t.party_id = v.id AND t.party_type = 'vendor'
     LEFT JOIN users u_party ON t.party_id = u_party.id AND t.party_type = 'user'
@@ -201,35 +203,57 @@ $payments = $db->fetchAll("
     WHERE p.applied_to_txn_id = :applied_id
 ", ['child_id' => $id, 'applied_id' => $id]);
 
-// Audit Logs
+// Audit Logs - Comprehensive multi-table query for transaction header & entity changes
+$txn_number_param = (string)($header['txn_number'] ?? '');
+$id_param = (string)$id;
 $audit_logs = $db->fetchAll("
-    SELECT al.*, COALESCE(u.full_name, al.user_id) as updated_by_name
+    SELECT al.*, COALESCE(u.full_name, al.user_id, 'System') as updated_by_name
     FROM audit_logs al
     LEFT JOIN users u ON (al.user_id = CAST(u.id AS CHAR) OR al.user_id = u.username)
-    WHERE al.record_id = :id
+    WHERE (
+        al.record_id = ? 
+        OR ( ? != '' AND al.record_id = ? )
+        OR al.record_id IN (SELECT CAST(id AS CHAR) FROM customer_invoices WHERE header_id = ?)
+        OR al.record_id IN (SELECT CAST(id AS CHAR) FROM vendor_bills WHERE header_id = ?)
+        OR al.record_id IN (SELECT CAST(id AS CHAR) FROM payments WHERE header_id = ?)
+        OR al.record_id IN (SELECT CAST(id AS CHAR) FROM expenses WHERE header_id = ?)
+    )
     ORDER BY al.created_at DESC
-", ['id' => $id]);
+", [$id_param, $txn_number_param, $txn_number_param, $id_param, $id_param, $id_param, $id_param]);
 
 function getDiff($oldJson, $newJson)
 {
-    $old = json_decode($oldJson, true) ?: [];
-    $new = json_decode($newJson, true) ?: [];
+    $old = is_array($oldJson) ? $oldJson : (json_decode((string)$oldJson, true) ?: []);
+    $new = is_array($newJson) ? $newJson : (json_decode((string)$newJson, true) ?: []);
 
-    if (!$old && $new)
-        return array_map(function ($v) {
-            return ['old' => '', 'new' => $v]; }, $new);
-    if (!$new)
-        return [];
+    if (empty($old) && !empty($new)) {
+        $res = [];
+        foreach ($new as $k => $v) {
+            if (in_array($k, ['updated_at', 'created_at', 'id', 'header_id', 'is_deleted'])) continue;
+            if (is_array($v)) $v = json_encode($v);
+            $res[$k] = ['old' => '—', 'new' => (string)$v];
+        }
+        return $res;
+    }
+
+    if (empty($new)) return [];
 
     $diff = [];
-    foreach ($new as $key => $val) {
-        $oldVal = $old[$key] ?? '';
-        // Ignore noise fields
-        if (in_array($key, ['updated_at', 'created_at', 'id', 'header_id']))
-            continue;
+    $allKeys = array_unique(array_merge(array_keys($old), array_keys($new)));
+    foreach ($allKeys as $key) {
+        if (in_array($key, ['updated_at', 'created_at', 'id', 'header_id', 'is_deleted'])) continue;
 
-        if ((string) $oldVal !== (string) $val) {
-            $diff[$key] = ['old' => $oldVal, 'new' => $val];
+        $oldVal = $old[$key] ?? '';
+        $newVal = $new[$key] ?? '';
+
+        if (is_array($oldVal)) $oldVal = json_encode($oldVal);
+        if (is_array($newVal)) $newVal = json_encode($newVal);
+
+        if ((string)$oldVal !== (string)$newVal) {
+            $diff[$key] = [
+                'old' => (string)$oldVal === '' ? '—' : (string)$oldVal,
+                'new' => (string)$newVal === '' ? '—' : (string)$newVal
+            ];
         }
     }
     return $diff;
@@ -1169,26 +1193,12 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
 
 <!-- SYSTEM INFO TAB -->
 <div class="ns-tab-content" id="tab-system">
-    <div class="detail-grid" style="margin-bottom: 30px;">
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Created By</div>
-                <div class="detail-value"><?php echo htmlspecialchars($header['created_by_name'] ?? 'System'); ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Created At</div>
-                <div class="detail-value"><?php echo date('M d, Y H:i:s', strtotime($header['created_at'])); ?></div>
-            </div>
-        </div>
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Internal ID</div>
-                <div class="detail-value" style="font-family: monospace;"><?php echo htmlspecialchars($id); ?></div>
-            </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px;">
+        <h3 style="margin: 0; color: var(--ns-primary);">System Notes / Change Log</h3>
+        <div style="font-size: 13px; color: #64748b;">
+            Internal ID: <strong style="font-family: monospace; color: #1e293b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;"><?php echo htmlspecialchars($id); ?></strong>
         </div>
     </div>
-
-    <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">System Notes / Change Log</h3>
     <?php if (count($audit_logs) == 0): ?>
         <p style="color: #888; font-style: italic;">No changes recorded yet.</p>
     <?php else: ?>
@@ -1223,15 +1233,24 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                     <?php
                     else:
                         foreach ($diffs as $field => $changes):
+                            $act_label = strtolower($log['action'] ?? 'update');
+                            $badge_bg = '#0284c7';
+                            if ($act_label === 'create' || $act_label === 'save') $badge_bg = '#16a34a';
+                            elseif ($act_label === 'delete') $badge_bg = '#dc2626';
                             ?>
                             <tr>
                                 <td><?php echo date('M d, Y H:i', strtotime($log['created_at'])); ?></td>
-                                <td><strong><?php echo htmlspecialchars($log['updated_by_name'] ?? 'System'); ?></strong></td>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($log['updated_by_name'] ?? 'System'); ?></strong>
+                                    <span class="badge" style="background: <?php echo $badge_bg; ?>; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 4px; text-transform: uppercase;">
+                                        <?php echo htmlspecialchars($log['action'] ?? 'update'); ?>
+                                    </span>
+                                </td>
                                 <td style="font-weight: 500;"><?php echo htmlspecialchars(ucwords(str_replace('_', ' ', $field))); ?>
                                 </td>
                                 <td style="color: #e74c3c; background: #fff5f5;">
                                     <del><?php echo htmlspecialchars((string) $changes['old']); ?></del></td>
-                                <td style="color: #2ecc71; background: #f0fff4; font-weight: 600;">
+                                <td style="color: #15803d; background: #f0fff4; font-weight: 600;">
                                     <?php echo htmlspecialchars((string) $changes['new']); ?></td>
                             </tr>
                         <?php endforeach; endif; endforeach; ?>

@@ -308,26 +308,12 @@ function getDiff($oldJson, $newJson) {
 
 <!-- System Information -->
 <div id="tab-system" class="ns-tab-content">
-    <div class="detail-grid" style="margin-bottom: 30px;">
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Date Created</div>
-                <div class="detail-value"><?php echo isset($user['created_at']) ? date('F d, Y h:i A', strtotime($user['created_at'])) : 'N/A'; ?></div>
-            </div>
-            <div class="detail-group">
-                <div class="detail-label">Last Login</div>
-                <div class="detail-value"><?php echo isset($user['last_login']) && $user['last_login'] ? date('F d, Y h:i A', strtotime($user['last_login'])) : 'Never logged in'; ?></div>
-            </div>
-        </div>
-        <div>
-            <div class="detail-group">
-                <div class="detail-label">Internal ID</div>
-                <div class="detail-value" style="font-family: monospace;"><?php echo $user['id']; ?></div>
-            </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px;">
+        <h3 style="margin: 0; color: var(--ns-primary);">System Notes / Change Log</h3>
+        <div style="font-size: 13px; color: #64748b;">
+            Internal ID: <strong style="font-family: monospace; color: #1e293b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;"><?php echo htmlspecialchars($user['id']); ?></strong>
         </div>
     </div>
-
-    <h3 style="border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;">System Notes / Change Log</h3>
     <?php if(count($audit_logs) == 0): ?>
         <p style="color: #888; font-style: italic;">No changes recorded yet.</p>
     <?php else: ?>

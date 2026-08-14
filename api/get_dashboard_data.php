@@ -811,70 +811,40 @@ $vat_purch_row = $db->fetchOne("
     WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
 ", [$month_start, $month_end]);
 
-// ── 4d. Monthly Comparatives ──
-$m_sales = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(ci.total_amount), 0) as total FROM customer_invoices ci
-    JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$month_start, $month_end])['total'] ?? 0);
-$m_sales_last = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(ci.total_amount), 0) as total FROM customer_invoices ci
-    JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$last_m_start, $last_m_end])['total'] ?? 0);
+// ── 4d. Monthly Comparatives & Fiscal Year Comparatives (Central Report Engine) ──
+$pnl_this_m = re_get_pnl($db, $month_start, $month_end, $selected_location_id);
+$pnl_last_m = re_get_pnl($db, $last_m_start, $last_m_end, $selected_location_id);
+$pnl_fy     = re_get_pnl($db, $fy_start, $today, $selected_location_id);
+
+$m_sales       = round($pnl_this_m['total_revenue'], 2);
+$m_sales_last  = round($pnl_last_m['total_revenue'], 2);
+
 $m_purch = (float)($db->fetchOne("
     SELECT COALESCE(SUM(vb.total_amount), 0) as total FROM vendor_bills vb
     JOIN transaction_headers h ON vb.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$month_start, $month_end])['total'] ?? 0);
+
 $m_purch_last = (float)($db->fetchOne("
     SELECT COALESCE(SUM(vb.total_amount), 0) as total FROM vendor_bills vb
     JOIN transaction_headers h ON vb.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$last_m_start, $last_m_end])['total'] ?? 0);
 
-$m_expenses = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(e.amount), 0) as total FROM expenses e
-    JOIN transaction_headers h ON e.header_id = h.id
-    WHERE e.expense_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$month_start, $month_end])['total'] ?? 0);
-$m_expenses_last = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(e.amount), 0) as total FROM expenses e
-    JOIN transaction_headers h ON e.header_id = h.id
-    WHERE e.expense_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$last_m_start, $last_m_end])['total'] ?? 0);
+$m_expenses      = round($pnl_this_m['total_expenses'], 2);
+$m_expenses_last = round($pnl_last_m['total_expenses'], 2);
 
-$m_profit = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(l.gross_profit), 0) as profit FROM transaction_lines l
-    JOIN transaction_headers h ON l.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' AND h.txn_type = 'customer_invoice' {$loc_sql_h}
-", [$month_start, $month_end])['profit'] ?? 0);
-$m_profit_last = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(l.gross_profit), 0) as profit FROM transaction_lines l
-    JOIN transaction_headers h ON l.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' AND h.txn_type = 'customer_invoice' {$loc_sql_h}
-", [$last_m_start, $last_m_end])['profit'] ?? 0);
+$m_profit      = round($pnl_this_m['gross_profit'], 2);
+$m_profit_last = round($pnl_last_m['gross_profit'], 2);
 
-$fy_sales = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(ci.total_amount), 0) as total FROM customer_invoices ci
-    JOIN transaction_headers h ON ci.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$fy_start, $today])['total'] ?? 0);
+$fy_sales     = round($pnl_fy['total_revenue'], 2);
 $fy_purchases = (float)($db->fetchOne("
     SELECT COALESCE(SUM(vb.total_amount), 0) as total FROM vendor_bills vb
     JOIN transaction_headers h ON vb.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$fy_start, $today])['total'] ?? 0);
-$fy_expenses = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(e.amount), 0) as total FROM expenses e
-    JOIN transaction_headers h ON e.header_id = h.id
-    WHERE e.expense_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
-", [$fy_start, $today])['total'] ?? 0);
-$fy_profit = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(l.gross_profit), 0) as profit FROM transaction_lines l
-    JOIN transaction_headers h ON l.header_id = h.id
-    WHERE h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status != 'voided' AND h.txn_type = 'customer_invoice' {$loc_sql_h}
-", [$fy_start, $today])['profit'] ?? 0);
+$fy_expenses  = round($pnl_fy['total_expenses'], 2);
+$fy_profit    = round($pnl_fy['gross_profit'], 2);
 
 // ══════════════════════════════════════════════════════════════════
 // 5. CUSTOMER & SUPPLIER INSIGHTS
