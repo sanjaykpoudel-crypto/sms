@@ -49,6 +49,7 @@ try {
 
     $fiscal = calculate_fiscal_info($txn_date);
 
+    $existing_hdr = null;
     if (empty($id)) {
         $id = generate_uuid();
         $txn_number = getNextTransactionNumber('expense', $location_id);
@@ -62,9 +63,10 @@ try {
         incrementTransactionNumber('expense');
     } else {
         // Update
-        $txn_number = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id])['txn_number'] ?? 'EXP-Unknown';
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, party_id = ?, net_amount = ?, location_id = ? WHERE id = ?", [
-            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $party_id, $net_amount, $location_id, $id
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
+        $txn_number = $existing_hdr['txn_number'] ?? 'EXP-Unknown';
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, party_id = ?, net_amount = ?, location_id = ?, updated_by = ? WHERE id = ?", [
+            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $party_id, $net_amount, $location_id, $_SESSION['user_id'], $id
         ]);
         
         // Clean up old entries
@@ -88,6 +90,8 @@ try {
     $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
         generate_uuid(), $id, $paid_from_account_id, 'credit', $net_amount, 'Expense ' . $txn_number . ': ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $party_id, 'user'
     ]);
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $net_amount, 'memo' => $memo, 'status' => 'posted']);
 
     $pdo->commit();
     clear_dashboard_cache();

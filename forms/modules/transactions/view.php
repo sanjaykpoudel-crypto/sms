@@ -221,6 +221,28 @@ $audit_logs = $db->fetchAll("
     ORDER BY al.created_at DESC
 ", [$id_param, $txn_number_param, $txn_number_param, $id_param, $id_param, $id_param, $id_param]);
 
+if (empty($audit_logs) && !empty($header)) {
+    $audit_logs = [
+        [
+            'id' => 'synth-create',
+            'table_name' => 'transaction_headers',
+            'action' => 'create',
+            'record_id' => (string)$id,
+            'old_values' => null,
+            'new_values' => json_encode([
+                'txn_number' => $header['txn_number'] ?? '',
+                'txn_type'   => ucwords(str_replace('_', ' ', $header['txn_type'] ?? '')),
+                'amount'     => (float)($header['net_amount'] ?? 0),
+                'status'     => ucfirst($header['status'] ?? 'posted'),
+                'memo'       => $header['memo'] ?? ''
+            ]),
+            'user_id' => $header['created_by'] ?? '1',
+            'updated_by_name' => $header['created_by_name'] ?? 'System',
+            'created_at' => $header['created_at'] ?? date('Y-m-d H:i:s')
+        ]
+    ];
+}
+
 function getDiff($oldJson, $newJson)
 {
     $old = is_array($oldJson) ? $oldJson : (json_decode((string)$oldJson, true) ?: []);

@@ -150,11 +150,12 @@ try {
 
         incrementTransactionNumber('vendor_credit');
     } else {
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
         $db->execute("
             UPDATE transaction_headers 
-            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ?
+            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ?, updated_by = ?
             WHERE id = ?
-        ", [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $grand_total, $vendor_id, $location_id, $id]);
+        ", [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $grand_total, $vendor_id, $location_id, $user_id, $id]);
 
         $db->execute("
             UPDATE vendor_credits 
@@ -213,6 +214,8 @@ try {
             VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)
         ", [generate_uuid(), $id, $tax_account_id, $tax_total, 'Vendor Credit Tax Reversal - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
     }
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $grand_total, 'party_id' => $vendor_id, 'memo' => $memo, 'status' => 'open'], $user_id);
 
     $pdo->commit();
 

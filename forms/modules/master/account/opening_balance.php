@@ -3,8 +3,8 @@ require_once 'database/DBConnection.php';
 require_once 'api/reference_helper.php';
 $db = db();
 
-// Fetch all bank and cash accounts
-$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_subtype IN ('Bank') AND is_deleted = 0 AND is_active = 1 ORDER BY account_name ASC");
+// Fetch all Bank, Cash, Asset, Liability, and Equity accounts
+$accounts = $db->fetchAll("SELECT * FROM accounts WHERE account_type IN ('asset', 'liability', 'equity') AND is_deleted = 0 AND is_active = 1 ORDER BY FIELD(account_type, 'asset', 'liability', 'equity'), account_name ASC");
 
 // Fetch existing opening balances transaction date and location if any
 $opening_txn = $db->fetchOne("SELECT txn_date, location_id FROM transaction_headers WHERE txn_number = 'OPENING-BALANCES'");
@@ -12,7 +12,7 @@ $opening_date = $opening_txn ? $opening_txn['txn_date'] : (date('Y') . '-01-01')
 $opening_location_id = (!empty($opening_txn) && !empty($opening_txn['location_id'])) ? $opening_txn['location_id'] : get_user_default_location_id();
 ?>
 <div class="ns-form-header">
-    <div class="ns-form-title">Bank Opening Balances</div>
+    <div class="ns-form-title">Account Opening Balances</div>
     <div class="ns-page-actions">
         <button type="submit" form="opening-balances-form" class="ns-btn ns-btn-primary">Save Balances</button>
         <a href="?page=master/account" class="ns-btn">Cancel</a>
@@ -21,9 +21,9 @@ $opening_location_id = (!empty($opening_txn) && !empty($opening_txn['location_id
 
 <div class="ns-form-container">
     <form id="opening-balances-form" method="POST" action="api/save_opening_balances.php">
-        <div class="ns-section-title">Set Opening Balances for Bank Accounts</div>
+        <div class="ns-section-title">Set Opening Balances for System Accounts</div>
         <p class="ns-text-muted" style="margin-bottom: 20px; font-size: 13px;">
-            Enter the opening balance for each bank account. Positive amounts are Debits. 
+            Enter the opening balance for each account. Positive amounts follow the account's normal balance (Debit for Assets, Credit for Liabilities/Equity). 
             An offsetting entry will be automatically generated to the **Opening Balance** account (`open`) to ensure double-entry accounting is balanced.
         </p>
 

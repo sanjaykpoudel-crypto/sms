@@ -713,6 +713,22 @@ function logAudit($table, $action, $old, $new, $refId, $userId, $pdo)
     $pdo->prepare(
         "INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES (?, ?, ?, ?, ?, ?)"
     )->execute([$table, $action, (string)$refId, json_encode($old), json_encode($new), $userId !== null ? (string)$userId : null]);
+
+    if (in_array(strtolower($action), ['update', 'save', 'create']) && !empty($refId)) {
+        try {
+            if ($table === 'transaction_headers') {
+                $pdo->prepare("UPDATE transaction_headers SET updated_by = ? WHERE id = ?")->execute([$userId, $refId]);
+            } elseif ($table === 'items') {
+                $pdo->prepare("UPDATE items SET updated_by = ? WHERE id = ?")->execute([$userId, $refId]);
+            } elseif ($table === 'customers') {
+                $pdo->prepare("UPDATE customers SET updated_by = ? WHERE id = ?")->execute([$userId, $refId]);
+            } elseif ($table === 'vendors') {
+                $pdo->prepare("UPDATE vendors SET updated_by = ? WHERE id = ?")->execute([$userId, $refId]);
+            } elseif ($table === 'users') {
+                $pdo->prepare("UPDATE users SET updated_by = ? WHERE id = ?")->execute([$userId, $refId]);
+            }
+        } catch (Throwable $e) {}
+    }
 }
 
 /**

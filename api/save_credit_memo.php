@@ -237,7 +237,14 @@ try {
         ", [generate_uuid(), $id, $cogs_account_id, $total_cogs_valuation, 'Credit Memo COGS Reversal CR - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
     }
 
-    $pdo->commit();
+        // Record audit log for System Notes / Change Log
+        $action = $is_edit ? 'update' : 'create';
+        $db->execute("
+            INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id)
+            VALUES ('transaction_headers', ?, ?, ?, ?, ?)
+        ", [$action, (string)$id, json_encode($existing_cm ?? []), json_encode(['txn_number' => $txn_number, 'amount' => $gross_total, 'customer_id' => $customer_id, 'memo' => $memo]), $user_id]);
+
+        $pdo->commit();
 
     recalculate_document_payment_status($id, $pdo);
 

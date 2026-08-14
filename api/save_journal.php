@@ -64,8 +64,11 @@ try {
 
     $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : get_user_default_location_id();
 
+    $existing_hdr = null;
     if (!$id) {
         $id = generate_uuid();
+        $txn_number = getNextTransactionNumber('journal_entry', $location_id);
+
         $db->execute(
             "INSERT INTO transaction_headers
                 (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, net_amount, created_by, location_id)
@@ -74,9 +77,10 @@ try {
         );
         incrementTransactionNumber('journal_entry');
     } else {
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
         $db->execute(
-            "UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, net_amount = ?, location_id = ? WHERE id = ?",
-            [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $location_id, $id]
+            "UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, net_amount = ?, location_id = ?, updated_by = ? WHERE id = ?",
+            [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $location_id, $_SESSION['user_id'], $id]
         );
         $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
     }
@@ -152,6 +156,8 @@ try {
             $db->execute("UPDATE accounts SET opening_balance = ? WHERE id = ?", [$net_bal, $acc_id]);
         }
     }
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $total_debit, 'memo' => $memo, 'status' => 'posted']);
 
     $pdo->commit();
     clear_dashboard_cache();

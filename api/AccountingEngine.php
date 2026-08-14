@@ -116,22 +116,59 @@ class AccountingEngine
         // 4. Accounting Preferences / system_info (Effective-dated match)
         $prefAccountId = $this->getPreferenceAccountId($preferenceKey, $locationId, $asOfDate);
         if ($prefAccountId !== null) {
-            return $prefAccountId;
+            $legacyMap = [
+                'acc-1010' => 2,  // Cash
+                'acc-1100' => 6,  // AR
+                'acc-1200' => 7,  // Inventory Asset
+                'acc-2100' => 12, // AP
+                'acc-4100' => 25, // Sales
+                'acc-5100' => 26, // COGS
+                'acc-6160' => 36, // Discount
+                'acc-2200' => 13, // Tax
+            ];
+            if (isset($legacyMap[$prefAccountId])) {
+                $prefAccountId = $legacyMap[$prefAccountId];
+            }
+            return is_numeric($prefAccountId) ? (int)$prefAccountId : $prefAccountId;
         }
 
-        // 5. Default Fallbacks for core preference keys
+        // 5. Default Fallbacks for core preference keys (using real integer IDs from accounts table)
         $defaults = [
-            'default_cash_account'            => 'acc-1010',
-            'default_ar_account'              => 'acc-1100',
-            'default_inventory_asset_account' => 'acc-1200',
-            'default_ap_account'              => 'acc-2100',
-            'default_sales_account'           => 'acc-4100',
-            'default_cogs_account'            => 'acc-5100',
-            'default_discount_account'        => 'acc-6160',
-            'default_tax_account'             => 'acc-2200',
+            'default_cash_account'            => 2,  // Cash
+            'default_ar_account'              => 6,  // Accounts Receivable
+            'default_inventory_asset_account' => 7,  // Inventory Asset
+            'default_ap_account'              => 12, // Accounts Payable
+            'default_sales_account'           => 25, // Sales Income
+            'default_cogs_account'            => 26, // Cost of Goods Sold
+            'default_discount_account'        => 36, // Discounts Given
+            'default_tax_account'             => 13, // VAT Payable
+            'default_sales_return_account'    => 25, // Sales Income
+            'default_purchase_return_account' => 26, // Cost of Goods Sold
+            'default_drawings_account'        => 39, // Owner Drawings
+            'default_interest_account'        => 40, // Interest Expense
+            'default_freight_account'         => 41, // Freight-In & Transport Cost
         ];
-        if (isset($defaults[$preferenceKey])) {
-            return $defaults[$preferenceKey];
+        
+        $resolvedAcc = $defaults[$preferenceKey] ?? null;
+
+        // Legacy code mapping if string codes are returned
+        $legacyMap = [
+            'acc-1010' => 2,  // Cash
+            'acc-1100' => 6,  // AR
+            'acc-1200' => 7,  // Inventory Asset
+            'acc-2100' => 12, // AP
+            'acc-4100' => 25, // Sales
+            'acc-5100' => 26, // COGS
+            'acc-6160' => 36, // Discount
+            'acc-2200' => 13, // Tax
+        ];
+
+        if (isset($legacyMap[$resolvedAcc])) {
+            $resolvedAcc = $legacyMap[$resolvedAcc];
+        }
+
+        if ($resolvedAcc !== null) {
+            return (int)$resolvedAcc;
         }
 
         throw new AccountingException("Accounting account for preference key '{$preferenceKey}' is not configured.");
@@ -144,40 +181,51 @@ class AccountingEngine
     {
         $asOfDate = $asOfDate ?: date('Y-m-d');
         
-        // 1. Check erp_accounting_preferences (location specific)
-        if ($locationId) {
+        $keysToTry = [$preferenceKey];
+        if ($preferenceKey === 'default_sales_return_account') {
+            $keysToTry[] = 'default_sales_account';
+            $keysToTry[] = 'default_income_account';
+        } elseif ($preferenceKey === 'default_purchase_return_account') {
+            $keysToTry[] = 'default_purchase_account';
+            $keysToTry[] = 'default_cogs_account';
+        }
+
+        foreach ($keysToTry as $pk) {
+            // 1. Check erp_accounting_preferences (location specific)
+            if ($locationId) {
+                try {
+                    $sql = "SELECT account_id FROM erp_accounting_preferences 
+                            WHERE preference_key = ? AND location_id = ? AND is_active = 1 
+                              AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+                            ORDER BY effective_from DESC LIMIT 1";
+                    $stmt = $this->pdo->prepare($sql);
+                    $stmt->execute([$pk, $locationId, $asOfDate, $asOfDate]);
+                    $accId = $stmt->fetchColumn();
+                    if (!empty($accId)) return $accId;
+                } catch (Exception $e) {}
+            }
+
+            // 2. Check erp_accounting_preferences (global)
             try {
                 $sql = "SELECT account_id FROM erp_accounting_preferences 
-                        WHERE preference_key = ? AND location_id = ? AND is_active = 1 
+                        WHERE preference_key = ? AND (location_id IS NULL OR location_id = 0) AND is_active = 1 
                           AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
                         ORDER BY effective_from DESC LIMIT 1";
                 $stmt = $this->pdo->prepare($sql);
-                $stmt->execute([$preferenceKey, $locationId, $asOfDate, $asOfDate]);
+                $stmt->execute([$pk, $asOfDate, $asOfDate]);
                 $accId = $stmt->fetchColumn();
                 if (!empty($accId)) return $accId;
             } catch (Exception $e) {}
+
+            // 3. Fallback to system_info operational table
+            try {
+                $sql = "SELECT meta_value FROM system_info WHERE meta_field = ? LIMIT 1";
+                $stmt = $this->pdo->prepare($sql);
+                $stmt->execute([$pk]);
+                $val = $stmt->fetchColumn();
+                if (!empty($val)) return $val;
+            } catch (Exception $e) {}
         }
-
-        // 2. Check erp_accounting_preferences (global)
-        try {
-            $sql = "SELECT account_id FROM erp_accounting_preferences 
-                    WHERE preference_key = ? AND (location_id IS NULL OR location_id = 0) AND is_active = 1 
-                      AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
-                    ORDER BY effective_from DESC LIMIT 1";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$preferenceKey, $asOfDate, $asOfDate]);
-            $accId = $stmt->fetchColumn();
-            if (!empty($accId)) return $accId;
-        } catch (Exception $e) {}
-
-        // 3. Fallback to system_info operational table
-        try {
-            $sql = "SELECT meta_value FROM system_info WHERE meta_field = ? LIMIT 1";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([$preferenceKey]);
-            $val = $stmt->fetchColumn();
-            if (!empty($val)) return $val;
-        } catch (Exception $e) {}
 
         return null;
     }

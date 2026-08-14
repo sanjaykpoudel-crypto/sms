@@ -661,8 +661,13 @@ if ($is_logged_in) {
                     <i class="fas fa-magic"></i> AI Assistant
                 </button>
             </div>
-            <div style="display: flex; align-items: center; gap: 20px;">
-                <div style="text-align: right; margin-right: 15px;">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <!-- Help Center Link (before user name) -->
+                <a href="?page=help_center" title="ERP Help Center & Comprehensive Documentation" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: white; padding: 4px 12px; border-radius: 14px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; backdrop-filter: blur(4px); transition: all 0.2s; margin-right: 5px; text-decoration: none;" onmouseover="this.style.background='rgba(255,255,255,0.25)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.background='rgba(255,255,255,0.15)'; this.style.transform='translateY(0)';">
+                    <i class="fas fa-question-circle" style="color: #f59e0b; font-size: 13px;"></i>
+                    <span>Help Center</span>
+                </a>
+                <div style="text-align: right; margin-right: 10px;">
                     <?php
                     // Determine display name: prefer full_name, fallback to username
                     $displayName = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
@@ -1066,6 +1071,7 @@ if ($is_logged_in) {
                         'payment_manage' => 'transactions/payment/manage',
                         'customer_payment_register' => 'transactions/payment/customer_payments',
                         'vendor_payment_register' => 'transactions/payment/vendor_payments',
+                        'help_center' => 'system/help_center',
                     ];
                     if (isset($pageAliases[$page])) {
                         $page = $pageAliases[$page];
@@ -1640,6 +1646,132 @@ if ($is_logged_in) {
                 });
             }, 250);
         }
+    </script>
+
+    <!-- Help Center Modal -->
+    <div id="help-center-modal" style="display: none; position: fixed; z-index: 10003; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.65); justify-content: center; align-items: center; backdrop-filter: blur(4px);">
+        <div style="background: #ffffff; width: 740px; max-width: 94%; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.35); overflow: hidden; font-family: inherit; max-height: 88vh; display: flex; flex-direction: column;">
+            <div style="background: linear-gradient(135deg, #0f172a, #1e293b); padding: 18px 24px; color: white; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-question-circle" style="font-size: 22px; color: #f59e0b;"></i>
+                    <div>
+                        <h3 style="margin: 0; font-size: 17px; font-weight: 700;">ERP Help Center & User Guides</h3>
+                        <p style="margin: 2px 0 0 0; font-size: 11px; color: #94a3b8;">Search documentation, quick workflows, and system guides</p>
+                    </div>
+                </div>
+                <button onclick="closeHelpCenterModal()" style="background: none; border: none; color: #94a3b8; font-size: 22px; cursor: pointer;" onmouseover="this.style.color='white'" onmouseout="this.style.color='#94a3b8'">&times;</button>
+            </div>
+            
+            <div style="padding: 16px 24px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                <div style="position: relative;">
+                    <i class="fas fa-search" style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 14px;"></i>
+                    <input type="text" id="help-search-input" onkeyup="filterHelpTopics(this.value)" placeholder="Search help articles (e.g. POS, Journal, Invoice, Stock, Credit Memo)..." style="width: 100%; padding: 10px 14px 10px 38px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#cbd5e1'">
+                </div>
+            </div>
+
+            <div style="padding: 20px 24px; overflow-y: auto; flex: 1;">
+                <div id="help-topics-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+                    
+                    <div class="help-card" data-keywords="pos sales counter retail rollups receipts" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #0284c7; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-cash-register"></i> POS & Counter Retail Sales
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Process fast retail sales, manage cash drops, print customer receipts, and view daily sales rollups without manual double-counting.</p>
+                        <a href="?page=transactions/pos" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #0284c7; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">Open POS Terminal <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                    <div class="help-card" data-keywords="journal entry voucher general ledger opening balance retained earnings" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #d97706; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-book"></i> Journal Vouchers & General Ledger
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Post manual double-entry journal vouchers (`Debit == Credit`), audit adjustments, and view complete period GL movement.</p>
+                        <a href="?page=transactions/journal" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #d97706; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">View Journal Entries <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                    <div class="help-card" data-keywords="invoice customer receivables ar sale payment terms credit" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #16a34a; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-file-invoice-dollar"></i> Customer Invoices & Receivables (AR)
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Create direct B2B invoices, set credit limits and payment terms, track overdue payments, and process customer receipts.</p>
+                        <a href="?page=transactions/invoice" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #16a34a; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">View Customer Invoices <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                    <div class="help-card" data-keywords="credit memo return customer refund restock stock" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #dc2626; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-undo"></i> Credit Memos & Customer Returns
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Issue customer credit memos for returned or damaged goods, automatically restock item inventory, and reverse revenue/COGS.</p>
+                        <a href="?page=transactions/credit_memo" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #dc2626; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">View Credit Memos <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                    <div class="help-card" data-keywords="vendor bill purchase payables ap purchase order supplier" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #9333ea; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-file-bill"></i> Vendor Bills & Purchases (AP)
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Post vendor bills, track supplier accounts payable, record payment disbursements, and manage vendor credit limits.</p>
+                        <a href="?page=transactions/bill" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #9333ea; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">View Vendor Bills <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                    <div class="help-card" data-keywords="inventory stock valuation transfer adjustment cost price" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; transition: all 0.2s;">
+                        <h4 style="margin: 0 0 8px 0; color: #0d9488; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-boxes"></i> Inventory & Warehouse Management
+                        </h4>
+                        <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748b; line-height: 1.5;">Manage item masters, monitor moving-average unit costs, record inter-location transfers, and execute stock adjustments.</p>
+                        <a href="?page=reports/inventory/stock_summary" onclick="closeHelpCenterModal()" style="font-size: 11px; font-weight: 600; color: #0d9488; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">View Stock Summary <i class="fas fa-arrow-right"></i></a>
+                    </div>
+
+                </div>
+                
+                <!-- Keyboard Shortcuts Section -->
+                <div style="margin-top: 24px; background: #f1f5f9; border-radius: 10px; padding: 16px;">
+                    <h5 style="margin: 0 0 10px 0; font-size: 13px; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+                        <i class="fas fa-keyboard" style="color: #64748b;"></i> Keyboard Shortcuts
+                    </h5>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 12px; color: #475569;">
+                        <div><kbd style="background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px;">Alt + S</kbd> Global Search</div>
+                        <div><kbd style="background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px;">Alt + A</kbd> AI Assistant</div>
+                        <div><kbd style="background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px;">Alt + H</kbd> Help Center</div>
+                        <div><kbd style="background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px;">Esc</kbd> Close Dialogs</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #64748b;">
+                <div><i class="fas fa-shield-alt" style="color: #10b981; margin-right: 4px;"></i> System Status: <strong style="color: #10b981;">Operational</strong></div>
+                <button onclick="closeHelpCenterModal()" class="ns-btn ns-btn-primary" style="padding: 6px 18px; font-size: 12px;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openHelpCenterModal() {
+            document.getElementById('help-center-modal').style.display = 'flex';
+            document.getElementById('help-search-input').focus();
+        }
+
+        function closeHelpCenterModal() {
+            document.getElementById('help-center-modal').style.display = 'none';
+        }
+
+        function filterHelpTopics(q) {
+            q = q.toLowerCase().trim();
+            document.querySelectorAll('.help-card').forEach(card => {
+                const kw = card.getAttribute('data-keywords').toLowerCase();
+                const txt = card.innerText.toLowerCase();
+                if (!q || kw.includes(q) || txt.includes(q)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.altKey && (e.key === 'h' || e.key === 'H')) {
+                e.preventDefault();
+                openHelpCenterModal();
+            }
+        });
     </script>
 </body>
 

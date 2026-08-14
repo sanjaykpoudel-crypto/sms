@@ -1133,25 +1133,36 @@ function sync_daily_pos_summary($date)
         ->execute([$payment_header_id, $ar_account, $summary_total, 'POS Daily Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
 
     // 5. Update transaction_headers with the correct net_amount and customer
-    $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ? WHERE id = ?")
-        ->execute([$summary_total, $customer_id, $invoice_header_id]);
-    $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ? WHERE id = ?")
-        ->execute([$summary_total, $customer_id, $payment_header_id]);
+    $old_inv_hdr = $db->fetchOne("SELECT net_amount FROM transaction_headers WHERE id = ?", [$invoice_header_id]);
+    $old_pay_hdr = $db->fetchOne("SELECT net_amount FROM transaction_headers WHERE id = ?", [$payment_header_id]);
+
+    $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ?, updated_by = ? WHERE id = ?")
+        ->execute([$summary_total, $customer_id, $user_id, $invoice_header_id]);
+    $pdo->prepare("UPDATE transaction_headers SET net_amount = ?, party_id = ?, updated_by = ? WHERE id = ?")
+        ->execute([$summary_total, $customer_id, $user_id, $payment_header_id]);
 
     // 6. Record audit logs for daily POS rollup invoice & payment headers
-    $log_inv_info = json_encode(['txn_number' => $summary_invoice_no, 'amount' => $summary_total, 'type' => 'daily_pos_rollup']);
-    $log_pay_info = json_encode(['txn_number' => $summary_payment_no, 'amount' => $summary_total, 'type' => 'daily_pos_rollup']);
+    $log_inv_info = json_encode(['txn_number' => $summary_invoice_no, 'amount' => (float)$summary_total, 'type' => 'daily_pos_rollup']);
+    $log_pay_info = json_encode(['txn_number' => $summary_payment_no, 'amount' => (float)$summary_total, 'type' => 'daily_pos_rollup']);
 
     $inv_has_log = $db->fetchOne("SELECT id FROM audit_logs WHERE record_id = ?", [$invoice_header_id]);
     if (!$inv_has_log) {
         $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'create', ?, NULL, ?, ?)")
             ->execute([$invoice_header_id, $log_inv_info, $user_id]);
+    } else if ($old_inv_hdr && (float)$old_inv_hdr['net_amount'] != (float)$summary_total) {
+        $old_inv_info = json_encode(['txn_number' => $summary_invoice_no, 'amount' => (float)$old_inv_hdr['net_amount'], 'type' => 'daily_pos_rollup']);
+        $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'update', ?, ?, ?, ?)")
+            ->execute([$invoice_header_id, $old_inv_info, $log_inv_info, $user_id]);
     }
 
     $pay_has_log = $db->fetchOne("SELECT id FROM audit_logs WHERE record_id = ?", [$payment_header_id]);
     if (!$pay_has_log) {
         $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'create', ?, NULL, ?, ?)")
             ->execute([$payment_header_id, $log_pay_info, $user_id]);
+    } else if ($old_pay_hdr && (float)$old_pay_hdr['net_amount'] != (float)$summary_total) {
+        $old_pay_info = json_encode(['txn_number' => $summary_payment_no, 'amount' => (float)$old_pay_hdr['net_amount'], 'type' => 'daily_pos_rollup']);
+        $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', 'update', ?, ?, ?, ?)")
+            ->execute([$payment_header_id, $old_pay_info, $log_pay_info, $user_id]);
     }
 }
 
@@ -1413,7 +1424,7 @@ function check_page_access($page)
         session_start();
     }
     $role = $_SESSION['role'] ?? '';
-    if ($role === 'admin' || $page === 'home' || $page === 'home-v3') {
+    if ($role === 'admin' || $page === 'home' || $page === 'home-v3' || $page === 'help_center' || $page === 'system/help_center') {
         return true;
     }
 
@@ -2109,7 +2120,47 @@ if (!function_exists('check_period_lock')) {
 
         if ($fy) {
             $st = strtoupper($fy['status']);
-            throw new Exception("Transaction blocked: Date {$txn_date} falls in Fiscal Year '{$fy['name']}' which is {$st}.");
+            throw new Exception("Transaction blocked: Date {$txn_date} falls in a Fiscal Year '{$fy['fy_name']}' which is {$st}.");
+        }
+    }
+}
+
+/**
+ * Universal Audit Logging Helper for All System Entities & Transactions.
+ * Records CREATE, UPDATE, and DELETE actions into audit_logs and updates updated_by column.
+ */
+if (!function_exists('log_audit')) {
+    function log_audit(string $tableName, string $action, string|int $recordId, ?array $oldValues = null, ?array $newValues = null, ?int $userId = null): void
+    {
+        try {
+            $db = db();
+            $pdo = $db->getPdo();
+            $userId = $userId ?: ($_SESSION['user_id'] ?? 1);
+
+            $oldJson = !empty($oldValues) ? json_encode($oldValues) : null;
+            $newJson = !empty($newValues) ? json_encode($newValues) : null;
+
+            $stmt = $pdo->prepare("
+                INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $stmt->execute([$tableName, strtolower($action), (string)$recordId, $oldJson, $newJson, $userId]);
+
+            if (in_array(strtolower($action), ['update', 'create'])) {
+                if ($tableName === 'transaction_headers') {
+                    $pdo->prepare("UPDATE transaction_headers SET updated_by = ? WHERE id = ?")->execute([$userId, $recordId]);
+                } elseif ($tableName === 'items') {
+                    $pdo->prepare("UPDATE items SET updated_by = ? WHERE id = ?")->execute([$userId, $recordId]);
+                } elseif ($tableName === 'customers') {
+                    $pdo->prepare("UPDATE customers SET updated_by = ? WHERE id = ?")->execute([$userId, $recordId]);
+                } elseif ($tableName === 'vendors') {
+                    $pdo->prepare("UPDATE vendors SET updated_by = ? WHERE id = ?")->execute([$userId, $recordId]);
+                } elseif ($tableName === 'users') {
+                    $pdo->prepare("UPDATE users SET updated_by = ? WHERE id = ?")->execute([$userId, $recordId]);
+                }
+            }
+        } catch (Throwable $e) {
+            @file_put_contents(sys_get_temp_dir() . '/audit_error.log', date('Y-m-d H:i:s') . ' - log_audit: ' . $e->getMessage() . "\n", FILE_APPEND);
         }
     }
 }

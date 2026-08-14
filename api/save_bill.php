@@ -62,6 +62,7 @@ try {
 
     $fiscal = calculate_fiscal_info($txn_date);
 
+    $existing_hdr = null;
     if (!$id) {
         $id = generate_uuid();
         $db->execute("INSERT INTO transaction_headers (id, txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, reference_number, memo, created_by, location_id) 
@@ -72,8 +73,9 @@ try {
         ]);
         incrementTransactionNumber('vendor_bill');
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, status = ?, location_id = ? WHERE id = ?", [
-            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $status, $location_id, $id
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, status = ?, location_id = ?, updated_by = ? WHERE id = ?", [
+            $txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $status, $location_id, $_SESSION['user_id'], $id
         ]);
         
         // Reverse old stock via InventoryEngine
@@ -234,6 +236,8 @@ try {
             ]);
         }
     }
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $grand_total, 'party_id' => $party_id, 'status' => $status, 'memo' => $memo]);
 
     $pdo->commit();
     // Sync inventory balances (stock + cost) across all locations for each affected item

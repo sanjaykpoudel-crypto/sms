@@ -93,11 +93,12 @@ try {
         ]);
         incrementTransactionNumber('inventory_adjustment');
     } else {
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
         // Reverse previous stock changes via InventoryEngine
         InventoryEngine::getInstance()->reverseMovementsForHeader($id, 'Inventory Adjustment Edit Reversal');
 
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ? WHERE id = ?", [
-            $txn_date, $memo, $net_amount, $adjustment_account_id, $first_location_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ?, updated_by = ? WHERE id = ?", [
+            $txn_date, $memo, $net_amount, $adjustment_account_id, $first_location_id, $_SESSION['user_id'], $id
         ]);
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
@@ -168,6 +169,8 @@ try {
     if (function_exists('sync_daily_pos_summary')) {
         sync_daily_pos_summary($txn_date);
     }
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $net_amount, 'memo' => $memo, 'status' => 'posted']);
 
     $pdo->commit();
     clear_dashboard_cache();

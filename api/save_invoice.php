@@ -298,9 +298,9 @@ try {
     // If payment status is paid/partial/unpaid, update the transaction header status, net_amount, and party_id to match
     if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
         $status = ($payment_status === 'paid') ? 'paid' : (($payment_status === 'partial') ? 'partial' : 'open');
-        $db->execute("UPDATE transaction_headers SET status = ?, net_amount = ?, party_id = ?, party_type = 'customer' WHERE id = ?", [$status, $grand_total, $party_id, $id]);
+        $db->execute("UPDATE transaction_headers SET status = ?, net_amount = ?, party_id = ?, party_type = 'customer', updated_by = ? WHERE id = ?", [$status, $grand_total, $party_id, $_SESSION['user_id'], $id]);
     } else {
-        $db->execute("UPDATE transaction_headers SET net_amount = ?, party_id = ?, party_type = 'customer' WHERE id = ?", [$grand_total, $party_id, $id]);
+        $db->execute("UPDATE transaction_headers SET net_amount = ?, party_id = ?, party_type = 'customer', updated_by = ? WHERE id = ?", [$grand_total, $party_id, $_SESSION['user_id'], $id]);
     }
 
     $db->execute("INSERT INTO customer_invoices (header_id, customer_id, invoice_date, due_date, invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status, sale_type) 
@@ -461,6 +461,19 @@ try {
             }
         }
     }
+
+    // Record audit log for System Notes / Change Log
+    $action = !empty($existing_hdr) ? 'update' : 'create';
+    $db->execute("
+        INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id)
+        VALUES ('transaction_headers', ?, ?, ?, ?, ?)
+    ", [
+        $action,
+        (string)$id,
+        json_encode($existing_hdr ?? []),
+        json_encode(['txn_number' => $txn_number, 'amount' => $grand_total, 'party_id' => $party_id, 'status' => $status, 'memo' => $memo]),
+        $_SESSION['user_id']
+    ]);
 
     $pdo->commit();
     // Sync inventory balances (stock + cost) across all locations for each affected item

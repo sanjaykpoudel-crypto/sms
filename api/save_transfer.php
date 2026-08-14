@@ -76,8 +76,9 @@ try {
         ]);
         incrementTransactionNumber('account_transfer', $from_location_id);
     } else {
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_type = NULL, party_id = NULL, location_id = ? WHERE id = ?", [
-            $txn_date, $memo, $amount, $from_location_id, $id
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, memo = ?, net_amount = ?, party_type = NULL, party_id = NULL, location_id = ?, updated_by = ? WHERE id = ?", [
+            $txn_date, $memo, $amount, $from_location_id, $_SESSION['user_id'], $id
         ]);
         
         $db->execute("DELETE FROM account_transfers WHERE header_id = ?", [$id]);
@@ -100,6 +101,8 @@ try {
     $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?, NULL, NULL)", [
         generate_uuid(), $id, $from_account_id, $amount, 'Transfer OUT - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
     ]);
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $amount, 'memo' => $memo, 'status' => $status]);
 
     $pdo->commit();
     clear_dashboard_cache();

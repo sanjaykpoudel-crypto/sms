@@ -24,7 +24,7 @@ $list = $db->fetchAll("
     LEFT JOIN customers c_hdr ON t.party_id = c_hdr.id AND t.party_type = 'customer'
     LEFT JOIN vendors v_hdr ON t.party_id = v_hdr.id AND t.party_type = 'vendor'
     LEFT JOIN users u_created ON t.created_by = u_created.id
-    WHERE t.txn_type IN ('Journal', 'account_transfer') AND t.is_deleted = 0
+    WHERE LOWER(t.txn_type) IN ('journal', 'journal_entry', 'account_transfer') AND t.is_deleted = 0
     ORDER BY t.created_at DESC
 ");
 ?>
@@ -36,6 +36,9 @@ $list = $db->fetchAll("
     <a href="?page=transactions/journal/manage" class="ns-btn ns-btn-primary"
         style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center;"><i
             class="fas fa-plus"></i> New</a>
+    <a href="?page=help_center#section-entry-guide" class="ns-btn ns-btn-secondary"
+        style="padding: 4px 10px; font-size: 11px; height: 26px; display: inline-flex; align-items: center; gap: 4px;"><i
+            class="fas fa-question-circle" style="color: #d97706;"></i> Accounting Entry Help Guide</a>
 </div>
 
 <div class="ns-portlet" style="overflow: visible !important;">

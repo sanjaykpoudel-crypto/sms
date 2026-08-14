@@ -127,11 +127,12 @@ try {
 
         incrementTransactionNumber('inventory_transfer');
     } else {
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
         $db->execute("
             UPDATE transaction_headers 
-            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ?
+            SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, memo = ?, net_amount = ?, party_id = ?, location_id = ?, updated_by = ?
             WHERE id = ?
-        ", [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $total_value, $to_location_id, $from_location_id, $id]);
+        ", [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $memo, $total_value, $to_location_id, $from_location_id, $_SESSION['user_id'], $id]);
 
         $db->execute("
             UPDATE inventory_transfers
@@ -170,6 +171,8 @@ try {
             $db->execute("UPDATE inventory_balances SET mrp = ? WHERE item_id = ? AND location_id IN (?, ?)", [$line['mrp'], $item_id, $from_location_id, $to_location_id]);
         }
     }
+
+    log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $total_value, 'memo' => $memo, 'status' => 'completed']);
 
     $pdo->commit();
     clear_dashboard_cache();

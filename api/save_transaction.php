@@ -50,6 +50,7 @@ try {
     $affected_doc_ids = [];
     $is_new_txn = empty($id);
 
+    $existing_hdr = null;
     if (!$id) {
         $id = generate_uuid();
         $txn_number = getNextTransactionNumber($header_txn_type, $location_id);
@@ -63,12 +64,13 @@ try {
         ]);
         incrementTransactionNumber($header_txn_type);
     } else {
+        $existing_hdr = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
         $txn_number = $_POST['txn_number'] ?? '';
         if (empty($txn_number)) {
-            $txn_number = $db->fetchOne("SELECT txn_number FROM transaction_headers WHERE id = ?", [$id])['txn_number'] ?? 'Unknown';
+            $txn_number = $existing_hdr['txn_number'] ?? 'Unknown';
         }
-        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, party_id = ?, party_type = ?, location_id = ? WHERE id = ?", [
-            $txn_date, $reference_number, $memo, $party_id, $party_type, $location_id, $id
+        $db->execute("UPDATE transaction_headers SET txn_date = ?, reference_number = ?, memo = ?, party_id = ?, party_type = ?, location_id = ?, updated_by = ? WHERE id = ?", [
+            $txn_date, $reference_number, $memo, $party_id, $party_type, $location_id, $_SESSION['user_id'], $id
         ]);
         
         $old_links = $db->fetchAll("SELECT child_id as applied_to_id FROM transaction_links WHERE parent_id = ?", [$id]);
@@ -177,14 +179,12 @@ try {
     }
 
     // Update total net_amount in transaction_headers
-    $db->execute("UPDATE transaction_headers SET net_amount = ? WHERE id = ?", [$total_tendered, $id]);
+    $db->execute("UPDATE transaction_headers SET net_amount = ?, updated_by = ? WHERE id = ?", [$total_tendered, $_SESSION['user_id'] ?? 1, $id]);
 
     // Record audit log
-    $user_id = $_SESSION['user_id'] ?? 'usr-admin-001';
+    $user_id = $_SESSION['user_id'] ?? 1;
     $audit_action = $is_new_txn ? 'create' : 'update';
-    $new_log_val = json_encode(['amount' => $total_tendered, 'party_id' => $party_id, 'memo' => $memo, 'status' => 'posted']);
-    $pdo->prepare("INSERT INTO audit_logs (table_name, action, record_id, old_values, new_values, user_id) VALUES ('transaction_headers', ?, ?, NULL, ?, ?)")
-        ->execute([$audit_action, $id, $new_log_val, $user_id]);
+    log_audit('transaction_headers', $audit_action, $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $total_tendered, 'party_id' => $party_id, 'memo' => $memo, 'status' => 'posted'], $user_id);
 
     $pdo->commit();
     clear_dashboard_cache();
