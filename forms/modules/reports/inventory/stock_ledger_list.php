@@ -87,9 +87,9 @@ $tot_open = 0; $tot_in = 0; $tot_out = 0; $tot_close = 0; $tot_val = 0;
     rpt_location_filter(),
 ], 'tbl-stock-ledger'); ?>
 
-<div class="ns-portlet" style="max-width:1100px; margin:0 auto;">
-    <div class="ns-portlet-content" style="padding:15px;">
-        <table class="ns-report-table-static" id="tbl-stock-ledger">
+<div class="ns-portlet">
+    <div class="ns-portlet-content">
+        <table class="ns-table" id="tbl-stock-ledger">
             <thead>
                 <tr>
                     <th>Item Code / SKU</th>
@@ -120,7 +120,7 @@ $tot_open = 0; $tot_in = 0; $tot_out = 0; $tot_close = 0; $tot_val = 0;
                         $tot_close += $close;
                         $tot_val   += $val;
                     ?>
-                        <tr>
+                        <tr data-open="<?= $open ?>" data-in="<?= $in ?>" data-out="<?= $out ?>" data-close="<?= $close ?>" data-val="<?= $val ?>">
                             <td style="font-weight:700; color:#64748b;"><?= htmlspecialchars($r['sku'] ?: '—') ?></td>
                             <td style="font-weight:600; color:#0f172a;"><?= htmlspecialchars($r['item_name']) ?></td>
                             <td style="text-align:right; color:#64748b;"><?= rpt_currency($cost) ?></td>
@@ -136,13 +136,68 @@ $tot_open = 0; $tot_in = 0; $tot_out = 0; $tot_close = 0; $tot_val = 0;
             <tfoot>
                 <tr style="background:#003087; color:#fff; font-weight:900; font-size:13px">
                     <td colspan="3" style="padding:10px 14px">TOTAL INVENTORY SUMMARY</td>
-                    <td style="text-align:right; padding:10px 14px"><?= number_format($tot_open, 2) ?></td>
-                    <td style="text-align:right; padding:10px 14px">+<?= number_format($tot_in, 2) ?></td>
-                    <td style="text-align:right; padding:10px 14px">-<?= number_format($tot_out, 2) ?></td>
-                    <td style="text-align:right; padding:10px 14px"><?= number_format($tot_close, 2) ?></td>
-                    <td style="text-align:right; padding:10px 14px"><?= rpt_currency($tot_val) ?></td>
+                    <td style="text-align:right; padding:10px 14px" id="foot-open"><?= number_format($tot_open, 2) ?></td>
+                    <td style="text-align:right; padding:10px 14px" id="foot-in">+<?= number_format($tot_in, 2) ?></td>
+                    <td style="text-align:right; padding:10px 14px" id="foot-out">-<?= number_format($tot_out, 2) ?></td>
+                    <td style="text-align:right; padding:10px 14px" id="foot-close"><?= number_format($tot_close, 2) ?></td>
+                    <td style="text-align:right; padding:10px 14px" id="foot-val"><?= rpt_currency($tot_val) ?></td>
                 </tr>
             </tfoot>
         </table>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function updateStockLedgerTotals() {
+        const table = document.getElementById('tbl-stock-ledger');
+        if (!table) return;
+
+        let openSum = 0, inSum = 0, outSum = 0, closeSum = 0, valSum = 0;
+
+        if (typeof $ !== 'undefined' && $.fn.DataTable && $.fn.DataTable.isDataTable('#tbl-stock-ledger')) {
+            const dt = $('#tbl-stock-ledger').DataTable();
+            const visibleRows = dt.rows({ search: 'applied' }).nodes();
+            $(visibleRows).each(function() {
+                openSum  += parseFloat($(this).attr('data-open')) || 0;
+                inSum    += parseFloat($(this).attr('data-in')) || 0;
+                outSum   += parseFloat($(this).attr('data-out')) || 0;
+                closeSum += parseFloat($(this).attr('data-close')) || 0;
+                valSum   += parseFloat($(this).attr('data-val')) || 0;
+            });
+        } else {
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(r => {
+                if (r.style.display !== 'none') {
+                    openSum  += parseFloat(r.getAttribute('data-open')) || 0;
+                    inSum    += parseFloat(r.getAttribute('data-in')) || 0;
+                    outSum   += parseFloat(r.getAttribute('data-out')) || 0;
+                    closeSum += parseFloat(r.getAttribute('data-close')) || 0;
+                    valSum   += parseFloat(r.getAttribute('data-val')) || 0;
+                }
+            });
+        }
+
+        const fmtCurr = v => 'Rs ' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const fmtNum  = v => v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        const footOpen  = document.getElementById('foot-open');
+        const footIn    = document.getElementById('foot-in');
+        const footOut   = document.getElementById('foot-out');
+        const footClose = document.getElementById('foot-close');
+        const footVal   = document.getElementById('foot-val');
+
+        if (footOpen)  footOpen.innerText  = fmtNum(openSum);
+        if (footIn)    footIn.innerText    = '+' + fmtNum(inSum);
+        if (footOut)   footOut.innerText   = '-' + fmtNum(outSum);
+        if (footClose) footClose.innerText = fmtNum(closeSum);
+        if (footVal)   footVal.innerText   = fmtCurr(valSum);
+    }
+
+    if (typeof $ !== 'undefined') {
+        $(document).on('draw.dt search.dt', '#tbl-stock-ledger', function() {
+            updateStockLedgerTotals();
+        });
+    }
+});
+</script>

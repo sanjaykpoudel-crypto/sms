@@ -161,29 +161,6 @@ try {
         $existing_payment_total += (float)(explode(':', $link['link_type'])[1] ?? 0);
     }
 
-    // If only one payment is linked/created for this bill, and the bill is edited,
-    // modify that payment and its GL impact to match the new total if it has a single payment method line.
-    if (count($applied_payments) === 1) {
-        $pay_header_id = $applied_payments[0]['parent_id'];
-        
-        // Verify this payment is only applied to this bill and has exactly one payment line/method
-        $other_applies = $db->fetchAll("SELECT id FROM transaction_links WHERE parent_id = ?", [$pay_header_id]);
-        $payment_rows = $db->fetchAll("SELECT id FROM payments WHERE header_id = ?", [$pay_header_id]);
-        if (count($other_applies) === 1 && count($payment_rows) === 1) {
-            // Update transaction_links amount
-            $db->execute("UPDATE transaction_links SET link_type = ? WHERE parent_id = ? AND child_id = ?", ['payment:' . $grand_total, $pay_header_id, $id]);
-            
-            // Update payments table amount
-            $db->execute("UPDATE payments SET amount = ? WHERE header_id = ?", [$grand_total, $pay_header_id]);
-            
-            // Update journal entries amount
-            $db->execute("UPDATE journal_entries SET amount = ? WHERE header_id = ?", [$grand_total, $pay_header_id]);
-            
-            // Set amount_paid to grand_total
-            $existing_payment_total = $grand_total;
-        }
-    }
-
     $amount_paid = $existing_payment_total;
     $balance_due = max(0.0, $grand_total - $amount_paid);
     
@@ -194,10 +171,12 @@ try {
         $payment_status = 'partial';
     }
 
-    // If payment status is paid/partial, update the transaction header status as well
-    if ($payment_status !== 'unpaid' && in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-        $status = $payment_status;
-        $db->execute("UPDATE transaction_headers SET status = ? WHERE id = ?", [$status, $id]);
+    // If payment status is paid/partial/unpaid, update the transaction header status, net_amount, and party_id to match
+    if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
+        $status = ($payment_status === 'paid') ? 'paid' : (($payment_status === 'partial') ? 'partial' : 'open');
+        $db->execute("UPDATE transaction_headers SET status = ?, net_amount = ?, party_id = ?, party_type = 'vendor', updated_by = ? WHERE id = ?", [$status, $grand_total, $party_id, $_SESSION['user_id'], $id]);
+    } else {
+        $db->execute("UPDATE transaction_headers SET net_amount = ?, party_id = ?, party_type = 'vendor', updated_by = ? WHERE id = ?", [$grand_total, $party_id, $_SESSION['user_id'], $id]);
     }
 
     $db->execute("INSERT INTO vendor_bills (id, header_id, vendor_id, bill_date, due_date, vendor_invoice_number, subtotal, discount_amount, tax_amount, total_amount, amount_paid, balance_due, payment_status) 

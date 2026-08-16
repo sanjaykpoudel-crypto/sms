@@ -32,7 +32,7 @@ if (!function_exists('render_select_dropdown')) {
                 'location'         => '-- Select Location --',
                 'from_location'    => '-- Select Source Location --',
                 'to_location'      => '-- Select Destination Location --',
-                'bank_account'     => '-- Select Bank Account --',
+                'bank_account'     => '-- Select Bank / Cash Account --',
                 'from_account'     => '-- Select Source Account --',
                 'to_account'       => '-- Select Destination Account --',
                 'account'          => '-- Select Account --',
@@ -61,7 +61,13 @@ if (!function_exists('render_select_dropdown')) {
             case 'bank_account':
             case 'from_account':
             case 'to_account':
-                $raw = $db->fetchAll("SELECT id, account_name FROM accounts WHERE account_subtype = 'Bank' AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
+                $raw = $db->fetchAll("
+                    SELECT id, account_name, account_subtype 
+                    FROM accounts 
+                    WHERE (account_subtype IN ('Bank', 'Cash', 'Liquid Assets') OR (account_type = 'asset' AND (account_name LIKE '%Cash%' OR account_name LIKE '%Bank%' OR account_name LIKE '%Hand%'))) 
+                      AND is_active = 1 AND is_deleted = 0 
+                    ORDER BY CASE WHEN account_subtype = 'Cash' OR account_name LIKE '%Cash%' THEN 0 ELSE 1 END, account_name ASC
+                ");
                 foreach ($raw as $r) {
                     $items[] = ['id' => $r['id'], 'label' => $r['account_name']];
                 }

@@ -55,19 +55,19 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
 
 <div class="rpt-summary">
     <div class="rpt-summary-card">
-        <div class="val"><?= number_format($sum_qty, 0) ?></div>
+        <div class="val" id="card-qty"><?= number_format($sum_qty, 0) ?></div>
         <div class="lbl">Total Units Sold</div>
     </div>
     <div class="rpt-summary-card">
-        <div class="val"><?= rpt_currency($sum_revenue) ?></div>
+        <div class="val" id="card-revenue"><?= rpt_currency($sum_revenue) ?></div>
         <div class="lbl">Total Sales Revenue</div>
     </div>
     <div class="rpt-summary-card">
-        <div class="val" style="color:#16a085"><?= rpt_currency($sum_profit) ?></div>
+        <div class="val" style="color:#16a085" id="card-profit"><?= rpt_currency($sum_profit) ?></div>
         <div class="lbl">Total Profit</div>
     </div>
     <div class="rpt-summary-card">
-        <div class="val" style="color:#2980b9"><?= number_format($overall_margin, 2) ?>%</div>
+        <div class="val" style="color:#2980b9" id="card-margin"><?= number_format($overall_margin, 2) ?>%</div>
         <div class="lbl">Average Margin (%)</div>
     </div>
 </div>
@@ -91,7 +91,7 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
             <?php if (!empty($items)): $rank = 1; foreach ($items as $r): 
                 $margin = $r['total_revenue'] > 0 ? ($r['total_profit'] / $r['total_revenue']) * 100 : 0;
             ?>
-                <tr>
+                <tr data-qty="<?= (float)$r['total_qty'] ?>" data-revenue="<?= (float)$r['total_revenue'] ?>" data-cost="<?= (float)$r['total_cost'] ?>" data-profit="<?= (float)$r['total_profit'] ?>">
                     <td style="font-weight:700;color:#7f8c8d">#<?= $rank++ ?></td>
                     <td><strong><?= htmlspecialchars($r['item_name']) ?></strong></td>
                     <td><?= htmlspecialchars($r['category_name'] ?? 'Uncategorized') ?></td>
@@ -107,11 +107,11 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
             <tfoot>
                 <tr style="background:#f8f9fa;font-weight:800;border-top:2px solid #ccc">
                     <td colspan="3">TOTALS</td>
-                    <td style="text-align:right"><?= number_format($sum_qty, 0) ?></td>
-                    <td style="text-align:right"><?= rpt_currency($sum_revenue) ?></td>
-                    <td style="text-align:right"><?= rpt_currency($sum_cost) ?></td>
-                    <td style="text-align:right;color:#16a085"><?= rpt_currency($sum_profit) ?></td>
-                    <td style="text-align:right;color:#2980b9"><?= number_format($overall_margin, 2) ?>%</td>
+                    <td style="text-align:right" id="foot-qty"><?= number_format($sum_qty, 0) ?></td>
+                    <td style="text-align:right" id="foot-revenue"><?= rpt_currency($sum_revenue) ?></td>
+                    <td style="text-align:right" id="foot-cost"><?= rpt_currency($sum_cost) ?></td>
+                    <td style="text-align:right;color:#16a085" id="foot-profit"><?= rpt_currency($sum_profit) ?></td>
+                    <td style="text-align:right;color:#2980b9" id="foot-margin"><?= number_format($overall_margin, 2) ?>%</td>
                 </tr>
             </tfoot>
             <?php endif; ?>
@@ -131,7 +131,69 @@ function exportTableToCSV(id) {
     const b = new Blob([csv.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
-    a.download = 'top_profit_items_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.download = 'top_profit_items.csv';
     a.click();
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    function updateTopProfitTotals() {
+        const table = document.getElementById('tbl-top-profit-items');
+        if (!table) return;
+
+        let qtySum = 0, revSum = 0, costSum = 0, profitSum = 0;
+
+        if (typeof $ !== 'undefined' && $.fn.DataTable && $.fn.DataTable.isDataTable('#tbl-top-profit-items')) {
+            const dt = $('#tbl-top-profit-items').DataTable();
+            const visibleRows = dt.rows({ search: 'applied' }).nodes();
+            $(visibleRows).each(function() {
+                qtySum    += parseFloat($(this).attr('data-qty')) || 0;
+                revSum    += parseFloat($(this).attr('data-revenue')) || 0;
+                costSum   += parseFloat($(this).attr('data-cost')) || 0;
+                profitSum += parseFloat($(this).attr('data-profit')) || 0;
+            });
+        } else {
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(r => {
+                if (r.style.display !== 'none') {
+                    qtySum    += parseFloat(r.getAttribute('data-qty')) || 0;
+                    revSum    += parseFloat(r.getAttribute('data-revenue')) || 0;
+                    costSum   += parseFloat(r.getAttribute('data-cost')) || 0;
+                    profitSum += parseFloat(r.getAttribute('data-profit')) || 0;
+                }
+            });
+        }
+
+        const margin = revSum > 0 ? (profitSum / revSum * 100) : 0;
+        const fmtCurr = v => 'Rs ' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const fmtNum  = v => v.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+
+        const cardQty  = document.getElementById('card-qty');
+        const cardRev  = document.getElementById('card-revenue');
+        const cardProf = document.getElementById('card-profit');
+        const cardMarg = document.getElementById('card-margin');
+
+        if (cardQty)  cardQty.innerText  = fmtNum(qtySum);
+        if (cardRev)  cardRev.innerText  = fmtCurr(revSum);
+        if (cardProf) cardProf.innerText = fmtCurr(profitSum);
+        if (cardMarg) cardMarg.innerText = margin.toFixed(2) + '%';
+
+        const footQty  = document.getElementById('foot-qty');
+        const footRev  = document.getElementById('foot-revenue');
+        const footCost = document.getElementById('foot-cost');
+        const footProf = document.getElementById('foot-profit');
+        const footMarg = document.getElementById('foot-margin');
+
+        if (footQty)  footQty.innerText  = fmtNum(qtySum);
+        if (footRev)  footRev.innerText  = fmtCurr(revSum);
+        if (footCost) footCost.innerText = fmtCurr(costSum);
+        if (footProf) footProf.innerText = fmtCurr(profitSum);
+        if (footMarg) footMarg.innerText = margin.toFixed(2) + '%';
+    }
+
+    if (typeof $ !== 'undefined') {
+        $(document).on('draw.dt search.dt', '#tbl-top-profit-items', function() {
+            updateTopProfitTotals();
+        });
+    }
+});
 </script>

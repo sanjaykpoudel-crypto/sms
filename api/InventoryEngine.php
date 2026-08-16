@@ -423,63 +423,26 @@ class InventoryEngine
      */
     public function reconcileInventoryValuationWithGL(): array
     {
-        $stmt = $this->pdo->query("SELECT SUM(current_stock * cost_price) as subledger_val FROM items WHERE is_deleted = 0");
+        $stmt = $this->pdo->query("SELECT COALESCE(SUM(current_stock * cost_price), 0) as subledger_val FROM items WHERE is_deleted = 0");
         $subledgerVal = (float)($stmt->fetchColumn() ?: 0.0);
 
         $stmtGl = $this->pdo->query("
-            SELECT SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END) as gl_bal
+            SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as gl_bal
             FROM journal_entries j
             JOIN accounts a ON j.account_id = a.id
             JOIN transaction_headers th ON j.header_id = th.id
-            WHERE (a.account_subtype IN ('inventory', 'Inventory Asset') OR a.id = 7)
+            WHERE (a.account_subtype IN ('inventory', 'Inventory Asset') OR a.id IN ('7', 'acc-1200'))
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
         ");
         $glBal = (float)($stmtGl->fetchColumn() ?: 0.0);
 
         $diff = round($subledgerVal - $glBal, 2);
 
-        if (abs($diff) > 0.01) {
-            $txnNo = getNextTransactionNumber('journal_entry');
-            incrementTransactionNumber('journal_entry');
-            $fiscal = calculate_fiscal_info(date('Y-m-d'));
-
-            $userId = isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 1;
-
-            $stmtHdr = $this->pdo->prepare("
-                INSERT INTO transaction_headers (txn_number, txn_type, txn_date, fiscal_year, fiscal_month, fiscal_period, status, memo, net_amount, location_id, created_by)
-                VALUES (?, 'journal', CURRENT_DATE, ?, ?, ?, 'posted', 'Automated Inventory Subledger GL Alignment', ?, 1, ?)
-            ");
-            $stmtHdr->execute([$txnNo, $fiscal['year'], $fiscal['month'], $fiscal['period'], abs($diff), $userId]);
-            $hdrId = (int)$this->pdo->lastInsertId();
-
-            $invAccRow = $this->pdo->query("SELECT id FROM accounts WHERE account_subtype IN ('inventory', 'Inventory Asset') OR account_name = 'Inventory' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-            $invAcc = $invAccRow ? (int)$invAccRow['id'] : 7;
-            
-            $adjAccRow = $this->pdo->query("SELECT id FROM accounts WHERE account_name IN ('Opening Balance', 'Retained Earnings', 'Equity') OR account_type = 'equity' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-            $adjAcc = $adjAccRow ? (int)$adjAccRow['id'] : 38;
-
-            $today = date('Y-m-d');
-            $period = $fiscal['period'] ?? '2026-08';
-            $year = (int)($fiscal['year'] ?? date('Y'));
-
-            $stmtJe = $this->pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, entry_date, fiscal_period, fiscal_year, created_by, memo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-
-            if ($diff > 0) {
-                $stmtJe->execute([$hdrId, $invAcc, 'debit', abs($diff), $today, $period, $year, $userId, 'Inventory Reconciliation Alignment']);
-                $stmtJe->execute([$hdrId, $adjAcc, 'credit', abs($diff), $today, $period, $year, $userId, 'Inventory Reconciliation Alignment']);
-            } else {
-                $stmtJe->execute([$hdrId, $adjAcc, 'debit', abs($diff), $today, $period, $year, $userId, 'Inventory Reconciliation Alignment']);
-                $stmtJe->execute([$hdrId, $invAcc, 'credit', abs($diff), $today, $period, $year, $userId, 'Inventory Reconciliation Alignment']);
-            }
-
-            $glBal += $diff;
-        }
-
         return [
             'subledger_val' => $subledgerVal,
             'gl_val' => $glBal,
-            'adjustment_posted' => abs($diff) > 0.01 ? abs($diff) : 0,
-            'status' => 'MATCH'
+            'adjustment_posted' => 0,
+            'status' => abs($diff) < 0.05 ? 'MATCH' : 'DIFFERENCE'
         ];
     }
 }

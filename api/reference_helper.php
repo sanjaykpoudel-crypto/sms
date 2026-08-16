@@ -1985,6 +1985,19 @@ if (!function_exists('auto_sync_pos_items_and_invoices')) {
                 sync_and_get_item_inventory_balances($db, $it['id']);
             }
 
+            // Sync opening balances journal entries
+            if (function_exists('sync_opening_balance_journal_entries')) {
+                sync_opening_balance_journal_entries($db->getConnection());
+            }
+
+            // Reconcile Inventory Subledger Valuation with GL Asset balance
+            if (file_exists(__DIR__ . '/InventoryEngine.php')) {
+                require_once __DIR__ . '/InventoryEngine.php';
+                if (class_exists('InventoryEngine')) {
+                    InventoryEngine::getInstance()->reconcileInventoryValuationWithGL();
+                }
+            }
+
             // Save last sync timestamp
             $now = time();
             $row = $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'last_pos_sync_timestamp'");

@@ -138,11 +138,11 @@ if ($txn_type == 'vendor_bill') {
 // Fetch Items
 $items = $db->fetchAll("
     SELECT tl.*, i.item_name, i.sku, a.account_name,
-           COALESCE(NULLIF(TRIM(tl.unit), ''), rc.name, 'PCS') as unit_display,
+           COALESCE(rc.name, NULLIF(TRIM(i.unit_type), ''), NULLIF(TRIM(tl.unit), ''), 'PCS') as unit_display,
            loc.name as line_location_name
     FROM transaction_lines tl
     LEFT JOIN items i ON tl.item_id = i.id
-    LEFT JOIN reference_codes rc ON i.unit_type = rc.id AND rc.type = 'units'
+    LEFT JOIN reference_codes rc ON (i.unit_type = CAST(rc.id AS CHAR) OR i.unit_type = rc.name OR i.unit_type = rc.code) AND rc.type IN ('unit', 'units')
     LEFT JOIN accounts a ON tl.account_id = a.id
     LEFT JOIN locations loc ON tl.location_id = loc.id
     WHERE tl.header_id = :id
@@ -983,7 +983,16 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                             </span>
                         </td>
                         <?php endif; ?>
-                        <td style="text-align: right;"><?php echo number_format($line['quantity'], 2); ?></td>
+                        <td style="text-align: right;">
+                            <strong><?php echo number_format($line['quantity'], 2); ?></strong>
+                            <?php 
+                                $conv = (float)($line['conversion_factor'] ?? 1);
+                                $base_qty = (float)($line['base_qty'] ?? ($line['quantity'] * $conv));
+                                if ($conv > 1): 
+                            ?>
+                                <br><small style="color: #0284c7; font-weight: 600;">(<?php echo number_format($base_qty, 2); ?> PCS)</small>
+                            <?php endif; ?>
+                        </td>
                         <td><?php echo htmlspecialchars($line['unit_display']); ?></td>
                         <td style="text-align: right;"><?php echo number_format($line['unit_price'], 2); ?></td>
                         <td style="text-align: right;"><strong><?php echo number_format($line['line_total'], 2); ?></strong>

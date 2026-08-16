@@ -5,6 +5,7 @@
 require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 require_once 'api/reference_helper.php';
+require_once 'api/ReportingEngine.php';
 
 $db = db();
 
@@ -89,6 +90,12 @@ if ($channel === 'all' || $channel === 'pos') {
 
 $gross_sales = $inv_sales + $pos_sales + $journal_sales;
 $net_sales   = $gross_sales - $sales_returns;
+
+// Cost of Goods Sold & Gross Profit calculations
+$pnl_data     = re_get_pnl($db, $date_from, $date_to, (!empty($loc_id) && $loc_id !== 'all') ? $loc_id : null);
+$cogs         = (float)($pnl_data['total_cogs'] ?? 0);
+$gross_profit = $net_sales - $cogs;
+$margin_pct   = $net_sales > 0 ? round(($gross_profit / $net_sales) * 100, 1) : 0.0;
 ?>
 
 <style>
@@ -116,7 +123,7 @@ $net_sales   = $gross_sales - $sales_returns;
     rpt_location_filter(),
 ], 'tbl-sales-summary'); ?>
 
-<div class="ns-portlet" style="max-width: 950px; margin: 0 auto;">
+<div class="ns-portlet" style="max-width: 1000px; margin: 0 auto;">
     <div class="ns-portlet-content" style="padding: 20px;">
 
         <div class="sales-kpi-grid">
@@ -148,6 +155,19 @@ $net_sales   = $gross_sales - $sales_returns;
             <div class="sales-kpi-card" style="border-top-color: #003087;">
                 <div class="lbl">Net Sales Revenue</div>
                 <div class="val" style="color:#003087;"><?= rpt_currency($net_sales) ?></div>
+            </div>
+            <div class="sales-kpi-card" style="border-top-color: #ea580c;">
+                <div class="lbl">Cost of Goods Sold (COGS)</div>
+                <div class="val" style="color:#c2410c;">-<?= rpt_currency($cogs) ?></div>
+            </div>
+            <div class="sales-kpi-card" style="border-top-color: <?= $gross_profit >= 0 ? '#059669' : '#dc2626' ?>;">
+                <div class="lbl">Gross Profit & Margin</div>
+                <div class="val" style="color:<?= $gross_profit >= 0 ? '#059669' : '#dc2626' ?>;">
+                    <?= rpt_currency($gross_profit) ?>
+                    <span style="font-size: 11px; font-weight: 700; background: <?= $gross_profit >= 0 ? '#dcfce7' : '#fee2e2' ?>; color: <?= $gross_profit >= 0 ? '#15803d' : '#991b1b' ?>; padding: 2px 8px; border-radius: 12px; margin-left: 4px; vertical-align: middle;">
+                        <?= $margin_pct ?>%
+                    </span>
+                </div>
             </div>
         </div>
 
@@ -185,15 +205,28 @@ $net_sales   = $gross_sales - $sales_returns;
                     <td>Less: Credit Memos & Customer Returns</td>
                     <td style="text-align:right; color:#dc2626; font-weight:600;">-<?= rpt_currency($sales_returns) ?></td>
                 </tr>
+                <tr style="background:#003087; color:#ffffff !important; font-weight:900; font-size:14px">
+                    <td style="padding:12px 16px; color:#ffffff !important; font-weight:900;">NET SALES REVENUE</td>
+                    <td style="text-align:right; padding:12px 16px; color:#ffffff !important; font-weight:900;"><?= rpt_currency($net_sales) ?></td>
+                </tr>
+                <tr>
+                    <td>Less: Cost of Goods Sold (COGS)</td>
+                    <td style="text-align:right; color:#dc2626; font-weight:600;">-<?= rpt_currency($cogs) ?></td>
+                </tr>
             </tbody>
             <tfoot>
-                <tr style="background:#003087; color:#fff; font-weight:900; font-size:14px">
-                    <td style="padding:12px 16px">NET SALES REVENUE</td>
-                    <td style="text-align:right; padding:12px 16px"><?= rpt_currency($net_sales) ?></td>
+                <tr style="background:<?= $gross_profit >= 0 ? '#059669' : '#dc2626' ?>; color:#ffffff !important; font-weight:900; font-size:15px">
+                    <td style="padding:12px 16px; color:#ffffff !important; font-weight:900;">
+                        GROSS PROFIT (<?= $margin_pct ?>% Margin)
+                    </td>
+                    <td style="text-align:right; padding:12px 16px; color:#ffffff !important; font-weight:900;">
+                        <?= rpt_currency($gross_profit) ?>
+                    </td>
                 </tr>
             </tfoot>
         </table>
 
     </div>
 </div>
+
 

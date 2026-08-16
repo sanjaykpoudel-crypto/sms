@@ -132,9 +132,11 @@ if ($txn_type == 'journal_entry' || $txn_type == 'Journal') {
     ", ['id' => $id]);
 } else {
     $items = $db->fetchAll("
-        SELECT tl.*, i.item_name, i.sku
+        SELECT tl.*, i.item_name, i.sku,
+               COALESCE(rc.name, NULLIF(TRIM(i.unit_type), ''), NULLIF(TRIM(tl.unit), ''), 'PCS') as unit_display
         FROM transaction_lines tl
         LEFT JOIN items i ON tl.item_id = i.id
+        LEFT JOIN reference_codes rc ON (i.unit_type = CAST(rc.id AS CHAR) OR i.unit_type = rc.name OR i.unit_type = rc.code) AND rc.type IN ('unit', 'units')
         WHERE tl.header_id = :id
         ORDER BY tl.line_number ASC
     ", ['id' => $id]);

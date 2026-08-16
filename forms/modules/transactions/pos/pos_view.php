@@ -22,9 +22,11 @@ if (!$pos) {
 }
 
 $items = $db->fetchAll("
-    SELECT pi.*, i.item_name, i.sku
+    SELECT pi.*, i.item_name, i.sku,
+           COALESCE(rc.name, NULLIF(TRIM(i.unit_type), ''), NULLIF(TRIM(pi.txn_unit), ''), 'PCS') as master_unit_display
     FROM pos_items pi
     LEFT JOIN items i ON pi.item_id = i.id
+    LEFT JOIN reference_codes rc ON (i.unit_type = CAST(rc.id AS CHAR) OR i.unit_type = rc.name OR i.unit_type = rc.code) AND rc.type IN ('unit', 'units')
     WHERE pi.pos_id = :id
 ", ['id' => $id]);
 
@@ -73,13 +75,22 @@ $erp_header = $db->fetchOne("SELECT id, txn_number FROM transaction_headers WHER
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($items as $item): ?>
+                        <?php foreach($items as $item): 
+                            $unit_name = !empty($item['master_unit_display']) ? $item['master_unit_display'] : (!empty($item['txn_unit']) ? $item['txn_unit'] : 'PCS');
+                            $conv = (float)($item['conversion_factor'] ?? 1);
+                            $base_qty = (float)($item['base_qty'] ?? ($item['quantity'] * $conv));
+                        ?>
                         <tr>
                             <td>
                                 <strong><?php echo htmlspecialchars($item['item_name']); ?></strong><br>
                                 <small style="color: #666;"><?php echo htmlspecialchars($item['sku']); ?></small>
                             </td>
-                            <td style="text-align: right;"><?php echo number_format($item['quantity'], 2); ?></td>
+                            <td style="text-align: right;">
+                                <strong><?php echo number_format($item['quantity'], 2); ?></strong> <?php echo htmlspecialchars($unit_name); ?>
+                                <?php if ($conv > 1): ?>
+                                    <br><small style="color: #0284c7; font-weight: 600;">(<?php echo number_format($base_qty, 2); ?> PCS)</small>
+                                <?php endif; ?>
+                            </td>
                             <td style="text-align: right;"><?php echo number_format($item['rate'], 2); ?></td>
                             <td style="text-align: right;"><?php echo number_format($item['amount'], 2); ?></td>
                             <td style="text-align: right; color: #c00;"><?php echo number_format($item['discount'], 2); ?></td>

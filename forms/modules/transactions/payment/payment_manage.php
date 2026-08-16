@@ -841,6 +841,9 @@ function renderTxnTable() {
     const tr = document.createElement('tr');
     tr.className = isChk ? 'applied' : '';
     tr.dataset.key = itemKey;
+    tr.dataset.origDue = due;
+
+    const remDue = due >= 0 ? Math.max(0, due - applied) : Math.min(0, due + applied);
 
     tr.innerHTML = `
       <td class="c"><input type="checkbox" name="apply_txn_id[]" value="${itemKey}" class="apply-cb" onchange="toggleRow(this)" ${isChk?'checked':''}></td>
@@ -848,7 +851,7 @@ function renderTxnTable() {
       <td><span class="pm-badge ${cfg.badge}">${esc(row.txn_type)}</span></td>
       <td>${row.txn_date}</td>
       <td class="r">${fmt(total)}</td>
-      <td class="r balance-due-text">${fmt(due)}</td>
+      <td class="r balance-due-text">${fmt(remDue)}</td>
       <td class="r">
         <input type="number" name="apply_amount[${itemKey}]"
                class="pm-table-input r apply-inp"
@@ -878,7 +881,7 @@ function onApplyInput(inp) {
 function toggleRow(cb) {
   const tr  = cb.closest('tr');
   const inp = tr.querySelector('.apply-inp');
-  const due = parseFloat(tr.querySelector('.balance-due-text').innerText.replace(/,/g,''))||0;
+  const origDue = parseFloat(tr.dataset.origDue || 0);
 
   if (cb.checked) {
     const curVal = parseFloat(inp.value) || 0;
@@ -888,8 +891,8 @@ function toggleRow(cb) {
       document.querySelectorAll('.apply-inp').forEach(i => {
         if (i !== inp && i.closest('tr').querySelector('.apply-cb').checked) already += parseFloat(i.value)||0;
       });
-      const rem = total > 0 ? Math.max(0, total - already) : Math.abs(due);
-      inp.value = Math.min(rem > 0 ? rem : Math.abs(due), Math.abs(due)).toFixed(2);
+      const rem = total > 0 ? Math.max(0, total - already) : Math.abs(origDue);
+      inp.value = Math.min(rem > 0 ? rem : Math.abs(origDue), Math.abs(origDue)).toFixed(2);
     }
     tr.classList.add('applied');
   } else {
@@ -911,11 +914,11 @@ function applyAllOpen() {
   document.querySelectorAll('#txn-tbody .apply-cb').forEach(cb => {
     const tr  = cb.closest('tr');
     const inp = tr.querySelector('.apply-inp');
-    const due = Math.abs(parseFloat(tr.querySelector('.balance-due-text').innerText.replace(/,/g,''))||0);
+    const origDue = Math.abs(parseFloat(tr.dataset.origDue || 0));
     if (cb.checked) return;
-    const rem = total > 0 ? Math.max(0, total - applied) : due;
+    const rem = total > 0 ? Math.max(0, total - applied) : origDue;
     if (rem <= 0.001 && total > 0) return;
-    const amt = Math.min(rem > 0 ? rem : due, due);
+    const amt = Math.min(rem > 0 ? rem : origDue, origDue);
     if (amt <= 0.001) return;
     cb.checked = true;
     inp.value  = amt.toFixed(2);
@@ -1021,6 +1024,18 @@ function recalc() {
   const tendered = parseFloat(document.getElementById('net_amount').value)||0;
   const applied  = getTotalApplied();
   const unapplied = tendered - (applied < 0 ? Math.abs(applied) : applied);
+
+  // Update dynamic Balance Due display for each transaction row in real-time
+  document.querySelectorAll('#txn-tbody tr').forEach(tr => {
+    const origDue = parseFloat(tr.dataset.origDue || 0);
+    const inp = tr.querySelector('.apply-inp');
+    const applyVal = parseFloat(inp ? inp.value : 0) || 0;
+    const remDue = origDue >= 0 ? Math.max(0, origDue - applyVal) : Math.min(0, origDue + applyVal);
+    const dueCell = tr.querySelector('.balance-due-text');
+    if (dueCell) {
+      dueCell.innerText = fmt(remDue);
+    }
+  });
 
   document.getElementById('sum-applied').innerText   = fmt(applied);
   document.getElementById('sum-unapplied').innerText = fmt(unapplied);

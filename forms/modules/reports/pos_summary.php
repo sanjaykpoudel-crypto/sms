@@ -168,13 +168,16 @@ $payments = $db->fetchAll("
 $top_items = $db->fetchAll("
     SELECT 
         i.item_name, i.sku,
-        SUM(all_sales.qty) as total_qty, 
+        SUM(all_sales.case_qty) as total_case_qty,
+        SUM(all_sales.base_qty) as total_base_qty, 
+        SUM(all_sales.base_qty) as total_qty,
         SUM(all_sales.net_amt) as total_net,
         SUM(all_sales.profit_amt) as total_profit
     FROM (
         SELECT 
             pi.item_id,
-            pi.quantity as qty,
+            (CASE WHEN COALESCE(pi.conversion_factor, 1) > 1 THEN pi.quantity ELSE 0 END) as case_qty,
+            COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) as base_qty,
             pi.net_amount as net_amt,
             (pi.net_amount - (COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1)) * i.cost_price)) as profit_amt
         FROM pos_items pi
@@ -186,7 +189,8 @@ $top_items = $db->fetchAll("
         
         SELECT 
             l.item_id,
-            l.quantity as qty,
+            (CASE WHEN COALESCE(l.conversion_factor, 1) > 1 THEN l.quantity ELSE 0 END) as case_qty,
+            COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1)) as base_qty,
             l.line_total as net_amt,
             COALESCE(l.gross_profit, (l.line_total - (l.cost_price * COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))))) as profit_amt
         FROM transaction_lines l
@@ -200,7 +204,7 @@ $top_items = $db->fetchAll("
     ) all_sales
     JOIN items i ON all_sales.item_id = i.id
     GROUP BY all_sales.item_id
-    ORDER BY total_qty ASC
+    ORDER BY total_base_qty DESC
 ", [$date_from, $date_to, $date_from, $date_to]);
 
 // 5. Hourly Sales Distribution
@@ -212,7 +216,7 @@ $hourly_sales = $db->fetchAll("
     FROM (
         SELECT date_time, net_amount FROM pos_entry pos_entry WHERE DATE(date_time) BETWEEN ? AND ? AND is_deleted = 0 AND status = 'completed' {$loc_p_pe}
         UNION ALL
-        SELECT CONCAT(txn_date, ' 09:00:00') as date_time, net_amount FROM transaction_headers transaction_headers WHERE txn_type = 'customer_invoice' AND txn_date BETWEEN ? AND ? AND is_deleted = 0 AND status NOT IN ('void', 'voided', 'draft') AND txn_number NOT LIKE 'POS-%' AND txn_number NOT LIKE 'INV-POS-%' {$loc_h_th}
+        SELECT COALESCE(created_at, CONCAT(txn_date, ' 12:00:00')) as date_time, net_amount FROM transaction_headers transaction_headers WHERE txn_type = 'customer_invoice' AND txn_date BETWEEN ? AND ? AND is_deleted = 0 AND status NOT IN ('void', 'voided', 'draft') AND txn_number NOT LIKE 'POS-%' AND txn_number NOT LIKE 'INV-POS-%' {$loc_h_th}
     ) combined_hourly
     GROUP BY HOUR(date_time)
     ORDER BY hr ASC
@@ -324,14 +328,24 @@ $hourly_sales = $db->fetchAll("
                     <tbody>
                         <?php if (empty($top_items)): ?>
                             <tr><td colspan="5" style="text-align:center; padding: 20px; color: #999;">No items sold in this period.</td></tr>
-                        <?php else: foreach ($top_items as $item): ?>
+                        <?php else: foreach ($top_items as $item): 
+                            $base_qty  = (float)($item['total_base_qty'] ?? $item['total_qty'] ?? 0);
+                            $case_qty  = (float)($item['total_case_qty'] ?? 0);
+                            $total_net = (float)($item['total_net'] ?? 0);
+                            $avg_price = $base_qty > 0 ? ($total_net / $base_qty) : 0;
+                        ?>
                             <tr>
                                 <td>
                                     <strong><?= htmlspecialchars($item['item_name']) ?></strong>
                                 </td>
-                                <td style="text-align: right; font-weight: 700;"><?= number_format($item['total_qty'], 2) ?></td>
+                                <td style="text-align: right; font-weight: 700;">
+                                    <?= number_format($base_qty, 2) ?> PCS
+                                    <?php if ($case_qty > 0): ?>
+                                        <br><small style="color: #0284c7; font-weight: 600;"><?= number_format($case_qty, 2) ?> Case(s)</small>
+                                    <?php endif; ?>
+                                </td>
                                 <td style="text-align: right;"><?= rpt_currency($item['total_net']) ?></td>
-                                <td style="text-align: right;"><?= rpt_currency($item['total_net'] / max(1, $item['total_qty'])) ?></td>
+                                <td style="text-align: right;"><?= rpt_currency($avg_price) ?></td>
                                 <td style="text-align: right; font-weight: 700; color: #2ecc71;"><?= rpt_currency($item['total_profit']) ?></td>
                             </tr>
                         <?php endforeach; endif; ?>

@@ -24,7 +24,11 @@ $list = $db->fetchAll("
     LEFT JOIN customers c_hdr ON t.party_id = c_hdr.id AND t.party_type = 'customer'
     LEFT JOIN vendors v_hdr ON t.party_id = v_hdr.id AND t.party_type = 'vendor'
     LEFT JOIN users u_created ON t.created_by = u_created.id
-    WHERE LOWER(t.txn_type) IN ('journal', 'journal_entry', 'account_transfer') AND t.is_deleted = 0
+    WHERE LOWER(t.txn_type) IN ('journal', 'journal_entry', 'account_transfer') 
+      AND t.is_deleted = 0
+      AND t.txn_number != 'INV-RECON-SYNC'
+      AND COALESCE(t.source, '') != 'inv_recon_sync'
+      AND (t.memo IS NULL OR t.memo NOT LIKE '%Automated Inventory Subledger GL Alignment%')
     ORDER BY t.created_at DESC
 ");
 ?>
