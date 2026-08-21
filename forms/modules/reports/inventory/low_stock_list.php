@@ -3,23 +3,26 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$loc_sql = rpt_location_sql('h');
+require_once 'api/InventoryEngine.php';
 
-$items = $db->fetchAll("
-    SELECT 
-        i.id, i.sku, i.item_name, rc.name as category_name, i.reorder_level, i.reorder_qty, i.cost_price,
-        COALESCE(SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -l.quantity 
-            ELSE 0 END), 0) as current_stock
-    FROM items i
-    LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
-    WHERE i.is_deleted = 0 AND i.is_active = 1
-    GROUP BY i.id
-    ORDER BY current_stock ASC
-");
+$user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
+
+$invEngine = InventoryEngine::getInstance();
+$raw_items = $invEngine->getRealtimeStockValuation(date('Y-m-d'), $location_id);
+$items = [];
+foreach ($raw_items as $ri) {
+    $items[] = [
+        'id'            => $ri['id'],
+        'sku'           => $ri['sku'],
+        'item_name'     => $ri['item_name'],
+        'category_name' => $ri['item_category'] ?? 'Uncategorized',
+        'reorder_level' => $ri['reorder_level'],
+        'reorder_qty'   => $ri['reorder_qty'],
+        'cost_price'    => $ri['cost_price'],
+        'current_stock' => $ri['stock_qty'],
+    ];
+}
 
 $status_filter = $_GET['status'] ?? 'low_stock';
 

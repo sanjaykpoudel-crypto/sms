@@ -241,16 +241,19 @@ try {
             
             $pdo->beginTransaction();
             
-            // 2. Check if there is a previous closing journal and handle it
-            if (!empty($fy['closing_journal_id'])) {
+            $closing_number = $closing_prefix . $fy['name'];
+
+            // 2. Check if there is a previous closing journal and handle it (by ID or by txn_number)
+            $existing_hdrs = $db->fetchAll("SELECT id FROM transaction_headers WHERE id = ? OR txn_number = ?", [$fy['closing_journal_id'] ?? '', $closing_number]);
+            foreach ($existing_hdrs as $eh) {
                 if ($reclose_behavior === 'delete') {
-                    $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$fy['closing_journal_id']]);
-                    $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$fy['closing_journal_id']]);
+                    $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$eh['id']]);
+                    $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$eh['id']]);
                 } else {
-                    // Reverse
-                    reverse_journal_entry($pdo, $fy['closing_journal_id']);
+                    reverse_journal_entry($pdo, $eh['id']);
                 }
             }
+
             if (!empty($fy['opening_journal_id'])) {
                 // Delete the next year opening journal generated previously
                 $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$fy['opening_journal_id']]);
@@ -262,7 +265,6 @@ try {
             $closing_lines = $preview['journal_lines'];
             
             $closing_journal_id = generate_uuid();
-            $closing_number = $closing_prefix . $fy['name'];
             
             // Insert Closing Journal Header
             $db->execute("
@@ -648,9 +650,9 @@ function run_validation($pdo, $db, $start, $end) {
         SELECT 
             i.cost_price,
             COALESCE(SUM(CASE 
-                WHEN h.txn_type = 'vendor_bill' THEN l.quantity 
-                WHEN h.txn_type IN ('customer_invoice','POS') THEN -l.quantity 
-                WHEN h.txn_type = 'inventory_adjustment' THEN l.quantity
+                WHEN h.txn_type = 'vendor_bill' THEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+                WHEN h.txn_type IN ('customer_invoice','POS') THEN -COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+                WHEN h.txn_type = 'inventory_adjustment' THEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
                 ELSE 0 
             END), 0) AS computed_stock
         FROM items i

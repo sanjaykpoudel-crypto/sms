@@ -1307,6 +1307,166 @@ if ($is_logged_in) {
                 updateTotals();
             }
 
+            // Universal DataTables dynamic footer & summary cards recalculation on Quick Search filter
+            function updateTableFooterAndCards(tableEl) {
+                if (!tableEl || !$.fn.DataTable) return;
+                if (!$.fn.DataTable.isDataTable(tableEl)) return;
+
+                const dt = $(tableEl).DataTable();
+                const filteredNodes = dt.rows({ search: 'applied' }).nodes();
+                const filteredCount = dt.rows({ search: 'applied' }).count();
+                const totalCount = dt.rows().count();
+                const isFiltered = dt.search() && dt.search().trim() !== '';
+
+                const $table = $(tableEl);
+                const $tfoot = $table.find('tfoot');
+
+                function parseCellVal(txt) {
+                    if (!txt) return 0;
+                    let cleaned = txt.toString().replace(/Rs\s*/gi, '').replace(/,/g, '').replace(/\+/g, '').trim();
+                    return parseFloat(cleaned) || 0;
+                }
+
+                function fmtCurr(val) {
+                    return 'Rs ' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                }
+
+                function fmtNum(val, dec = 2) {
+                    return val.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+                }
+
+                // Map header titles to column index
+                const colHeaderMap = {};
+                $table.find('thead th').each(function (colIdx) {
+                    const text = $(this).text().trim().toUpperCase();
+                    if (text) {
+                        colHeaderMap[text] = colIdx;
+                    }
+                });
+
+                // Calculate column sums of filtered rows
+                const colSums = {};
+                const colHasRs = {};
+                const colHasSign = {};
+
+                $(filteredNodes).each(function () {
+                    const $rowCells = $(this).children('td, th');
+                    $rowCells.each(function (colIdx) {
+                        const rawTxt = $(this).text().trim();
+                        if (!rawTxt || rawTxt === '—' || rawTxt === '-') return;
+
+                        if (rawTxt.match(/^(?:Rs\s*|-|\+)?[\d,]+(?:\.\d+)?$/i)) {
+                            const num = parseCellVal(rawTxt);
+                            if (colSums[colIdx] === undefined) colSums[colIdx] = 0;
+                            colSums[colIdx] += num;
+
+                            if (rawTxt.includes('Rs')) colHasRs[colIdx] = true;
+                            if (rawTxt.startsWith('+') || rawTxt.startsWith('-')) colHasSign[colIdx] = true;
+                        }
+                    });
+                });
+
+                // 1. Update Footer Row (tfoot)
+                if ($tfoot.length) {
+                    $tfoot.find('tr').each(function () {
+                        const $tr = $(this);
+                        const $cells = $tr.children('td, th');
+
+                        let currentDataCol = 0;
+                        $cells.each(function () {
+                            const $c = $(this);
+                            const colspan = parseInt($c.attr('colspan')) || 1;
+                            const cellId = $c.attr('id');
+                            const rawTxt = $c.text().trim();
+
+                            if (currentDataCol === 0 || rawTxt.toUpperCase().startsWith('TOTAL')) {
+                                if (rawTxt.includes('(')) {
+                                    let unit = 'entries';
+                                    if (rawTxt.match(/bills/i)) unit = 'bills';
+                                    else if (rawTxt.match(/invoices/i)) unit = 'invoices';
+                                    else if (rawTxt.match(/items/i)) unit = 'items';
+                                    else if (rawTxt.match(/records/i)) unit = 'records';
+                                    $c.html('TOTAL (' + filteredCount + ' ' + unit + ')');
+                                } else {
+                                    $c.html('TOTAL (' + filteredCount + ')');
+                                }
+                            } else {
+                                if (cellId === 'foot-open' && colSums[3] !== undefined) {
+                                    $c.text(fmtNum(colSums[3]));
+                                } else if (cellId === 'foot-in' && colSums[4] !== undefined) {
+                                    $c.text('+' + fmtNum(colSums[4]));
+                                } else if (cellId === 'foot-out' && colSums[5] !== undefined) {
+                                    $c.text('-' + fmtNum(colSums[5]));
+                                } else if (cellId === 'foot-close' && colSums[6] !== undefined) {
+                                    $c.text(fmtNum(colSums[6]));
+                                } else if (cellId === 'foot-val' && colSums[7] !== undefined) {
+                                    $c.text(fmtCurr(colSums[7]));
+                                } else if (colSums[currentDataCol] !== undefined) {
+                                    const sumVal = colSums[currentDataCol];
+                                    const isCurr = colHasRs[currentDataCol] || rawTxt.includes('Rs');
+                                    const isSign = colHasSign[currentDataCol];
+
+                                    if (isCurr) {
+                                        $c.text(fmtCurr(sumVal));
+                                    } else if (isSign) {
+                                        $c.text((sumVal >= 0 ? '+' : '') + fmtNum(sumVal));
+                                    } else {
+                                        $c.text(fmtNum(sumVal));
+                                    }
+                                }
+                            }
+                            currentDataCol += colspan;
+                        });
+                    });
+                }
+
+                // 2. Update Top Summary Cards (.rpt-summary-card)
+                $('.rpt-summary-card').each(function () {
+                    const $card = $(this);
+                    const $val = $card.find('.val');
+                    const label = $card.find('.lbl').text().trim().toUpperCase();
+
+                    if (label.includes('TOTAL BILLS') || label.includes('TOTAL INVOICES') || label.includes('TOTAL ITEMS') || label.includes('ITEMS NEEDING') || label.includes('OUT OF STOCK ITEMS')) {
+                        $val.text(filteredCount);
+                    } else if (label.includes('GROSS AMOUNT') || label.includes('GROSS SALES') || label.includes('TOTAL SALES')) {
+                        const colIdx = colHeaderMap['TOTAL'] !== undefined ? colHeaderMap['TOTAL'] : (colHeaderMap['TOTAL AMOUNT'] !== undefined ? colHeaderMap['TOTAL AMOUNT'] : colHeaderMap['GROSS AMOUNT']);
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('PAID AMOUNT') || label.includes('COLLECTED') || label.includes('TOTAL PAID')) {
+                        const colIdx = colHeaderMap['PAID'] !== undefined ? colHeaderMap['PAID'] : colHeaderMap['AMOUNT PAID'];
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('OUTSTANDING BALANCE') || label.includes('PENDING BALANCE') || label.includes('BALANCE')) {
+                        const colIdx = colHeaderMap['BALANCE'] !== undefined ? colHeaderMap['BALANCE'] : colHeaderMap['BALANCE DUE'];
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('VALUATION AT COST') || label.includes('VALUATION @ COST')) {
+                        const colIdx = colHeaderMap['VALUATION @ COST'] !== undefined ? colHeaderMap['VALUATION @ COST'] : colHeaderMap['VALUATION AT COST'];
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('VALUATION AT RETAIL') || label.includes('VALUATION @ RETAIL')) {
+                        const colIdx = colHeaderMap['VALUATION @ RETAIL'] !== undefined ? colHeaderMap['VALUATION @ RETAIL'] : colHeaderMap['VALUATION AT RETAIL'];
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('UNREALIZED PROFIT') || label.includes('POTENTIAL PROFIT') || label.includes('NET PROFIT')) {
+                        const colIdx = colHeaderMap['POTENTIAL PROFIT'] !== undefined ? colHeaderMap['POTENTIAL PROFIT'] : (colHeaderMap['PROFIT'] !== undefined ? colHeaderMap['PROFIT'] : colHeaderMap['GROSS PROFIT']);
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtCurr(colSums[colIdx]));
+                        }
+                    } else if (label.includes('TOTAL STOCK QTY') || label.includes('TOTAL STOCK')) {
+                        const colIdx = colHeaderMap['STOCK QTY'] !== undefined ? colHeaderMap['STOCK QTY'] : colHeaderMap['QUANTITY'];
+                        if (colIdx !== undefined && colSums[colIdx] !== undefined) {
+                            $val.text(fmtNum(colSums[colIdx], 0));
+                        }
+                    }
+                });
+            }
+
             // Initialize DataTables for all list tables
             $(document).ready(function () {
                 if ($.fn.dataTable) {
@@ -1328,6 +1488,11 @@ if ($is_logged_in) {
                         }
                     }
                 });
+
+                $(document).on('draw.dt search.dt', 'table', function () {
+                    updateTableFooterAndCards(this);
+                });
+
             // Display flash notification if set in sessionStorage (e.g., post-delete reload)
             const flashMsg = sessionStorage.getItem('ns_flash_msg');
             const flashType = sessionStorage.getItem('ns_flash_type') || 'success';

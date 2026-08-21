@@ -136,11 +136,15 @@ try {
                 'txn_number' => $txn_number
             ]);
 
-            // Update MRP on item master if provided
+            // Update MRP on item master & location balance if provided
             $mrp_val = isset($mrps[$idx]) && is_numeric($mrps[$idx]) ? (float)$mrps[$idx] : 0;
             if ($mrp_val > 0) {
+                $old_mrp = (float)($db->fetchOne("SELECT mrp FROM items WHERE id = ?", [$item_id])['mrp'] ?? 0);
                 $db->execute("UPDATE items SET mrp = ? WHERE id = ?", [$mrp_val, $item_id]);
                 $db->execute("UPDATE inventory_balances SET mrp = ? WHERE item_id = ? AND location_id = ?", [$mrp_val, $item_id, $location_id]);
+                if (function_exists('log_audit') && abs($old_mrp - $mrp_val) > 0.001) {
+                    log_audit('items', 'update', $item_id, ['mrp' => $old_mrp], ['mrp' => $mrp_val, 'reason' => 'MRP updated via Vendor Bill ' . $txn_number]);
+                }
             }
         }
 

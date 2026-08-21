@@ -47,7 +47,9 @@ $item['current_stock'] = $total_stock_all_locations;
 
 // Fetch related records (Stock Movements)
 $movements = $db->fetchAll("
-    SELECT h.id, h.txn_date, h.txn_number, h.txn_type, l.quantity, l.unit_price, l.line_total,
+    SELECT h.id, h.txn_date, h.txn_number, h.txn_type, l.quantity, l.unit, l.conversion_factor, l.unit_price, l.line_total,
+           COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1)) as base_quantity,
+           COALESCE(NULLIF(l.base_unit_price, 0), CASE WHEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1)) > 0 THEN l.line_total / COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1)) ELSE l.unit_price END) as base_unit_price,
            COALESCE(loc.name, loc_h.name, 'Gokarna') as location_name
     FROM transaction_lines l 
     JOIN transaction_headers h ON l.header_id = h.id 
@@ -368,16 +370,20 @@ function getDiff($oldJson, $newJson) {
             <?php if (empty($movements)): ?>
                 <tr><td colspan="7" style="text-align:center; padding: 20px; color: #999;">No stock movements recorded yet.</td></tr>
             <?php else: foreach($movements as $mov): 
+                $base_qty = (float)($mov['base_quantity'] ?? $mov['quantity']);
+                $base_price = (float)($mov['base_unit_price'] ?? $mov['unit_price']);
                 if (in_array($mov['txn_type'], ['customer_invoice', 'Invoice', 'POS', 'Sale'])) {
                     $is_addition = false;
                 } elseif (in_array($mov['txn_type'], ['vendor_bill', 'Bill', 'Opening Stock'])) {
                     $is_addition = true;
                 } else {
-                    $is_addition = $mov['quantity'] > 0;
+                    $is_addition = $base_qty > 0;
                 }
                 $qty_color = $is_addition ? '#059669' : '#e11d48';
                 $qty_prefix = $is_addition ? '+' : '-';
-                $display_qty = number_format(abs($mov['quantity']), 0);
+                $display_qty = number_format(abs($base_qty), 0);
+                $conv = (float)($mov['conversion_factor'] ?? 1);
+                $sub_note = ($conv > 1 && (float)$mov['quantity'] > 0) ? ' <span style="font-size:10px; color:#64748b; font-weight:normal;">(' . number_format((float)$mov['quantity'], 0) . ' ' . htmlspecialchars($mov['unit'] ?? 'CASE') . ')</span>' : '';
             ?>
             <tr style="border-bottom: 1px solid #f1f5f9;">
                 <td style="padding: 10px;"><?php echo date('M d, Y', strtotime($mov['txn_date'])); ?></td>
@@ -385,9 +391,9 @@ function getDiff($oldJson, $newJson) {
                 <td style="padding: 10px;"><span style="background: #eef2f6; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; color: #475569;"><?php echo str_replace('_', ' ', htmlspecialchars($mov['txn_type'])); ?></span></td>
                 <td style="padding: 10px;"><span style="font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #f1f5f9; color: #334155; font-size: 11px;"><?php echo htmlspecialchars($mov['location_name']); ?></span></td>
                 <td style="padding: 10px; text-align: right; font-weight: 600; color: <?php echo $qty_color; ?>;">
-                    <?php echo $qty_prefix . $display_qty; ?>
+                    <?php echo $qty_prefix . $display_qty . $sub_note; ?>
                 </td>
-                <td style="padding: 10px; text-align: right;">Rs <?php echo number_format($mov['unit_price'], 2); ?></td>
+                <td style="padding: 10px; text-align: right;">Rs <?php echo number_format($base_price, 2); ?></td>
                 <td style="padding: 10px; text-align: right;">Rs <?php echo number_format($mov['line_total'], 2); ?></td>
             </tr>
             <?php endforeach; endif; ?>
@@ -421,24 +427,68 @@ function getDiff($oldJson, $newJson) {
 
 <!-- Tab 6: System Information & Audit Logs -->
 <div id="tab-system" class="ns-tab-content">
-    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px;">
-        <h3 style="margin: 0; color: var(--ns-primary);">Audit Log / Change History</h3>
-        <div style="font-size: 13px; color: #64748b;">
-            SKU: <strong style="color: #0369a1; background: #e0f2fe; padding: 2px 6px; border-radius: 4px; margin-right: 12px;"><?php echo htmlspecialchars($item['sku'] ?? 'N/A'); ?></strong>
-            Internal ID: <strong style="font-family: monospace; color: #1e293b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;"><?php echo htmlspecialchars($item['id']); ?></strong>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+        <h3 style="margin-top: 0; margin-bottom: 16px; font-size: 15px; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            System Information & Master Metadata
+        </h3>
+        <div class="detail-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+            <div>
+                <div class="detail-label">Internal Item ID</div>
+                <div class="detail-value" style="font-family: monospace; font-weight: 700; color: #0284c7;"><?php echo htmlspecialchars($item['id']); ?></div>
+            </div>
+            <div>
+                <div class="detail-label">SKU Code</div>
+                <div class="detail-value"><span style="color: #0369a1; background: #e0f2fe; padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 13px;"><?php echo htmlspecialchars($item['sku'] ?? 'N/A'); ?></span></div>
+            </div>
+            <div>
+                <div class="detail-label">Master Record Status</div>
+                <div class="detail-value">
+                    <?php if (($item['is_active'] ?? 1) == 1): ?>
+                        <span style="background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 12px;">Active Item</span>
+                    <?php else: ?>
+                        <span style="background: #f1f5f9; color: #64748b; padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 12px;">Inactive / Disabled</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div>
+                <div class="detail-label">Created At</div>
+                <div class="detail-value"><?php echo !empty($item['created_at']) ? date('M d, Y H:i', strtotime($item['created_at'])) : 'N/A'; ?></div>
+            </div>
+            <div>
+                <div class="detail-label">Last Updated At</div>
+                <div class="detail-value"><?php echo !empty($item['updated_at']) ? date('M d, Y H:i', strtotime($item['updated_at'])) : 'N/A'; ?></div>
+            </div>
+            <div>
+                <div class="detail-label">Packaging Ratio</div>
+                <div class="detail-value"><?php echo (int)($item['units_per_case'] ?? 1); ?> PCS per <?php echo htmlspecialchars($item['case_unit_name'] ?? 'CASE'); ?></div>
+            </div>
+            <div>
+                <div class="detail-label">Total Stock Movement Records</div>
+                <div class="detail-value" style="font-weight: 700; color: #475569;"><?php echo count($movements); ?> Movements</div>
+            </div>
         </div>
     </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 16px;">
+        <h3 style="margin: 0; color: var(--ns-primary); font-size: 15px;">Audit Log & Modification History</h3>
+        <span style="font-size: 12px; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 12px; font-weight: 600;"><?php echo count($audit_logs); ?> audit records</span>
+    </div>
+
     <?php if(count($audit_logs) == 0): ?>
-        <p style="color: #888; font-style: italic;">No audit changes recorded yet.</p>
+        <div style="padding: 24px; text-align: center; background: #fafafa; border: 1px dashed #cbd5e1; border-radius: 8px; color: #64748b;">
+            <p style="margin: 0 0 6px 0; font-weight: 600;">No explicit item master changes recorded yet.</p>
+            <p style="margin: 0; font-size: 12px; color: #94a3b8;">System automatically records audit trail logs when item pricing, cost, MRP, or details are updated via bill entry or master form edits.</p>
+        </div>
     <?php else: ?>
         <table class="ns-table" style="width: 100%; font-size: 13px;">
             <thead>
                 <tr style="background: #f8f9fa;">
-                    <th width="15%">Date</th>
-                    <th width="15%">User</th>
-                    <th width="20%">Field</th>
-                    <th width="25%">Old Value</th>
-                    <th width="25%">New Value</th>
+                    <th width="18%">Date & Time</th>
+                    <th width="15%">Updated By</th>
+                    <th width="20%">Field Changed</th>
+                    <th width="23%">Old Value</th>
+                    <th width="24%">New Value</th>
                 </tr>
             </thead>
             <tbody>
@@ -451,16 +501,16 @@ function getDiff($oldJson, $newJson) {
                         <td><?php echo date('M d, Y H:i', strtotime($log['created_at'])); ?></td>
                         <td><strong><?php echo htmlspecialchars($log['updated_by_name'] ?? 'System'); ?></strong></td>
                         <td style="color: #64748b; font-style: italic;">Record <?php echo ucfirst($log['action']); ?>d</td>
-                        <td></td>
-                        <td></td>
+                        <td>-</td>
+                        <td>-</td>
                     </tr>
                 <?php else: foreach($diffs as $field => $changes): ?>
                     <tr>
                         <td><?php echo date('M d, Y H:i', strtotime($log['created_at'])); ?></td>
                         <td><strong><?php echo htmlspecialchars($log['updated_by_name'] ?? 'System'); ?></strong></td>
-                        <td style="font-weight: 500;"><?php echo htmlspecialchars(ucwords(str_replace('_', ' ', $field))); ?></td>
+                        <td style="font-weight: 600; color: #334155;"><?php echo htmlspecialchars(ucwords(str_replace('_', ' ', $field))); ?></td>
                         <td style="color: #e74c3c; background: #fff5f5;"><del><?php echo htmlspecialchars((string)$changes['old']); ?></del></td>
-                        <td style="color: #2ecc71; background: #f0fff4; font-weight: 600;"><?php echo htmlspecialchars((string)$changes['new']); ?></td>
+                        <td style="color: #16a34a; background: #f0fdf4; font-weight: 600;"><?php echo htmlspecialchars((string)$changes['new']); ?></td>
                     </tr>
                 <?php endforeach; endif; endforeach; ?>
             </tbody>

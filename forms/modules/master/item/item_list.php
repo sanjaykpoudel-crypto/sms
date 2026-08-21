@@ -7,8 +7,8 @@ $status_filter = $show_all ? "" : " AND i.is_active = 1 ";
 
 $items = $db->fetchAll("SELECT i.*, r.name as category_name, r2.name as unit_name,
     (SELECT COALESCE(SUM(CASE 
-        WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN l.quantity 
-        WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -l.quantity 
+        WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+        WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
         ELSE 0 END), 0)
      FROM transaction_lines l
      JOIN transaction_headers h ON l.header_id = h.id

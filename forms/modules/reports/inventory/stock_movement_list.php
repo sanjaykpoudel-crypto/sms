@@ -13,62 +13,50 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
 $date_to   = $_GET['date_to']   ?? $today;
 
-$items = $db->fetchAll("
-    SELECT i.id, i.item_name, i.sku as item_code, i.cost_price, COALESCE(SUM(ib.quantity_on_hand), 0) as current_stock
+$user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
+
+$loc_sql = "";
+$loc_param = [];
+if (!empty($location_id) && $location_id !== 'all') {
+    $loc_sql = " AND m.location_id = ? ";
+    $loc_param = [(int)$location_id];
+}
+
+$rows = $db->fetchAll("
+    SELECT 
+        i.id, i.sku as item_code, i.item_name,
+        COALESCE(i.current_stock, 0) as current_stock,
+        COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_in ELSE 0 END), 0) as purchased_qty,
+        COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_out ELSE 0 END), 0) as sold_qty
     FROM items i
-    LEFT JOIN inventory_balances ib ON ib.item_id = i.id
+    LEFT JOIN inventory_movements m ON m.item_id = i.id {$loc_sql}
     WHERE i.is_active = 1 AND i.is_deleted = 0
-    GROUP BY i.id, i.item_name, i.sku, i.cost_price
+    GROUP BY i.id, i.sku, i.item_name, i.current_stock
+    HAVING (purchased_qty > 0 OR sold_qty > 0 OR current_stock > 0)
     ORDER BY i.item_name ASC
-");
+", array_merge([$date_from, $date_to, $date_from, $date_to], $loc_param));
 
 $movement_data = [];
 $tot_purchased_qty = 0;
 $tot_sold_qty      = 0;
 
-foreach ($items as $item) {
-    $iid = $item['id'];
-    
-    // Purchases / Inflows in date range
-    $purchased_qty = (float)($db->fetchOne("
-        SELECT SUM(tl.quantity) as total
-        FROM transaction_lines tl
-        JOIN transaction_headers th ON tl.header_id = th.id
-        WHERE tl.item_id = ? AND th.txn_type IN ('bill', 'purchase')
-          AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ", [$iid, $date_from, $date_to])['total'] ?? 0);
+foreach ($rows as $r) {
+    $purchased_qty = (float)$r['purchased_qty'];
+    $sold_qty      = (float)$r['sold_qty'];
+    $net_movement  = $purchased_qty - $sold_qty;
+    $curr_stock    = (float)$r['current_stock'];
 
-    // Sales / Outflows in date range (Invoices + POS)
-    $inv_sold_qty = (float)($db->fetchOne("
-        SELECT SUM(tl.quantity) as total
-        FROM transaction_lines tl
-        JOIN transaction_headers th ON tl.header_id = th.id
-        WHERE tl.item_id = ? AND th.txn_type = 'invoice'
-          AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
-    ", [$iid, $date_from, $date_to])['total'] ?? 0);
-
-    $pos_sold_qty = (float)($db->fetchOne("
-        SELECT SUM(pi.quantity) as total
-        FROM pos_items pi
-        JOIN pos_entry pe ON pi.pos_id = pe.id
-        WHERE pi.item_id = ? AND pe.is_deleted = 0 AND pe.status != 'voided' AND DATE(pe.date_time) BETWEEN ? AND ?
-    ", [$iid, $date_from, $date_to])['total'] ?? 0);
-
-    $sold_qty = $inv_sold_qty + $pos_sold_qty;
-    $net_movement = $purchased_qty - $sold_qty;
-
-    if ($purchased_qty > 0 || $sold_qty > 0 || $item['current_stock'] > 0) {
-        $movement_data[] = [
-            'code'          => $item['item_code'],
-            'name'          => $item['item_name'],
-            'purchased_qty' => $purchased_qty,
-            'sold_qty'      => $sold_qty,
-            'net_movement'  => $net_movement,
-            'current_stock' => (float)$item['current_stock']
-        ];
-        $tot_purchased_qty += $purchased_qty;
-        $tot_sold_qty      += $sold_qty;
-    }
+    $movement_data[] = [
+        'code'          => $r['item_code'],
+        'name'          => $r['item_name'],
+        'purchased_qty' => $purchased_qty,
+        'sold_qty'      => $sold_qty,
+        'net_movement'  => $net_movement,
+        'current_stock' => $curr_stock
+    ];
+    $tot_purchased_qty += $purchased_qty;
+    $tot_sold_qty      += $sold_qty;
 }
 ?>
 

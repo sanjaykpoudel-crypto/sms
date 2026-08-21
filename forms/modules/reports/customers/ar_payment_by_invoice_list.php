@@ -40,7 +40,7 @@ $sql = "
                 FROM journal_entries j 
                 WHERE j.header_id = hb.id 
                   AND j.entry_type = 'debit' 
-                  AND (j.party_id = COALESCE(p.customer_id, hp.party_id) OR j.account_id = 'acc-1100')
+                  AND (j.party_id = COALESCE(p.customer_id, hp.party_id) OR j.account_id IN (SELECT id FROM accounts WHERE account_subtype IN ('Accounts Receivable', 'receivable')))
             ),
             hb.net_amount,
             0.00

@@ -1,13 +1,28 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once 'api/reference_helper.php';
 $db = db();
 $id = $_GET['id'] ?? null;
 $data = [];
 $txn_items = [];
+$default_loc_id = get_user_default_location_id();
 if ($id) {
     // Fetch from transaction_headers
     $data = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ? AND txn_type = 'inventory_adjustment'", [$id]);
     $txn_items = $db->fetchAll("SELECT * FROM transaction_lines WHERE header_id = ?", [$id]);
+    foreach ($txn_items as &$ti) {
+        $l_id = $ti['location_id'] ?? $default_loc_id;
+        $bals = sync_and_get_item_inventory_balances($db, (string)$ti['item_id']);
+        $stk = 0.00;
+        foreach ($bals as $b) {
+            if ((string)$b['location_id'] === (string)$l_id) {
+                $stk = (float)($b['quantity_on_hand'] ?? 0);
+                break;
+            }
+        }
+        $ti['current_stock'] = $stk;
+    }
+    unset($ti);
 } else {
     $data = [
         'txn_number' => getNextTransactionNumber('inventory_adjustment'),
@@ -22,7 +37,6 @@ if ($id) {
 $all_items = $db->fetchAll("SELECT id, item_name, sku, cost_price, current_stock FROM items WHERE is_active = 1 AND is_deleted = 0 ORDER BY item_name ASC");
 $expense_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE account_type IN ('expense', 'income', 'equity') AND is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
 $locations = $db->fetchAll("SELECT id, name FROM locations WHERE is_active = 1 AND is_deleted = 0 ORDER BY name ASC");
-$default_loc_id = get_user_default_location_id();
 ?>
 <div class="ns-form-header">
     <div class="ns-form-title"><i class="fas fa-warehouse" style="margin-right: 10px; color: var(--ns-accent);"></i>
@@ -111,8 +125,12 @@ $default_loc_id = get_user_default_location_id();
                         $unit = $isNew ? '' : ($ti['unit'] ?? '');
                         $selItem = $isNew ? '' : $ti['item_id'];
                         $selLoc  = $isNew ? $default_loc_id : ($ti['location_id'] ?? $default_loc_id);
+
+                        $initStock = $isNew ? 0 : (float)($ti['current_stock'] ?? 0);
+                        $initStockFmt = $isNew ? '' : number_format($initStock, 2);
+                        $initNewStockFmt = $isNew ? '' : number_format($initStock + (float)$qty, 2);
                         ?>
-                        <tr>
+                        <tr data-base-stock="<?php echo $initStock; ?>">
                             <td style="text-align: center; vertical-align: middle;"><?php echo $idx + 1; ?></td>
                             <td>
                                 <select name="item_id[]" class="ns-select" onchange="adjFetchItem(this)" required>
@@ -130,14 +148,14 @@ $default_loc_id = get_user_default_location_id();
                                     <?php endforeach; ?>
                                 </select>
                             </td>
-                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value=""
+                            <td><input type="text" class="ns-input stock-input ns-input-num ns-input-stock" value="<?php echo $initStockFmt; ?>"
                                     readonly style="background: #f0fdf4; color: #166534; font-weight: 700; text-align: right;"
                                     title="Current stock at selected location"></td>
                             <td><input type="number" name="qty[]" class="ns-input qty-input ns-input-num"
                                     value="<?php echo $qty; ?>" step="any" onfocus="this.select()"
                                     oninput="adjCalcRow(this)" onkeydown="adjCheckEnter(event)" placeholder="e.g. -5 or 10"
                                     required></td>
-                            <td><input type="text" class="ns-input new-stock-input ns-input-num ns-input-readonly" value=""
+                            <td><input type="text" class="ns-input new-stock-input ns-input-num ns-input-readonly" value="<?php echo $initNewStockFmt; ?>"
                                     readonly style="background: #eef2ff; color: #312e81; font-weight: 700;" tabindex="-1">
                             </td>
                             <td><input type="text" name="unit[]" class="ns-input unit-input" style="text-align: center;"
@@ -386,22 +404,42 @@ $default_loc_id = get_user_default_location_id();
     }
 
     // Auto-fetch details on load for editing
-    window.addEventListener('load', function () {
+    function initAdjFormRows() {
         document.querySelectorAll('#adjustment-items-table tbody tr').forEach(row => {
             const itemSel = row.querySelector('select[name="item_id[]"]');
             const locSel  = row.querySelector('select[name="line_location_id[]"]');
             if (itemSel && itemSel.value && locSel && locSel.value) {
-                // Fetch cost/unit for the item, then fetch location stock
                 fetch('api/get_item_details.php?id=' + itemSel.value)
                     .then(r => r.json())
                     .then(data => {
                         if (data.error) return;
-                        row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
-                        row.querySelector('.current-cost-input').value = parseFloat(data.cost_price || 0).toFixed(2);
+                        row.dataset.itemData = JSON.stringify(data);
+
+                        const unitTd = row.querySelector('.unit-input').closest('td');
+                        const conv = parseInt(data.units_per_case || 1);
+                        const baseUnit = data.unit_name || data.unit_type || 'PCS';
+                        const caseUnit = data.case_unit_name || 'CASE';
+                        const currentUnit = row.querySelector('.unit-input')?.value || baseUnit;
+
+                        if (conv > 1) {
+                            unitTd.innerHTML = `
+                                <select name="unit[]" class="ns-select unit-input" style="padding: 2px 4px; font-size: 11px; font-weight: 700; color: #0369a1; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 4px;" onchange="adjUnitChanged(this)">
+                                    <option value="${baseUnit}" ${currentUnit === baseUnit ? 'selected' : ''}>${baseUnit}</option>
+                                    <option value="${caseUnit}" ${currentUnit === caseUnit ? 'selected' : ''}>${caseUnit} (${conv} PCS)</option>
+                                </select>
+                            `;
+                        }
+
                         adjFetchLocationStock(locSel);
                     });
             }
         });
         adjCalcTotals();
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAdjFormRows);
+    } else {
+        initAdjFormRows();
+    }
 </script>

@@ -628,7 +628,7 @@
         <div class="dv4-card dv4-col-4" id="widget-outstanding-ar">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-clock" style="color: #ef4444;"></i> Outstanding Receivables
+                    <i class="fas fa-clock" style="color: #ef4444;"></i> Top 10 Receivables
                 </div>
             </div>
             <div class="dv4-card-body dv4-scroll" style="height: 280px; overflow-y: auto;">
@@ -642,7 +642,7 @@
         <div class="dv4-card dv4-col-4" id="widget-outstanding-ap">
             <div class="dv4-card-header">
                 <div class="dv4-card-title">
-                    <i class="fas fa-file-invoice-dollar" style="color: #ec4899;"></i> Outstanding Payables
+                    <i class="fas fa-file-invoice-dollar" style="color: #ec4899;"></i> Top 10 Payables
                 </div>
             </div>
             <div class="dv4-card-body dv4-scroll" style="height: 280px; overflow-y: auto;">

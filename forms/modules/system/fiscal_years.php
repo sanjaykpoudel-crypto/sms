@@ -22,11 +22,11 @@ $list = $db->fetchAll("
 ");
 
 // Selected FY
-$selected_id = $_GET['id'] ?? ($list[0]['id'] ?? '');
+$selected_id = isset($_GET['id']) ? (string)$_GET['id'] : (isset($list[0]['id']) ? (string)$list[0]['id'] : '');
 $selected_fy = null;
-if ($selected_id) {
+if ($selected_id !== '') {
     foreach ($list as $fy) {
-        if ($fy['id'] === $selected_id) {
+        if ((string)$fy['id'] === (string)$selected_id) {
             $selected_fy = $fy;
             break;
         }
@@ -379,7 +379,7 @@ $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active
                         defined.</div>
                 <?php else:
                     foreach ($list as $row):
-                        $active_class = ($row['id'] === $selected_id) ? 'active' : '';
+                        $active_class = ((string)$row['id'] === (string)$selected_id) ? 'active' : '';
                         $badge_class = 'badge-open';
                         if ($row['status'] === 'closed')
                             $badge_class = 'badge-closed';

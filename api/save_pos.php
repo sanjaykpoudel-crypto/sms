@@ -248,6 +248,17 @@ try {
     }
 
     $pdo->commit();
+
+    // 8. Real-Time Sync Inventory Balances for affected items
+    $sync_item_ids = [];
+    foreach ($items as $it) {
+        $iid = $it['id'] ?? $it['item_id'] ?? null;
+        if ($iid) $sync_item_ids[] = (string)$iid;
+    }
+    foreach (array_unique($sync_item_ids) as $sync_item_id) {
+        sync_and_get_item_inventory_balances($db, $sync_item_id);
+    }
+
     clear_dashboard_cache();
 
     // Look up the daily summary invoice header ID to return in response

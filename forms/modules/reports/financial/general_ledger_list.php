@@ -199,7 +199,7 @@ $closing_bal = $opening_bal + $net_change;
         <?php else:
           foreach ($rows as $r): ?>
             <tr>
-              <td><?= $r['entry_date'] ?></td>
+              <td><?= rpt_date($r['entry_date']) ?></td>
               <td style="font-weight:700"><?= htmlspecialchars($r['txn_number']) ?></td>
               <td><span class="ns-badge"
                   style="background:#eef2ff;color:#003087;font-size:10px"><?= strtoupper($r['txn_type']) ?></span></td>

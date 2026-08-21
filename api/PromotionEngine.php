@@ -90,7 +90,7 @@ class PromotionEngine
         if ($mrp === null || $sellingPrice === null) {
             $stmtItem = $this->pdo->prepare("
                 SELECT 
-                    mrp, 
+                    COALESCE(ib.mrp, i.mrp) as mrp, 
                     COALESCE(ib.selling_price, i.selling_price) as selling_price
                 FROM items i
                 LEFT JOIN inventory_balances ib ON ib.item_id = i.id AND ib.location_id = ?

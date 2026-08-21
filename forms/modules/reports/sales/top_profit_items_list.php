@@ -3,10 +3,11 @@ require_once 'database/DBConnection.php';
 require_once 'forms/modules/reports/rpt_helpers.php';
 $db = db();
 
-$fy         = rpt_get_current_fiscal_year_dates();
-$today      = date('Y-m-d');
-$date_from  = $_GET['date_from'] ?? $fy['start_date'];
-$date_to    = $_GET['date_to']   ?? $today;
+$fy           = rpt_get_current_fiscal_year_dates();
+$today        = date('Y-m-d');
+$default_from = date('Y-m-01');
+$date_from    = $_GET['date_from'] ?? $default_from;
+$date_to      = $_GET['date_to']   ?? $today;
 
 $loc_sql = rpt_location_sql('h');
 $items = $db->fetchAll("
@@ -25,7 +26,7 @@ $items = $db->fetchAll("
     JOIN transaction_headers h ON l.header_id = h.id
     JOIN items i ON l.item_id = i.id
     LEFT JOIN reference_codes rc ON i.item_category = rc.id AND rc.type = 'category'
-    WHERE h.txn_type = 'customer_invoice' 
+    WHERE h.txn_type IN ('customer_invoice', 'POS', 'Invoice', 'Sale') 
       AND h.is_deleted = 0 
       AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_date BETWEEN ? AND ? {$loc_sql}
@@ -49,7 +50,7 @@ $overall_margin = $sum_revenue > 0 ? ($sum_profit / $sum_revenue) * 100 : 0;
 ?>
 
 <?php rpt_filter_bar('Top Profit Items Report', [
-    ['name'=>'date_from','label'=>'From','type'=>'date','default'=>date('Y-m-01')],
+    ['name'=>'date_from','label'=>'From','type'=>'date','default'=>$default_from],
     ['name'=>'date_to',  'label'=>'To',  'type'=>'date','default'=>$today],
 ], 'tbl-top-profit-items'); ?>
 

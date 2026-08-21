@@ -12,34 +12,13 @@ foreach($catQuery as $c) {
     $catOptions[$c['id']] = $c['name'];
 }
 
-// Calculate stock = purchases - sales for each item
-$loc_sql = rpt_location_sql('h');
-$rows = $db->fetchAll("
-    SELECT 
-        i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
-        i.cost_price, i.selling_price, i.item_category as category_id,
-        COALESCE(SUM(CASE 
-            WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo', 'Credit Memo') THEN l.quantity 
-            WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit', 'Vendor Credit') THEN -l.quantity 
-            ELSE 0 
-        END), 0) AS stock_qty
-    FROM items i
-    LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
-    LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-    WHERE i.is_deleted = 0 AND i.is_active = 1
-    GROUP BY i.id
-    ORDER BY rc1.name, i.item_name
-");
+require_once 'api/InventoryEngine.php';
 
-$filtered_rows = [];
-foreach ($rows as $r) {
-    if ($cat_filter && $r['category_id'] !== $cat_filter) {
-        continue;
-    }
-    $filtered_rows[] = $r;
-}
+$user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
+
+$invEngine = InventoryEngine::getInstance();
+$filtered_rows = $invEngine->getRealtimeStockValuation(date('Y-m-d'), $location_id, $cat_filter);
 
 $total_qty = 0;
 $total_cost_val = 0;
@@ -53,6 +32,12 @@ foreach ($filtered_rows as $r) {
 
 $total_profit = $total_retail_val - $total_cost_val;
 $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 100 : 0;
+
+// ── Inventory Subledger vs GL Reconciliation Check ──
+require_once 'api/ReportingEngine.php';
+$inv_gl = re_get_inventory_gl_balance($db);
+$inv_diff = abs($total_cost_val - $inv_gl);
+$inv_ok = ($inv_diff < 0.05);
 ?>
 <style>
 .rpt-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -65,6 +50,12 @@ $overall_margin = $total_retail_val > 0 ? ($total_profit / $total_retail_val) * 
 <?php rpt_filter_bar('Inventory Valuation Report', [
     ['name'=>'category','label'=>'Category','type'=>'select','default'=>'','options'=>$catOptions],
 ], 'tbl-inv-valuation'); ?>
+
+<?php if (!$inv_ok): ?>
+<div class="bs-recon-warn" style="text-align:center;padding:8px 20px;margin:6px auto 16px auto;max-width:1000px;background:#fff3cd;color:#856404;font-weight:600;border-radius:6px;font-size:12px">
+  <i class="fas fa-exclamation-circle"></i> INVENTORY RECONCILIATION ERROR — Subledger: <?= rpt_currency($total_cost_val) ?> | GL: <?= rpt_currency($inv_gl) ?> | Diff: <?= rpt_currency($inv_diff) ?>
+</div>
+<?php endif; ?>
 
 <div class="rpt-summary">
     <div class="rpt-summary-card"><div class="val"><?= count($filtered_rows) ?></div><div class="lbl">Total Items</div></div>

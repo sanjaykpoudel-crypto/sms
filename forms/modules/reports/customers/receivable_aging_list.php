@@ -39,6 +39,11 @@ foreach ($customers as $c) {
         $total_over_90 += $b['over_90'];
     }
 }
+
+// ── AR Subledger vs GL Reconciliation Check ──
+require_once 'api/ReportingEngine.php';
+$ar_gl = re_get_ar_gl_balance($db, $today);
+$ar_ok = abs($total_due - $ar_gl) < 0.05;
 ?>
 <?php rpt_header('Accounts Receivable (AR) Aging Report'); ?>
 
@@ -46,6 +51,12 @@ foreach ($customers as $c) {
     <h1 class="ns-page-title"><i class="fas fa-history"></i> Accounts Receivable (AR) Aging Report</h1>
     <div style="font-size: 12px; color: #666; margin-top: 4px;">As of Date: <?= rpt_date($today) ?></div>
 </div>
+
+<?php if (!$ar_ok): ?>
+<div class="bs-recon-warn" style="text-align:center;padding:8px 20px;margin:6px auto 16px auto;max-width:1000px;background:#fff3cd;color:#856404;font-weight:600;border-radius:6px;font-size:12px">
+  <i class="fas fa-exclamation-circle"></i> AR RECONCILIATION ERROR — Subledger: <?= rpt_currency($total_due) ?> | GL: <?= rpt_currency($ar_gl) ?> | Diff: <?= rpt_currency(abs($total_due - $ar_gl)) ?>
+</div>
+<?php endif; ?>
 
 <div class="rpt-summary">
   <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_due) ?></div><div class="lbl">Total Receivables</div></div>

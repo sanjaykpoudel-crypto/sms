@@ -23,7 +23,15 @@ try {
 
     $id = $_POST['id'] ?? null;
     $txn_type = 'Expense';
-    $party_id = $_POST['party_id'] ?? null; // For expenses, this is often just a string name
+    $payee_input = trim($_POST['party_id'] ?? ($_POST['payee'] ?? ''));
+    $party_id = null;
+    $party_type = null;
+
+    if (!empty($payee_input) && is_numeric($payee_input)) {
+        $party_id = (int)$payee_input;
+        $party_type = 'vendor';
+    }
+
     $txn_date = $_POST['txn_date'] ?? date('Y-m-d');
 
     // Check closed fiscal year lock
@@ -34,7 +42,14 @@ try {
         }
     }
     check_fiscal_year_lock($txn_date);
-    $memo = $_POST['memo'] ?? '';
+    $memo = trim($_POST['memo'] ?? '');
+    if (!empty($payee_input) && !is_numeric($payee_input)) {
+        if (empty($memo)) {
+            $memo = 'Payee: ' . $payee_input;
+        } else if (stripos($memo, $payee_input) === false) {
+            $memo = 'Payee: ' . $payee_input . ' - ' . $memo;
+        }
+    }
     $ref_number = $_POST['ref_number'] ?? '';
     $net_amount = (float)($_POST['net_amount'] ?? 0);
     

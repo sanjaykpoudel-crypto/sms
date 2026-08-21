@@ -94,10 +94,14 @@ foreach ($period_changes as $pc) {
     }
 }
 
-// Inject Net Profit to Retained Earnings (acc-3200)
-if (isset($equity_map['acc-3200'])) {
-    $equity_map['acc-3200']['changes'] += $net_profit;
+// Inject Net Profit to Retained Earnings account dynamically
+foreach ($equity_map as $eq_id => &$eq_item) {
+    if (stripos($eq_item['name'], 'retained') !== false) {
+        $eq_item['changes'] += $net_profit;
+        break;
+    }
 }
+unset($eq_item);
 
 // 4. Fetch GL transaction details for equity accounts in date range
 $equity_transactions = $db->fetchAll("

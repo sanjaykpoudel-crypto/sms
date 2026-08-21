@@ -51,8 +51,9 @@ $sql = "
             ) as balance_due
         FROM journal_entries j
         JOIN transaction_headers h ON j.header_id = h.id
+        JOIN accounts a ON j.account_id = a.id
         WHERE (j.party_type = 'vendor' OR j.party_type IS NULL) 
-          AND j.account_id = 'acc-2100'
+          AND a.account_subtype IN ('Accounts Payable', 'payable')
           AND h.is_deleted = 0 
           AND h.status NOT IN ('void', 'voided', 'draft')
           AND h.txn_type IN ('Journal', 'journal_entry')
@@ -80,6 +81,11 @@ foreach ($rows as $r) {
     $total_90 += (float)$r['bucket_90'];
     $total_over_90 += (float)$r['bucket_over_90'];
 }
+
+// ── AP Subledger vs GL Reconciliation Check ──
+require_once 'api/ReportingEngine.php';
+$ap_gl = re_get_ap_gl_balance($db, $today);
+$ap_ok = abs($total_due - $ap_gl) < 0.05;
 ?>
 <?php rpt_header('Accounts Payable (AP) Aging Report'); ?>
 
@@ -87,6 +93,12 @@ foreach ($rows as $r) {
     <h1 class="ns-page-title"><i class="fas fa-history"></i> Accounts Payable (AP) Aging Report</h1>
     <div style="font-size: 12px; color: #666; margin-top: 4px;">As of Date: <?= rpt_date($today) ?></div>
 </div>
+
+<?php if (!$ap_ok): ?>
+<div class="bs-recon-warn" style="text-align:center;padding:8px 20px;margin:6px auto 16px auto;max-width:1000px;background:#fff3cd;color:#856404;font-weight:600;border-radius:6px;font-size:12px">
+  <i class="fas fa-exclamation-circle"></i> AP RECONCILIATION ERROR — Subledger: <?= rpt_currency($total_due) ?> | GL: <?= rpt_currency($ap_gl) ?> | Diff: <?= rpt_currency(abs($total_due - $ap_gl)) ?>
+</div>
+<?php endif; ?>
 
 <div class="rpt-summary">
   <div class="rpt-summary-card"><div class="val"><?= rpt_currency($total_due) ?></div><div class="lbl">Total Payables</div></div>

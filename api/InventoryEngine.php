@@ -69,21 +69,30 @@ class InventoryEngine
         $currentQty = (float)($currBal['quantity_on_hand'] ?? 0);
         $currentCost = (float)($currBal['average_cost'] ?? 0);
 
-        if ($currentQty <= 0) {
-            $newAvgCost = $incomingUnitCost;
-        } else {
-            $totalVal = ($currentQty * $currentCost) + ($incomingQty * $incomingUnitCost);
-            $newQty = $currentQty + $incomingQty;
-            $newAvgCost = $newQty > 0 ? $totalVal / $newQty : $incomingUnitCost;
+        // Use Last Purchase Price directly for cost updates as required
+        $newUnitCost = round($incomingUnitCost, 4);
+
+        // Fetch old cost & packaging info for case cost calculation & audit logging
+        $stmtOld = $this->pdo->prepare("SELECT cost_price, case_purchase_price, units_per_case FROM items WHERE id = ?");
+        $stmtOld->execute([$itemId]);
+        $itemMeta = $stmtOld->fetch(PDO::FETCH_ASSOC);
+
+        $oldCost = (float)($itemMeta['cost_price'] ?? 0);
+        $conv = !empty($itemMeta['units_per_case']) && (int)$itemMeta['units_per_case'] > 0 ? (int)$itemMeta['units_per_case'] : 1;
+        $newCaseCost = round($newUnitCost * $conv, 2);
+
+        // Update items master cost_price and case_purchase_price to Last Purchase Price
+        $stmtUp = $this->pdo->prepare("UPDATE items SET cost_price = ?, case_purchase_price = ? WHERE id = ?");
+        $stmtUp->execute([$newUnitCost, $newCaseCost, $itemId]);
+
+        if (function_exists('log_audit') && abs($oldCost - $newUnitCost) > 0.0001) {
+            log_audit('items', 'update', $itemId, 
+                ['cost_price' => $oldCost, 'case_purchase_price' => $itemMeta['case_purchase_price'] ?? 0], 
+                ['cost_price' => $newUnitCost, 'case_purchase_price' => $newCaseCost, 'reason' => 'Cost updated to Last Purchase Price on purchase/receipt']
+            );
         }
 
-        $newAvgCost = round($newAvgCost, 4);
-
-        // Update items master cost_price
-        $stmtUp = $this->pdo->prepare("UPDATE items SET cost_price = ? WHERE id = ?");
-        $stmtUp->execute([$newAvgCost, $itemId]);
-
-        return $newAvgCost;
+        return $newUnitCost;
     }
 
     /**
@@ -419,7 +428,99 @@ class InventoryEngine
     }
 
     /**
-     * Reconcile inventory stock valuation with GL asset account acc-1200 / Inventory Asset
+     * Get real-time stock valuation directly from inventory balances / items
+     */
+    public function getRealtimeStockValuation($asOfDate = null, $locationId = null, $categoryId = null): array
+    {
+        $asOfDate = $asOfDate ?: date('Y-m-d');
+        $params = [];
+        $locSql = "";
+        if (!empty($locationId) && $locationId !== 'all') {
+            $locSql = " AND ib.location_id = ? ";
+            $params[] = $locationId;
+        }
+        $catSql = "";
+        if (!empty($categoryId)) {
+            $catSql = " AND i.item_category = ? ";
+            $params[] = $categoryId;
+        }
+
+        if (!empty($locationId) && $locationId !== 'all') {
+            $sql = "
+                SELECT 
+                    i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+                    i.cost_price, i.selling_price, i.reorder_level, i.reorder_qty, i.item_category as category_id,
+                    COALESCE(ib.quantity_on_hand, 0) AS stock_qty
+                FROM items i
+                LEFT JOIN inventory_balances ib ON ib.item_id = i.id {$locSql}
+                LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
+                LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
+                WHERE i.is_deleted = 0 AND i.is_active = 1 {$catSql}
+                ORDER BY rc1.name, i.item_name
+            ";
+        } else {
+            $sql = "
+                SELECT 
+                    i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+                    i.cost_price, i.selling_price, i.reorder_level, i.reorder_qty, i.item_category as category_id,
+                    COALESCE(i.current_stock, 0) AS stock_qty
+                FROM items i
+                LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
+                LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
+                WHERE i.is_deleted = 0 AND i.is_active = 1 {$catSql}
+                ORDER BY rc1.name, i.item_name
+            ";
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * Get real-time stock ledger movement directly from inventory_movements table
+     */
+    public function getRealtimeStockLedger(string $fromDate, string $toDate, $locationId = null, $categoryId = null, $itemId = null): array
+    {
+        $params = [$fromDate, $fromDate, $toDate, $fromDate, $toDate];
+        $locSql = "";
+        if (!empty($locationId) && $locationId !== 'all') {
+            $locSql = " AND m.location_id = " . (int)$locationId;
+        }
+
+        $itemSql = "";
+        if (!empty($itemId)) {
+            $itemSql = " AND i.id = ? ";
+            $params[] = $itemId;
+        }
+
+        $catSql = "";
+        if (!empty($categoryId)) {
+            $catSql = " AND i.item_category = ? ";
+            $params[] = $categoryId;
+        }
+
+        $sql = "
+            SELECT 
+                i.id, i.sku, i.item_name, i.cost_price,
+                COALESCE(SUM(CASE WHEN m.movement_date < ? THEN m.net_qty ELSE 0 END), 0) AS opening_qty,
+                COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_in ELSE 0 END), 0) AS qty_in,
+                COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_out ELSE 0 END), 0) AS qty_out
+            FROM items i
+            LEFT JOIN inventory_movements m ON m.item_id = i.id {$locSql}
+            WHERE i.is_deleted = 0 AND i.is_active = 1 {$itemSql} {$catSql}
+            GROUP BY i.id, i.sku, i.item_name, i.cost_price
+            HAVING (opening_qty != 0 OR qty_in != 0 OR qty_out != 0)
+            ORDER BY i.item_name ASC
+        ";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * Reconcile inventory stock valuation with GL asset account dynamically by COA account_subtype
      */
     public function reconcileInventoryValuationWithGL(): array
     {
@@ -431,7 +532,7 @@ class InventoryEngine
             FROM journal_entries j
             JOIN accounts a ON j.account_id = a.id
             JOIN transaction_headers th ON j.header_id = th.id
-            WHERE (a.account_subtype IN ('inventory', 'Inventory Asset') OR a.id IN ('7', 'acc-1200'))
+            WHERE a.account_type = 'asset' AND a.account_subtype IN ('inventory', 'Inventory Asset')
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
         ");
         $glBal = (float)($stmtGl->fetchColumn() ?: 0.0);

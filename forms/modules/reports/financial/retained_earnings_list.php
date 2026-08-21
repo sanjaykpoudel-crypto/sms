@@ -23,7 +23,7 @@ $opening_retained = (float) ($db->fetchOne("
     FROM accounts a
     JOIN journal_entries j ON a.id = j.account_id
     JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.id = 'acc-3200' OR a.account_name LIKE '%retained%')
+    WHERE a.account_type = 'equity' AND (a.account_subtype IN ('Retained Earnings', 'retained_earnings') OR LOWER(a.account_name) LIKE '%retained%')
       AND h.txn_date >= ? AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$fy_start_date, $date_from])['bal'] ?? 0);
 

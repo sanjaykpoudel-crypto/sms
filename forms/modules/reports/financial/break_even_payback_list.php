@@ -187,13 +187,23 @@ $equity_accounts_coa = $db->fetchAll("
     ORDER BY a.account_name ASC
 ", [$date_to]);
 
-// 8. Monthly Trends for Chart.js (Calculated within selected period date range)
+// 8. Monthly Trends for Chart.js (Always fetch 6-month trend window up to $date_to so line charts draw continuous lines)
+$trend_date_from = $date_from;
+$d1 = date_create($date_from);
+$d2 = date_create($date_to);
+if ($d1 && $d2) {
+    $diff_months = (int)$d1->diff($d2)->m + ((int)$d1->diff($d2)->y * 12);
+    if ($diff_months < 5) {
+        $trend_date_from = date('Y-m-01', strtotime('-5 months', strtotime($date_to)));
+    }
+}
+
 $monthly_rows = $db->fetchAll("
     SELECT DATE_FORMAT(h.txn_date, '%b %Y') as month_label,
            DATE_FORMAT(h.txn_date, '%Y-%m') as sort_key,
            SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as sales,
-           SUM(CASE WHEN a.id = 'acc-5100' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as cogs,
-           SUM(CASE WHEN a.account_type = 'expense' AND a.id != 'acc-5100' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as opex
+           SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype IN ('Cost of Goods Sold', 'cogs', 'COGS') THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as cogs,
+           SUM(CASE WHEN a.account_type = 'expense' AND (a.account_subtype NOT IN ('Cost of Goods Sold', 'cogs', 'COGS') OR a.account_subtype IS NULL) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as opex
     FROM journal_entries j
     JOIN accounts a ON j.account_id = a.id
     JOIN transaction_headers h ON j.header_id = h.id
@@ -201,7 +211,7 @@ $monthly_rows = $db->fetchAll("
       AND h.txn_date BETWEEN ? AND ? {$loc_sql_h}
     GROUP BY DATE_FORMAT(h.txn_date, '%b %Y'), DATE_FORMAT(h.txn_date, '%Y-%m')
     ORDER BY sort_key ASC
-", [$date_from, $date_to]);
+", [$trend_date_from, $date_to]);
 
 $chart_months = [];
 $chart_sales  = [];
@@ -552,7 +562,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const profit  = <?php echo json_encode($chart_profit); ?>;
     const beData  = <?php echo json_encode($chart_be); ?>;
 
-    // 1. Chart: Monthly Sales vs Break-Even Target
+    // 1. Chart: Monthly Sales vs Break-Even Target (Two Lines)
     const ctxBE = document.getElementById('chartSalesVsBE').getContext('2d');
     new Chart(ctxBE, {
         type: 'line',
@@ -563,8 +573,13 @@ document.addEventListener("DOMContentLoaded", function() {
                     label: 'Actual Sales',
                     data: sales,
                     borderColor: '#003087',
-                    backgroundColor: 'rgba(0, 48, 135, 0.08)',
+                    backgroundColor: 'rgba(0, 48, 135, 0.12)',
                     borderWidth: 3,
+                    pointRadius: 6,
+                    pointHoverRadius: 9,
+                    pointBackgroundColor: '#003087',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
                     fill: true,
                     tension: 0.3
                 },
@@ -572,17 +587,46 @@ document.addEventListener("DOMContentLoaded", function() {
                     label: 'Break-Even Threshold',
                     data: beData,
                     borderColor: '#ef4444',
-                    borderWidth: 2,
+                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                    borderWidth: 3,
                     borderDash: [6, 4],
+                    pointRadius: 6,
+                    pointHoverRadius: 9,
+                    pointBackgroundColor: '#ef4444',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
                     fill: false,
-                    tension: 0
+                    tension: 0.3
                 }
             ]
         },
         options: {
             responsive: true,
-            plugins: { legend: { position: 'top' } },
-            scales: { y: { beginAtZero: true } }
+            plugins: { 
+                legend: { position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null) {
+                                label += 'Rs ' + context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: { 
+                y: { 
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return 'Rs ' + value.toLocaleString();
+                        }
+                    }
+                } 
+            }
         }
     });
 

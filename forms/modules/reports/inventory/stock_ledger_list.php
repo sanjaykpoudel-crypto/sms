@@ -18,63 +18,12 @@ $items = $db->fetchAll("SELECT id, sku, item_name FROM items WHERE is_deleted=0 
 $item_options = ['' => 'All Items'];
 foreach ($items as $it) { $item_options[$it['id']] = $it['item_name']; }
 
-$params = [$date_from, $date_from, $date_to, $date_from, $date_to];
+require_once 'api/InventoryEngine.php';
+$user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
+$location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
 
-$item_clause = '';
-if ($item_id) {
-    $item_clause = " AND i.id = ? ";
-    $params[] = $item_id;
-}
-
-$cat_clause = '';
-if ($category_id) {
-    $cat_clause = " AND i.item_category = ? ";
-    $params[] = $category_id;
-}
-
-$loc_sql = rpt_location_sql('h');
-
-$rows = $db->fetchAll("
-    SELECT 
-        i.id, i.sku, i.item_name, i.cost_price,
-        COALESCE(SUM(CASE 
-            WHEN h.txn_date < ? THEN
-                CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'bill', 'purchase', 'Opening Stock', 'inventory_adjustment') THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'invoice', 'pos', 'Sale') THEN -l.quantity 
-                    ELSE 0 
-                END
-            ELSE 0 
-        END), 0) AS opening_qty,
-        
-        COALESCE(SUM(CASE 
-            WHEN h.txn_date BETWEEN ? AND ? THEN
-                CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'bill', 'purchase', 'Opening Stock') THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_adjustment' AND l.quantity > 0 THEN l.quantity
-                    ELSE 0 
-                END
-            ELSE 0 
-        END), 0) AS qty_in,
-        
-        COALESCE(SUM(CASE 
-            WHEN h.txn_date BETWEEN ? AND ? THEN
-                CASE 
-                    WHEN h.txn_type IN ('customer_invoice', 'invoice', 'pos', 'Sale') THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_adjustment' AND l.quantity < 0 THEN ABS(l.quantity)
-                    ELSE 0 
-                END
-            ELSE 0 
-        END), 0) AS qty_out
-        
-    FROM items i
-    LEFT JOIN transaction_lines l ON l.item_id = i.id
-    LEFT JOIN transaction_headers h ON l.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    WHERE i.is_deleted = 0 AND i.is_active = 1 {$item_clause} {$cat_clause}
-    GROUP BY i.id
-    HAVING (opening_qty != 0 OR qty_in != 0 OR qty_out != 0)
-    ORDER BY i.item_name ASC
-", $params);
+$invEngine = InventoryEngine::getInstance();
+$rows = $invEngine->getRealtimeStockLedger($date_from, $date_to, $location_id, $category_id, $item_id);
 
 $tot_open = 0; $tot_in = 0; $tot_out = 0; $tot_close = 0; $tot_val = 0;
 ?>

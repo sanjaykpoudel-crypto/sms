@@ -91,9 +91,33 @@ if ($channel === 'all' || $channel === 'pos') {
 $gross_sales = $inv_sales + $pos_sales + $journal_sales;
 $net_sales   = $gross_sales - $sales_returns;
 
-// Cost of Goods Sold & Gross Profit calculations
-$pnl_data     = re_get_pnl($db, $date_from, $date_to, (!empty($loc_id) && $loc_id !== 'all') ? $loc_id : null);
-$cogs         = (float)($pnl_data['total_cogs'] ?? 0);
+// Cost of Goods Sold & Gross Profit calculations (Channel-Aware)
+if ($channel === 'pos') {
+    $cogs = (float) ($db->fetchOne("
+        SELECT SUM(pi.quantity * COALESCE(i.cost_price, 0)) as cogs
+        FROM pos_items pi
+        JOIN pos_entry pe ON pi.pos_id = pe.id
+        JOIN items i ON pi.item_id = i.id
+        WHERE pe.is_deleted = 0 AND pe.status != 'voided' AND DATE(pe.date_time) BETWEEN ? AND ? {$loc_sql_pe}
+    ", [$date_from, $date_to])['cogs'] ?? 0);
+} elseif ($channel === 'invoices') {
+    $cogs = (float) ($db->fetchOne("
+        SELECT SUM(l.quantity * COALESCE(NULLIF(l.cost_price, 0), i.cost_price, 0)) as cogs
+        FROM transaction_lines l
+        JOIN transaction_headers th ON l.header_id = th.id
+        JOIN customer_invoices ci ON ci.header_id = th.id
+        JOIN items i ON l.item_id = i.id
+        WHERE th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+          AND COALESCE(th.source,'') != 'pos_sync'
+          AND ci.invoice_number NOT LIKE 'INV-POS-%'
+          AND ci.invoice_number NOT LIKE 'POS-%' {$loc_sql}
+    ", [$date_from, $date_to])['cogs'] ?? 0);
+} elseif ($channel === 'journals') {
+    $cogs = 0.0;
+} else {
+    $pnl_data = re_get_pnl($db, $date_from, $date_to, (!empty($loc_id) && $loc_id !== 'all') ? $loc_id : null);
+    $cogs     = (float)($pnl_data['total_cogs'] ?? 0);
+}
 $gross_profit = $net_sales - $cogs;
 $margin_pct   = $net_sales > 0 ? round(($gross_profit / $net_sales) * 100, 1) : 0.0;
 ?>

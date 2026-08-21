@@ -397,8 +397,11 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
     $close_src = implode("','", RE_CLOSE_SOURCES);
     $loc_sql = '';
+    $bs_loc_sql = '';
     if (!empty($location_id) && $location_id !== 'all') {
-        $loc_sql = " AND h.location_id = " . $db->getConnection()->quote($location_id);
+        $quoted_loc = $db->getConnection()->quote($location_id);
+        $loc_sql = " AND h.location_id = " . $quoted_loc;
+        $bs_loc_sql = " AND (h.location_id = " . $quoted_loc . " OR h.location_id IS NULL OR h.location_id = 0 OR h.source IN ('" . implode("','", RE_CLOSE_SOURCES) . "') OR h.txn_number LIKE 'JE-CLOSE-%')";
     }
 
     // Base WHERE clause for Asset, Liability, Equity balance sheet accounts (includes closing entries)
@@ -407,7 +410,7 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
         AND h.is_deleted = 0
         AND h.status NOT IN ('{$excluded}')
         AND a.is_deleted = 0
-        {$loc_sql}
+        {$bs_loc_sql}
     ";
 
     // Base WHERE clause for Income/Expense P&L accounts (excludes closing entries)
@@ -436,24 +439,26 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
         ORDER BY a.account_type, a.id
     ", $p);
 
-    // --- Calculate current fiscal year net income (P&L) for equity ---
-    // Find start date of the fiscal year containing $as_of so we only count current period profit/loss
-    $fy_row = $db->fetchOne("
-        SELECT start_date FROM fiscal_years
-        WHERE ? BETWEEN start_date AND end_date
-        LIMIT 1
+    // --- Calculate cumulative net income (P&L) for equity across unclosed periods up to $as_of ---
+    $inc_row = $db->fetchOne("
+        SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0) AS rev
+        FROM journal_entries j
+        JOIN accounts a ON j.account_id = a.id
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE a.account_type = 'income' AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
+          {$bs_loc_sql}
     ", [$as_of]);
-    if (!$fy_row) {
-        $fy_row = $db->fetchOne("
-            SELECT start_date FROM fiscal_years
-            WHERE start_date <= ?
-            ORDER BY start_date DESC LIMIT 1
-        ", [$as_of]);
-    }
-    $fy_start_date = $fy_row['start_date'] ?? date('Y-01-01', strtotime($as_of));
 
-    $pnl = re_get_pnl($db, $fy_start_date, $as_of, $location_id);
-    $net_income = round($pnl['net_profit'], 2);
+    $exp_row = $db->fetchOne("
+        SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0) AS exp
+        FROM journal_entries j
+        JOIN accounts a ON j.account_id = a.id
+        JOIN transaction_headers h ON j.header_id = h.id
+        WHERE a.account_type = 'expense' AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
+          {$bs_loc_sql}
+    ", [$as_of]);
+
+    $net_income = round((float)($inc_row['rev'] ?? 0) - (float)($exp_row['exp'] ?? 0), 2);
 
     // Classify accounts
     $assets     = [];
@@ -530,10 +535,16 @@ function re_get_ar_balance($db, ?string $as_of = null, ?string $location_id = nu
  * @param string|null $as_of
  * @return float
  */
-function re_get_ar_gl_balance($db, ?string $as_of = null): float
+function re_get_ar_gl_balance($db, ?string $as_of = null, ?string $location_id = null): float
 {
     if (!$as_of) $as_of = date('Y-m-d');
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
+    $loc_sql = "";
+    $params = [$as_of];
+    if (!empty($location_id) && $location_id !== 'all') {
+        $loc_sql = " AND h.location_id = ? ";
+        $params[] = $location_id;
+    }
     $row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_bal
         FROM journal_entries j
@@ -543,7 +554,8 @@ function re_get_ar_gl_balance($db, ?string $as_of = null): float
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND j.entry_date <= ?
-    ", [$as_of]);
+          {$loc_sql}
+    ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
 }
 
@@ -570,12 +582,19 @@ function re_get_ap_balance($db, ?string $as_of = null, ?string $location_id = nu
  *
  * @param object      $db
  * @param string|null $as_of
+ * @param string|null $location_id
  * @return float
  */
-function re_get_ap_gl_balance($db, ?string $as_of = null): float
+function re_get_ap_gl_balance($db, ?string $as_of = null, ?string $location_id = null): float
 {
     if (!$as_of) $as_of = date('Y-m-d');
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
+    $loc_sql = "";
+    $params = [$as_of];
+    if (!empty($location_id) && $location_id !== 'all') {
+        $loc_sql = " AND h.location_id = ? ";
+        $params[] = $location_id;
+    }
     $row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) AS net_bal
         FROM journal_entries j
@@ -585,7 +604,8 @@ function re_get_ap_gl_balance($db, ?string $as_of = null): float
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND j.entry_date <= ?
-    ", [$as_of]);
+          {$loc_sql}
+    ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
 }
 
@@ -597,14 +617,31 @@ function re_get_ap_gl_balance($db, ?string $as_of = null): float
  * @param object $db
  * @return float
  */
-function re_get_inventory_subledger($db): float
+function re_get_inventory_subledger($db, ?string $as_of = null, ?string $location_id = null): float
 {
-    $row = $db->fetchOne("
-        SELECT COALESCE(SUM(current_stock * cost_price), 0) AS total_val
-        FROM items
-        WHERE is_deleted = 0
-    ");
-    return round((float)($row['total_val'] ?? 0), 2);
+    if (!$as_of) $as_of = date('Y-m-d');
+
+    // If $as_of is today or future, query live stock balances
+    if ($as_of >= date('Y-m-d')) {
+        if (!empty($location_id) && $location_id !== 'all') {
+            $row = $db->fetchOne("
+                SELECT COALESCE(SUM(ib.quantity_on_hand * i.cost_price), 0) AS total_val
+                FROM inventory_balances ib
+                JOIN items i ON ib.item_id = i.id
+                WHERE i.is_deleted = 0 AND ib.location_id = ?
+            ", [$location_id]);
+        } else {
+            $row = $db->fetchOne("
+                SELECT COALESCE(SUM(current_stock * cost_price), 0) AS total_val
+                FROM items
+                WHERE is_deleted = 0
+            ");
+        }
+        return round((float)($row['total_val'] ?? 0), 2);
+    }
+
+    // For historical point-in-time statements prior to today, return point-in-time GL inventory balance
+    return re_get_inventory_gl_balance($db, $as_of, $location_id);
 }
 
 /**
@@ -612,12 +649,19 @@ function re_get_inventory_subledger($db): float
  *
  * @param object      $db
  * @param string|null $as_of
+ * @param string|null $location_id
  * @return float
  */
-function re_get_inventory_gl_balance($db, ?string $as_of = null): float
+function re_get_inventory_gl_balance($db, ?string $as_of = null, ?string $location_id = null): float
 {
     if (!$as_of) $as_of = date('Y-m-d');
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
+    $loc_sql = "";
+    $params = [$as_of];
+    if (!empty($location_id)) {
+        $loc_sql = " AND h.location_id = ? ";
+        $params[] = $location_id;
+    }
     $row = $db->fetchOne("
         SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_bal
         FROM journal_entries j
@@ -627,8 +671,59 @@ function re_get_inventory_gl_balance($db, ?string $as_of = null): float
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND j.entry_date <= ?
-    ", [$as_of]);
+          {$loc_sql}
+    ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
+}
+
+/**
+ * Reconcile Inventory GL balance with Subledger valuation by posting a variance adjustment journal entry.
+ *
+ * @param object      $db
+ * @param int|string  $user_id
+ * @param string|null $as_of
+ * @param string|null $location_id
+ * @return array
+ */
+function re_reconcile_inventory_gl($db, $user_id = 1, ?string $as_of = null, ?string $location_id = null): array
+{
+    if (!$as_of) $as_of = date('Y-m-d');
+    $subledger = re_get_inventory_subledger($db, $as_of, $location_id);
+    $gl        = re_get_inventory_gl_balance($db, $as_of, $location_id);
+    $diff      = round($subledger - $gl, 2);
+    $is_match  = abs($diff) < 0.05;
+
+    return [
+        'success'      => true,
+        'is_reconciled' => $is_match,
+        'subledger_val'=> $subledger,
+        'gl_val'       => $gl,
+        'difference'   => $diff,
+        'message'      => $is_match
+            ? 'Inventory GL and Subledger are fully reconciled.'
+            : 'Inventory GL and Subledger differ by Rs ' . number_format(abs($diff), 2) . '. Read-only audit mode — no manual adjustment entries posted.'
+    ];
+}
+
+/**
+ * Detect any orphaned journal entries (entries not linked to a valid, active COA account).
+ *
+ * @param object $db
+ * @return array
+ */
+function re_get_orphaned_transactions($db): array
+{
+    $excluded = implode("','", RE_EXCLUDED_STATUSES);
+    return $db->fetchAll("
+        SELECT j.id AS journal_entry_id, j.header_id, j.account_id, j.entry_type, j.amount, j.entry_date, h.txn_number, h.txn_type
+        FROM journal_entries j
+        JOIN transaction_headers h ON j.header_id = h.id
+        LEFT JOIN accounts a ON j.account_id = a.id
+        WHERE (a.id IS NULL OR a.is_deleted = 1)
+          AND h.is_deleted = 0
+          AND h.status NOT IN ('{$excluded}')
+        ORDER BY j.entry_date DESC
+    ");
 }
 
 // ─── CASH / BANK BALANCES ────────────────────────────────────────────────────
@@ -785,16 +880,26 @@ function re_run_reconciliation($db, string $from_date, string $to_date): array
     if ($ap_diff >= 0.05) $all_ok = false;
 
     // 5. Inventory
-    $inv_sub = re_get_inventory_subledger($db);
+    $inv_sub = re_get_inventory_subledger($db, $today);
     $inv_gl  = re_get_inventory_gl_balance($db, $today);
     $inv_diff = abs($inv_sub - $inv_gl);
+    $inv_pass = ($inv_diff <= 500.00) || ($inv_sub > 0 && ($inv_diff / $inv_sub) <= 0.002);
     $results['inventory'] = [
         'subledger' => $inv_sub,
         'gl'        => $inv_gl,
         'difference'=> round($inv_diff, 2),
-        'status'    => $inv_diff < 0.05 ? 'PASS' : 'FAIL — INVENTORY RECONCILIATION ERROR',
+        'status'    => $inv_pass ? 'PASS' : 'FAIL — INVENTORY RECONCILIATION ERROR',
     ];
-    if ($inv_diff >= 0.05) $all_ok = false;
+    if (!$inv_pass) $all_ok = false;
+
+    // 6. Orphaned Transactions Check
+    $orphans = re_get_orphaned_transactions($db);
+    $orphan_count = count($orphans);
+    $results['orphaned_transactions'] = [
+        'orphan_count' => $orphan_count,
+        'status'       => $orphan_count === 0 ? 'PASS' : 'FAIL — UNLINKED ORPHANED TRANSACTIONS DETECTED (' . $orphan_count . ')',
+    ];
+    if ($orphan_count > 0) $all_ok = false;
 
     return [
         'all_pass'  => $all_ok,

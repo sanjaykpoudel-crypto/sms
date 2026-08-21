@@ -1874,10 +1874,10 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             $hdr_stock = (float)($db->fetchOne("
                 SELECT COALESCE(SUM(CASE 
-                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN l.quantity 
-                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN -l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.to_location_id, h.party_id) = ? THEN l.quantity 
-                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.from_location_id, h.location_id) = ? THEN -l.quantity 
+                    WHEN h.txn_type IN ('vendor_bill', 'Bill', 'Opening Stock', 'inventory_adjustment', 'credit_memo') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+                    WHEN h.txn_type IN ('customer_invoice', 'Invoice', 'POS', 'Sale', 'vendor_credit', 'bill_credit') AND (COALESCE(NULLIF(l.location_id, 0), h.location_id) = ?) THEN -COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.to_location_id, h.party_id) = ? THEN COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
+                    WHEN h.txn_type = 'inventory_transfer' AND COALESCE(it.from_location_id, h.location_id) = ? THEN -COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))
                     ELSE 0 END), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
@@ -1897,7 +1897,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             // Add POS Entries if matched by location
             $pos_stock = (float)($db->fetchOne("
-                SELECT COALESCE(SUM(-pi.quantity), 0) as qty
+                SELECT COALESCE(SUM(-COALESCE(NULLIF(pi.base_qty, 0), pi.quantity * COALESCE(pi.conversion_factor, 1))), 0) as qty
                 FROM pos_items pi
                 JOIN pos_entry pe ON pi.pos_id = pe.id
                 LEFT JOIN users u ON pe.created_by = u.id
@@ -1918,7 +1918,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             // 2. Committed Qty
             $committed = (float)($db->fetchOne("
-                SELECT COALESCE(SUM(l.quantity), 0) as qty
+                SELECT COALESCE(SUM(COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
                 WHERE l.item_id = ? AND h.location_id = ? AND h.txn_type IN ('customer_invoice', 'sales_order') AND h.status = 'draft' AND h.is_deleted = 0
@@ -1926,7 +1926,7 @@ if (!function_exists('sync_and_get_item_inventory_balances')) {
 
             // 3. On Order Qty
             $on_order = (float)($db->fetchOne("
-                SELECT COALESCE(SUM(l.quantity), 0) as qty
+                SELECT COALESCE(SUM(COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(l.conversion_factor, 1))), 0) as qty
                 FROM transaction_lines l
                 JOIN transaction_headers h ON l.header_id = h.id
                 WHERE l.item_id = ? AND h.location_id = ? AND h.txn_type IN ('vendor_bill', 'purchase_order') AND h.status = 'draft' AND h.is_deleted = 0
@@ -2147,7 +2147,7 @@ if (!function_exists('log_audit')) {
     {
         try {
             $db = db();
-            $pdo = $db->getPdo();
+            $pdo = method_exists($db, 'getConnection') ? $db->getConnection() : ($db->pdo ?? null);
             $userId = $userId ?: ($_SESSION['user_id'] ?? 1);
 
             $oldJson = !empty($oldValues) ? json_encode($oldValues) : null;

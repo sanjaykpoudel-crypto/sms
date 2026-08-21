@@ -206,14 +206,15 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                         $grossAmt = $isNew ? '0.00' : $ti['line_total'];
                         $unit = $isNew ? '' : ($ti['unit'] ?? '');
                         $selItem = $isNew ? '' : $ti['item_id'];
+                        $origBaseQty = $isNew ? 0 : (float)($ti['base_qty'] ?? ((float)$ti['quantity'] * (float)($ti['conversion_factor'] ?? 1)));
                         ?>
-                        <tr>
+                        <tr data-orig-base-qty="<?php echo $origBaseQty; ?>">
                             <td style="text-align: center; vertical-align: middle;"><?php echo $idx + 1; ?></td>
                             <td>
                                 <select name="item_id[]" class="ns-select" onchange="billFetchItem(this)" required>
                                     <option value="">Select item...</option>
                                     <?php foreach ($all_items as $i): ?>
-                                        <option value="<?php echo $i['id']; ?>" <?php echo $i['id'] == $selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
+                                        <option value="<?php echo $i['id']; ?>" <?php echo (string)$i['id'] === (string)$selItem ? 'selected' : ''; ?>><?php echo htmlspecialchars($i['item_name']); ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </td>
@@ -364,19 +365,31 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
         const caseUnit = data.case_unit_name || 'CASE';
         const isCase = (selectedUnit === caseUnit || selectedUnit === 'CASE' || selectedUnit === 'BOX');
 
-        const baseStock = parseFloat(data.current_stock || 0);
+        const baseCurrentStock = parseFloat(data.current_stock || 0); // Live current stock in DB
         const qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
 
+        const isEditForm = !!document.querySelector('input[name="id"]')?.value;
+        const origBaseQty = parseFloat(row.dataset.origBaseQty || 0);
+
+        // In Edit Mode, live DB stock already includes origBaseQty from this saved transaction.
+        // Stock before this transaction = baseCurrentStock - origBaseQty
+        let priorBaseStock = baseCurrentStock;
+        if (isEditForm && origBaseQty > 0) {
+            priorBaseStock = baseCurrentStock - origBaseQty;
+        }
+
+        let lineBaseQty = isCase ? qty * conv : qty;
+        let newBaseStock = priorBaseStock + lineBaseQty;
+
         if (isCase && conv > 1) {
-            const caseStock = baseStock / conv;
-            row.querySelector('.stock-input').value = caseStock.toFixed(2);
+            row.querySelector('.stock-input').value = (priorBaseStock / conv).toFixed(2);
             if (row.querySelector('.new-stock-input')) {
-                row.querySelector('.new-stock-input').value = (caseStock + qty).toFixed(2);
+                row.querySelector('.new-stock-input').value = (newBaseStock / conv).toFixed(2);
             }
         } else {
-            row.querySelector('.stock-input').value = baseStock.toFixed(2);
+            row.querySelector('.stock-input').value = priorBaseStock.toFixed(2);
             if (row.querySelector('.new-stock-input')) {
-                row.querySelector('.new-stock-input').value = (baseStock + qty).toFixed(2);
+                row.querySelector('.new-stock-input').value = newBaseStock.toFixed(2);
             }
         }
     }
@@ -464,7 +477,9 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
         const itemId = select.value;
         const row = select.closest('tr');
         if (!itemId) {
+            delete row.dataset.itemData;
             row.querySelector('.stock-input').value = '';
+            if (row.querySelector('.new-stock-input')) row.querySelector('.new-stock-input').value = '';
             row.querySelector('.unit-input').value = '';
             row.querySelector('.rate-input').value = '0.00';
             row.querySelector('.mrp-input').value = '0.00';
@@ -501,6 +516,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 }
 
                 row.querySelector('.rate-input').value = parseFloat(data.cost_price || 0).toFixed(2);
+                updateBillRowStockDisplay(row);
                 billCalcFromRate(row.querySelector('.qty-input'));
             });
     }
@@ -520,6 +536,7 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
         }
 
         row.querySelector('.rate-input').value = rate.toFixed(2);
+        updateBillRowStockDisplay(row);
         billCalcFromRate(row.querySelector('.qty-input'));
     }
 
@@ -603,12 +620,12 @@ $all_accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_ac
                 .then(r => r.json())
                 .then(data => {
                     if (data.error) return;
+                    row.dataset.itemData = JSON.stringify(data);
                     row.querySelector('.stock-input').value = parseFloat(data.current_stock || 0).toFixed(2);
-                    row.querySelector('.unit-input').value = data.unit_name || data.unit_type || '';
                     if (row.querySelector('.mrp-input').value === '0.00' || row.querySelector('.mrp-input').value === '0') {
                         row.querySelector('.mrp-input').value = parseFloat(data.mrp || 0).toFixed(2);
                     }
-                    // Do not auto-calculate on load to preserve precisely saved amounts
+                    updateBillRowStockDisplay(row);
                 });
         });
     });

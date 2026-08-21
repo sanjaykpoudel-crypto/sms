@@ -116,59 +116,34 @@ class AccountingEngine
         // 4. Accounting Preferences / system_info (Effective-dated match)
         $prefAccountId = $this->getPreferenceAccountId($preferenceKey, $locationId, $asOfDate);
         if ($prefAccountId !== null) {
-            $legacyMap = [
-                'acc-1010' => 2,  // Cash
-                'acc-1100' => 6,  // AR
-                'acc-1200' => 7,  // Inventory Asset
-                'acc-2100' => 12, // AP
-                'acc-4100' => 25, // Sales
-                'acc-5100' => 26, // COGS
-                'acc-6160' => 36, // Discount
-                'acc-2200' => 13, // Tax
-            ];
-            if (isset($legacyMap[$prefAccountId])) {
-                $prefAccountId = $legacyMap[$prefAccountId];
-            }
             return is_numeric($prefAccountId) ? (int)$prefAccountId : $prefAccountId;
         }
 
-        // 5. Default Fallbacks for core preference keys (using real integer IDs from accounts table)
-        $defaults = [
-            'default_cash_account'            => 2,  // Cash
-            'default_ar_account'              => 6,  // Accounts Receivable
-            'default_inventory_asset_account' => 7,  // Inventory Asset
-            'default_ap_account'              => 12, // Accounts Payable
-            'default_sales_account'           => 25, // Sales Income
-            'default_cogs_account'            => 26, // Cost of Goods Sold
-            'default_discount_account'        => 36, // Discounts Given
-            'default_tax_account'             => 13, // VAT Payable
-            'default_sales_return_account'    => 25, // Sales Income
-            'default_purchase_return_account' => 26, // Cost of Goods Sold
-            'default_drawings_account'        => 39, // Owner Drawings
-            'default_interest_account'        => 40, // Interest Expense
-            'default_freight_account'         => 41, // Freight-In & Transport Cost
-        ];
-        
-        $resolvedAcc = $defaults[$preferenceKey] ?? null;
-
-        // Legacy code mapping if string codes are returned
-        $legacyMap = [
-            'acc-1010' => 2,  // Cash
-            'acc-1100' => 6,  // AR
-            'acc-1200' => 7,  // Inventory Asset
-            'acc-2100' => 12, // AP
-            'acc-4100' => 25, // Sales
-            'acc-5100' => 26, // COGS
-            'acc-6160' => 36, // Discount
-            'acc-2200' => 13, // Tax
+        // 5. Dynamic Fallback lookup from COA by account_type and account_subtype
+        $dynamicQueries = [
+            'default_cash_account'            => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Cash' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_ar_account'              => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Accounts Receivable' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_inventory_asset_account' => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Inventory Asset' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_ap_account'              => "SELECT id FROM accounts WHERE account_type = 'liability' AND account_subtype = 'Accounts Payable' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_sales_account'           => "SELECT id FROM accounts WHERE account_type = 'income' AND (account_subtype IN ('Sales Income', 'Sales') OR LOWER(account_name) LIKE '%sales%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_cogs_account'            => "SELECT id FROM accounts WHERE account_type = 'expense' AND (account_subtype = 'Cost of Goods Sold' OR LOWER(account_name) LIKE '%cost of goods%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_discount_account'        => "SELECT id FROM accounts WHERE LOWER(account_name) LIKE '%discount%' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_tax_account'             => "SELECT id FROM accounts WHERE account_type = 'liability' AND (LOWER(account_name) LIKE '%vat%' OR LOWER(account_name) LIKE '%tax%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_sales_return_account'    => "SELECT id FROM accounts WHERE account_type = 'income' AND (account_subtype IN ('Sales Income', 'Sales') OR LOWER(account_name) LIKE '%sales%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_purchase_return_account' => "SELECT id FROM accounts WHERE account_type = 'expense' AND (account_subtype = 'Cost of Goods Sold' OR LOWER(account_name) LIKE '%cost of goods%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_drawings_account'        => "SELECT id FROM accounts WHERE account_type = 'equity' AND (LOWER(account_name) LIKE '%drawing%' OR LOWER(account_name) LIKE '%withdrawal%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_interest_account'        => "SELECT id FROM accounts WHERE account_type = 'expense' AND LOWER(account_name) LIKE '%interest%' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
+            'default_freight_account'         => "SELECT id FROM accounts WHERE account_type = 'expense' AND (LOWER(account_name) LIKE '%freight%' OR LOWER(account_name) LIKE '%transport%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
         ];
 
-        if (isset($legacyMap[$resolvedAcc])) {
-            $resolvedAcc = $legacyMap[$resolvedAcc];
-        }
-
-        if ($resolvedAcc !== null) {
-            return (int)$resolvedAcc;
+        if (isset($dynamicQueries[$preferenceKey])) {
+            try {
+                $stmt = $this->pdo->query($dynamicQueries[$preferenceKey]);
+                $foundId = $stmt->fetchColumn();
+                if ($foundId !== false && $foundId !== null) {
+                    return is_numeric($foundId) ? (int)$foundId : $foundId;
+                }
+            } catch (Exception $e) {}
         }
 
         throw new AccountingException("Accounting account for preference key '{$preferenceKey}' is not configured.");
