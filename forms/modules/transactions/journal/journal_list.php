@@ -2,21 +2,22 @@
 $db = db();
 $list = $db->fetchAll("
     SELECT t.*, 
-           (SELECT COUNT(DISTINCT je.party_id) 
-            FROM journal_entries je 
-            WHERE je.header_id = t.id AND je.party_id IS NOT NULL AND je.party_id != '') as party_count,
+           (SELECT COUNT(DISTINCT jl.entity_id) 
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id 
+            WHERE je.transaction_id = t.id AND jl.entity_id IS NOT NULL AND jl.entity_id != 0) as party_count,
            (SELECT COALESCE(c.full_name, v.company_name, u.full_name)
-            FROM journal_entries je
-            LEFT JOIN customers c ON je.party_id = c.id AND (je.party_type = 'customer' OR (je.party_type IS NULL AND c.id IS NOT NULL))
-            LEFT JOIN vendors v ON je.party_id = v.id AND (je.party_type = 'vendor' OR (je.party_type IS NULL AND v.id IS NOT NULL))
-            LEFT JOIN users u ON je.party_id = u.id AND je.party_type = 'user'
-            WHERE je.header_id = t.id AND je.party_id IS NOT NULL AND je.party_id != ''
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            LEFT JOIN customers c ON jl.entity_id = c.id AND (jl.entity_type = 'CUSTOMER' OR (jl.entity_type IS NULL AND c.id IS NOT NULL))
+            LEFT JOIN vendors v ON jl.entity_id = v.id AND (jl.entity_type = 'VENDOR' OR (jl.entity_type IS NULL AND v.id IS NOT NULL))
+            LEFT JOIN users u ON jl.entity_id = u.id AND jl.entity_type = 'USER'
+            WHERE je.transaction_id = t.id AND jl.entity_id IS NOT NULL AND jl.entity_id != 0
             LIMIT 1) as single_party_name,
            COALESCE(c_hdr.full_name, v_hdr.company_name) as hdr_party_name,
            u_created.full_name as creator_name,
            COALESCE(
-             (SELECT SUM(amount) FROM journal_entries WHERE header_id = t.id AND entry_type = 'debit' AND account_id != 'acc-3300'),
-             (SELECT SUM(amount) FROM journal_entries WHERE header_id = t.id AND entry_type = 'debit'),
+             (SELECT SUM(jl.debit) FROM journal_lines jl JOIN journal_entries je ON jl.je_id = je.je_id WHERE je.transaction_id = t.id),
              ABS(t.net_amount),
              0
            ) as total_journal_amount

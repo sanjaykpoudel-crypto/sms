@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../api/reference_helper.php';
 // Shared helper: render a report filter bar
 // Usage: include this file after setting $report_title and $filters array
 // $filters = [['name'=>'date_from','label'=>'From','type'=>'date'], ...]
@@ -448,13 +449,14 @@ function rpt_filter_bar(string $title, array $filters, string $export_id = '', s
     echo '</div>';
 }
 
-function rpt_currency(float $v): string {
+function rpt_currency(?float $v = 0.0): string {
+    $val = (float)($v ?? 0.0);
     static $dp = null;
     if ($dp === null) {
         $db = db();
         $dp = (int)($db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = 'decimal_places'")['meta_value'] ?? 2);
     }
-    return 'Rs '.number_format($v, $dp);
+    return 'Rs '.number_format($val, $dp);
 }
 
 function rpt_date($date): string {
@@ -546,12 +548,13 @@ function get_customer_aging_summary($db, string $customer_id, ?string $as_of_dat
     foreach ($invoices as $i) { $debit_docs[] = ['doc_date' => $i['doc_date'], 'amount' => (float)$i['amount']]; }
 
     $journals = $db->fetchAll("
-        SELECT th.txn_date as doc_date, j.amount
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE (j.party_id = CAST(? AS CHAR) OR th.party_id = CAST(? AS CHAR)) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-          AND j.entry_type = 'debit'
-          AND th.txn_type IN ('Journal', 'journal_entry')
+        SELECT th.txn_date as doc_date, jl.debit as amount
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id
+        WHERE (jl.entity_id = ? OR th.party_id = ?) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL)
+          AND jl.debit > 0
+          AND th.txn_type IN ('Journal', 'journal_entry', 'journal')
           AND th.txn_date <= ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}
         ORDER BY th.txn_date DESC
     ", [$customer_id, $customer_id, $as_of_date]);

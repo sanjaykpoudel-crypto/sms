@@ -35,10 +35,10 @@ $sql = "
 
         -- Open Journal Entries to Accounts Payable
         SELECT 
-            COALESCE(j.party_id, h.party_id) as vendor_id,
+            COALESCE(jl.entity_id, h.party_id) as vendor_id,
             h.txn_date as doc_date,
             (
-                SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) 
+                SUM(jl.credit - jl.debit) 
                 - COALESCE((
                     SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                     FROM transaction_links tl
@@ -49,15 +49,16 @@ $sql = "
                       AND ph.status NOT IN ('void', 'voided', 'draft')
                 ), 0.00)
             ) as balance_due
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        JOIN accounts a ON j.account_id = a.id
-        WHERE (j.party_type = 'vendor' OR j.party_type IS NULL) 
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        JOIN accounts a ON jl.account_id = a.id
+        WHERE (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL) 
           AND a.account_subtype IN ('Accounts Payable', 'payable')
           AND h.is_deleted = 0 
           AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.txn_type IN ('Journal', 'journal_entry')
-        GROUP BY h.id, j.party_id, h.party_id, h.txn_date
+          AND h.txn_type IN ('Journal', 'journal_entry', 'journal')
+        GROUP BY h.id, jl.entity_id, h.party_id, h.txn_date
         HAVING balance_due > 0.001
     ) open_docs ON v.id = open_docs.vendor_id
     WHERE v.is_deleted = 0

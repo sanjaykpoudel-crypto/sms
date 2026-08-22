@@ -85,7 +85,7 @@ try {
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
         $db->execute("DELETE FROM vendor_bills WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     $item_ids = $_POST['item_id'] ?? [];
@@ -194,29 +194,52 @@ try {
         $ap_account  = $engine->resolveVendorAPAccount($party_id);
         $tax_account = $engine->resolveAccount('default_tax_account');
 
+        $gl_lines = [];
         // Dr Inventory (per item)
         foreach ($gl_items as $gi) {
             if ($gi['amount'] > 0) {
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $gi['inv_acc'], $gi['item_id'], $gi['amount'], 'Bill ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $gl_lines[] = [
+                    'account_id'  => $gi['inv_acc'],
+                    'debit'       => $gi['amount'],
+                    'credit'      => 0.00,
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $gi['item_id'],
+                    'location_id' => $location_id,
+                ];
             }
         }
         if ($tax_total > 0) {
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $tax_account, $tax_total, 'VAT ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $tax_account,
+                'debit'       => $tax_total,
+                'credit'      => 0.00,
+                'entity_type' => 'NONE',
+                'location_id' => $location_id,
+            ];
         }
         if ($discount_amount > 0) {
             $disc_account = $engine->resolveAccount('default_discount_account');
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $disc_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $disc_account,
+                'debit'       => 0.00,
+                'credit'      => $discount_amount,
+                'entity_type' => 'NONE',
+                'location_id' => $location_id,
+            ];
         }
         if ($grand_total > 0) {
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $ap_account, $grand_total, 'Bill ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $ap_account,
+                'debit'       => 0.00,
+                'credit'      => $grand_total,
+                'entity_type' => 'VENDOR',
+                'entity_id'   => $party_id,
+                'location_id' => $location_id,
+            ];
+        }
+
+        if (!empty($gl_lines)) {
+            $engine->postJournalEntry($id, 'PURCHASE', $gl_lines, $txn_date, 'Bill ' . $txn_number);
         }
     }
 

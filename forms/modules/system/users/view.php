@@ -37,7 +37,8 @@ $audit_logs = $db->fetchAll("
     ORDER BY al.created_at DESC
 ", ['id' => $id]);
 
-function getDiff($oldJson, $newJson) {
+if (!function_exists('getDiff')) {
+    function getDiff($oldJson, $newJson) {
     $old = json_decode($oldJson, true) ?: [];
     $new = json_decode($newJson, true) ?: [];
     
@@ -54,6 +55,7 @@ function getDiff($oldJson, $newJson) {
         }
     }
     return $diff;
+}
 }
 ?>
 

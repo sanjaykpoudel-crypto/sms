@@ -9,7 +9,7 @@
  *
  * ARCHITECTURE:
  *   Transaction → Business Document → AccountingEngine (GL posts)
- *   → journal_entries / transaction_headers
+ *   → journal_entries / journal_lines / transaction_headers
  *   → ReportingEngine (this file)
  *   → Reports / Dashboard
  *
@@ -59,8 +59,8 @@ function re_get_gl_balance($db, int $account_id, ?string $as_of = null, ?string 
 
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
     $date_filter = $from_date
-        ? "AND j.entry_date BETWEEN ? AND ?"
-        : "AND j.entry_date <= ?";
+        ? "AND je.je_date BETWEEN ? AND ?"
+        : "AND je.je_date <= ?";
 
     $close_filter = $exclude_close_entries
         ? "AND (h.source IS NULL OR h.source NOT IN ('" . implode("','", RE_CLOSE_SOURCES) . "'))"
@@ -73,12 +73,13 @@ function re_get_gl_balance($db, int $account_id, ?string $as_of = null, ?string 
     $row = $db->fetchOne("
         SELECT
             a.normal_balance,
-            SUM(CASE WHEN j.entry_type = 'debit'  THEN j.amount ELSE 0 END) AS total_dr,
-            SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) AS total_cr
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id  = h.id
-        WHERE j.account_id = ?
+            SUM(jl.debit) AS total_dr,
+            SUM(jl.credit) AS total_cr
+        FROM journal_lines jl
+        JOIN journal_entries je    ON jl.je_id = je.je_id
+        JOIN accounts a            ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id  = h.id
+        WHERE jl.account_id = ?
           {$date_filter}
           AND a.is_deleted = 0
           AND h.is_deleted = 0
@@ -119,20 +120,20 @@ function re_get_opening_balance($db, int $account_id, string $from_date, ?string
 
     $type = strtolower($acct['account_type'] ?? '');
 
-    // Income-statement accounts: opening balance is always 0 per period
-    if (in_array($type, RE_INCOME_STMT_TYPES)) {
+    // Income statement accounts reset each year — opening is 0
+    if (in_array($type, RE_INCOME_STMT_TYPES, true)) {
         return 0.0;
     }
 
-    // Balance-sheet accounts: balance one day before the period starts
-    $day_before = date('Y-m-d', strtotime($from_date . ' -1 day'));
-    return re_get_gl_balance($db, $account_id, $day_before, null, true);
+    // Balance sheet accounts carry forward cumulative GL balance up to (from_date - 1 day)
+    $prior_to = date('Y-m-d', strtotime("{$from_date} -1 day"));
+    return re_get_gl_balance($db, $account_id, $prior_to, null, false);
 }
 
-// ─── PERIOD MOVEMENT ─────────────────────────────────────────────────────────
+// ─── PERIOD MOVEMENT ──────────────────────────────────────────────────────────
 
 /**
- * Get the period debit and credit movements for an account within a date range.
+ * Get total period debits and credits for an account within a date range.
  *
  * @param object $db
  * @param int    $account_id
@@ -147,12 +148,13 @@ function re_get_period_movement($db, int $account_id, string $from_date, string 
 
     $row = $db->fetchOne("
         SELECT
-            COALESCE(SUM(CASE WHEN j.entry_type = 'debit'  THEN j.amount ELSE 0 END), 0) AS period_dr,
-            COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END), 0) AS period_cr
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE j.account_id = ?
-          AND j.entry_date BETWEEN ? AND ?
+            COALESCE(SUM(jl.debit), 0) AS period_dr,
+            COALESCE(SUM(jl.credit), 0) AS period_cr
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE jl.account_id = ?
+          AND je.je_date BETWEEN ? AND ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND (h.source IS NULL OR h.source NOT IN ('{$close_src}'))
@@ -193,13 +195,14 @@ function re_get_trial_balance($db, string $from_date, string $to_date, ?string $
     $gl_rows = $db->fetchAll("
         SELECT
             a.id, a.account_name, a.account_type, a.account_subtype, a.normal_balance,
-            COALESCE(SUM(CASE WHEN j.entry_type = 'debit'  AND j.entry_date <= '{$to_date}' THEN j.amount ELSE 0 END), 0) AS cum_dr,
-            COALESCE(SUM(CASE WHEN j.entry_type = 'credit' AND j.entry_date <= '{$to_date}' THEN j.amount ELSE 0 END), 0) AS cum_cr,
-            COALESCE(SUM(CASE WHEN j.entry_type = 'debit'  AND j.entry_date BETWEEN '{$from_date}' AND '{$to_date}' THEN j.amount ELSE 0 END), 0) AS period_dr,
-            COALESCE(SUM(CASE WHEN j.entry_type = 'credit' AND j.entry_date BETWEEN '{$from_date}' AND '{$to_date}' THEN j.amount ELSE 0 END), 0) AS period_cr
+            COALESCE(SUM(CASE WHEN je.je_date <= '{$to_date}' THEN jl.debit ELSE 0 END), 0) AS cum_dr,
+            COALESCE(SUM(CASE WHEN je.je_date <= '{$to_date}' THEN jl.credit ELSE 0 END), 0) AS cum_cr,
+            COALESCE(SUM(CASE WHEN je.je_date BETWEEN '{$from_date}' AND '{$to_date}' THEN jl.debit ELSE 0 END), 0) AS period_dr,
+            COALESCE(SUM(CASE WHEN je.je_date BETWEEN '{$from_date}' AND '{$to_date}' THEN jl.credit ELSE 0 END), 0) AS period_cr
         FROM accounts a
-        JOIN journal_entries j ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        JOIN journal_lines jl ON jl.account_id = a.id
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.is_deleted = 0
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
@@ -212,6 +215,7 @@ function re_get_trial_balance($db, string $from_date, string $to_date, ?string $
     $rows = [];
     $tot_close_dr  = 0; $tot_close_cr  = 0;
     $tot_period_dr = 0; $tot_period_cr = 0;
+    $tot_open_dr   = 0; $tot_open_cr   = 0;
 
     foreach ($gl_rows as $row) {
         $nb     = strtolower($row['normal_balance'] ?? 'debit');
@@ -220,75 +224,97 @@ function re_get_trial_balance($db, string $from_date, string $to_date, ?string $
         $p_dr   = (float)$row['period_dr'];
         $p_cr   = (float)$row['period_cr'];
 
-        // Closing net DR position (positive = net debit, negative = net credit)
-        $close_net = $cum_dr - $cum_cr;
+        // Income/expense opening = 0; Asset/liability/equity opening = cum - period
+        $type = strtolower($row['account_type']);
+        $is_inc_exp = in_array($type, RE_INCOME_STMT_TYPES, true);
 
-        // For standard TB: debit-normal accounts show their net in Dr column;
-        // credit-normal accounts show their net in Cr column.
-        // Abnormal balances (e.g. a credit on an asset) go to the opposite column.
-        if ($nb === 'debit') {
-            $close_dr = $close_net >= 0 ? $close_net : 0;
-            $close_cr = $close_net <  0 ? abs($close_net) : 0;
+        if ($is_inc_exp) {
+            $open_balance = 0.0;
+            $net_cum      = $p_dr - $p_cr;
         } else {
-            // credit-normal: positive net_dr means abnormal debit balance
-            $close_dr = $close_net >  0 ? $close_net : 0;
-            $close_cr = $close_net <= 0 ? abs($close_net) : 0;
+            $open_dr      = $cum_dr - $p_dr;
+            $open_cr      = $cum_cr - $p_cr;
+            $open_balance = ($nb === 'credit') ? ($open_cr - $open_dr) : ($open_dr - $open_cr);
+            $net_cum      = $cum_dr - $cum_cr;
         }
 
-        // Opening = cumulative totals minus period amounts
-        $open_dr_raw = $cum_dr - $p_dr;
-        $open_cr_raw = $cum_cr - $p_cr;
-        $open_net    = $open_dr_raw - $open_cr_raw;
-        if ($nb === 'debit') {
-            $open_dr = $open_net >= 0 ? $open_net : 0;
-            $open_cr = $open_net <  0 ? abs($open_net) : 0;
-        } else {
-            $open_dr = $open_net >  0 ? $open_net : 0;
-            $open_cr = $open_net <= 0 ? abs($open_net) : 0;
-        }
+        $open_dr_val = ($open_balance > 0 && $nb !== 'credit') || ($open_balance < 0 && $nb === 'credit') ? abs($open_balance) : 0;
+        $open_cr_val = ($open_balance > 0 && $nb === 'credit') || ($open_balance < 0 && $nb !== 'credit') ? abs($open_balance) : 0;
 
-        if ($close_dr == 0 && $close_cr == 0 && $p_dr == 0 && $p_cr == 0) continue;
+        // Closing balance signed per natural balance
+        $closing_val = ($nb === 'credit') ? -$net_cum : $net_cum;
+
+        // Split into Dr / Cr columns for Trial Balance presentation
+        $closing_dr = ($closing_val > 0 && $nb !== 'credit') || ($closing_val < 0 && $nb === 'credit') ? abs($closing_val) : 0;
+        $closing_cr = ($closing_val > 0 && $nb === 'credit') || ($closing_val < 0 && $nb !== 'credit') ? abs($closing_val) : 0;
+
+        // Skip rows with zero activity and zero closing
+        if (abs($open_balance) < 0.001 && $p_dr == 0 && $p_cr == 0 && $closing_dr == 0 && $closing_cr == 0) {
+            continue;
+        }
 
         $rows[] = [
-            'account_id'      => (int)$row['id'],
+            'id'              => (int)$row['id'],
             'account_name'    => $row['account_name'],
             'account_type'    => $row['account_type'],
             'account_subtype' => $row['account_subtype'],
             'normal_balance'  => $nb,
-            'opening_dr'      => round($open_dr, 2),
-            'opening_cr'      => round($open_cr, 2),
+            'opening_balance' => round($open_balance, 2),
+            'opening_dr'      => round($open_dr_val, 2),
+            'opening_cr'      => round($open_cr_val, 2),
+            'period_debit'    => round($p_dr, 2),
+            'period_credit'   => round($p_cr, 2),
             'period_dr'       => round($p_dr, 2),
             'period_cr'       => round($p_cr, 2),
-            'closing_dr'      => round($close_dr, 2),
-            'closing_cr'      => round($close_cr, 2),
+            'closing_debit'   => round($closing_dr, 2),
+            'closing_credit'  => round($closing_cr, 2),
+            'closing_dr'      => round($closing_dr, 2),
+            'closing_cr'      => round($closing_cr, 2),
+            'net_balance'     => round($closing_val, 2),
         ];
 
-        $tot_close_dr  += $close_dr;
-        $tot_close_cr  += $close_cr;
+        $tot_open_dr   += $open_dr_val;
+        $tot_open_cr   += $open_cr_val;
         $tot_period_dr += $p_dr;
         $tot_period_cr += $p_cr;
+        $tot_close_dr  += $closing_dr;
+        $tot_close_cr  += $closing_cr;
     }
 
-    $diff = abs($tot_close_dr - $tot_close_cr);
+    $diff        = round(abs($tot_close_dr - $tot_close_cr), 2);
+    $is_balanced = $diff < 0.05;
+
     return [
+        'from_date'   => $from_date,
+        'to_date'     => $to_date,
         'rows'        => $rows,
         'totals'      => [
-            'opening_dr'  => 0,
-            'opening_cr'  => 0,
-            'period_dr'   => round($tot_period_dr, 2),
-            'period_cr'   => round($tot_period_cr, 2),
-            'closing_dr'  => round($tot_close_dr, 2),
-            'closing_cr'  => round($tot_close_cr, 2),
+            'period_debit'   => round($tot_period_dr, 2),
+            'period_credit'  => round($tot_period_cr, 2),
+            'closing_debit'  => round($tot_close_dr,  2),
+            'closing_credit' => round($tot_close_cr,  2),
+            'opening_debit'  => round($tot_open_dr,   2),
+            'opening_credit' => round($tot_open_cr,   2),
+            'period_dr'      => round($tot_period_dr, 2),
+            'period_cr'      => round($tot_period_cr, 2),
+            'closing_dr'     => round($tot_close_dr,  2),
+            'closing_cr'     => round($tot_close_cr,  2),
+            'opening_dr'     => round($tot_open_dr,   2),
+            'opening_cr'     => round($tot_open_cr,   2),
+            'difference'     => $diff,
         ],
-        'is_balanced' => $diff < 0.05,
+        'is_balanced' => $is_balanced,
     ];
 }
 
-// ─── PROFIT & LOSS ───────────────────────────────────────────────────────────
+// ─── PROFIT AND LOSS ─────────────────────────────────────────────────────────
 
 /**
- * Build a complete Income Statement (P&L) dataset.
- * STRICTLY period-based — no prior fiscal year carryforward.
+ * Build a complete Income Statement (Profit & Loss) dataset.
+ *
+ * Formulas:
+ *   Gross Profit = Total Revenue - Total COGS
+ *   Net Profit   = Gross Profit - Total Operating Expenses
  *
  * @param object      $db
  * @param string      $from_date
@@ -318,10 +344,11 @@ function re_get_pnl($db, string $from_date, string $to_date, ?string $location_i
     // Revenue accounts
     $revenue_rows = $db->fetchAll("
         SELECT a.id, a.account_name, a.account_subtype,
-               -SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS amount
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+               SUM(jl.credit - jl.debit) AS amount
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type = 'income'
           {$base_where}
         GROUP BY a.id, a.account_name, a.account_subtype
@@ -333,10 +360,11 @@ function re_get_pnl($db, string $from_date, string $to_date, ?string $location_i
     $cogs_subtypes_str = implode("','", RE_COGS_SUBTYPES);
     $cogs_rows = $db->fetchAll("
         SELECT a.id, a.account_name, a.account_subtype,
-               SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS amount
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+               SUM(jl.debit - jl.credit) AS amount
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type = 'expense'
           AND a.account_subtype IN ('{$cogs_subtypes_str}')
           {$base_where}
@@ -348,10 +376,11 @@ function re_get_pnl($db, string $from_date, string $to_date, ?string $location_i
     // Operating expense accounts (non-COGS)
     $expense_rows = $db->fetchAll("
         SELECT a.id, a.account_name, a.account_subtype,
-               SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS amount
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+               SUM(jl.debit - jl.credit) AS amount
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type = 'expense'
           AND (a.account_subtype NOT IN ('{$cogs_subtypes_str}') OR a.account_subtype IS NULL)
           {$base_where}
@@ -406,7 +435,7 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
 
     // Base WHERE clause for Asset, Liability, Equity balance sheet accounts (includes closing entries)
     $bs_where = "
-        AND j.entry_date <= ?
+        AND je.je_date <= ?
         AND h.is_deleted = 0
         AND h.status NOT IN ('{$excluded}')
         AND a.is_deleted = 0
@@ -415,7 +444,7 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
 
     // Base WHERE clause for Income/Expense P&L accounts (excludes closing entries)
     $pnl_where = "
-        AND j.entry_date <= ?
+        AND je.je_date <= ?
         AND h.is_deleted = 0
         AND h.status NOT IN ('{$excluded}')
         AND (h.source IS NULL OR h.source NOT IN ('{$close_src}'))
@@ -428,10 +457,11 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
     $acct_rows = $db->fetchAll("
         SELECT
             a.id, a.account_name, a.account_type, a.account_subtype, a.normal_balance,
-            SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_dr
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+            SUM(jl.debit - jl.credit) AS net_dr
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type IN ('asset','liability','equity')
           {$bs_where}
         GROUP BY a.id, a.account_name, a.account_type, a.account_subtype, a.normal_balance
@@ -441,20 +471,22 @@ function re_get_balance_sheet($db, string $as_of, ?string $location_id = null): 
 
     // --- Calculate cumulative net income (P&L) for equity across unclosed periods up to $as_of ---
     $inc_row = $db->fetchOne("
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0) AS rev
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'income' AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
+        SELECT COALESCE(SUM(jl.credit - jl.debit), 0) AS rev
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE a.account_type = 'income' AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
           {$bs_loc_sql}
     ", [$as_of]);
 
     $exp_row = $db->fetchOne("
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0) AS exp
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE a.account_type = 'expense' AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS exp
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE a.account_type = 'expense' AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('{$excluded}')
           {$bs_loc_sql}
     ", [$as_of]);
 
@@ -546,14 +578,15 @@ function re_get_ar_gl_balance($db, ?string $as_of = null, ?string $location_id =
         $params[] = $location_id;
     }
     $row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_bal
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.debit - jl.credit) AS net_bal
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_subtype IN ('receivable','Accounts Receivable')
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           {$loc_sql}
     ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
@@ -596,14 +629,15 @@ function re_get_ap_gl_balance($db, ?string $as_of = null, ?string $location_id =
         $params[] = $location_id;
     }
     $row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END) AS net_bal
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.credit - jl.debit) AS net_bal
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_subtype IN ('payable','Accounts Payable')
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           {$loc_sql}
     ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
@@ -663,14 +697,15 @@ function re_get_inventory_gl_balance($db, ?string $as_of = null, ?string $locati
         $params[] = $location_id;
     }
     $row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_bal
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.debit - jl.credit) AS net_bal
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_subtype IN ('inventory','Inventory Asset','Inventory')
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           {$loc_sql}
     ", $params);
     return round((float)($row['net_bal'] ?? 0), 2);
@@ -715,14 +750,15 @@ function re_get_orphaned_transactions($db): array
 {
     $excluded = implode("','", RE_EXCLUDED_STATUSES);
     return $db->fetchAll("
-        SELECT j.id AS journal_entry_id, j.header_id, j.account_id, j.entry_type, j.amount, j.entry_date, h.txn_number, h.txn_type
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN accounts a ON j.account_id = a.id
+        SELECT jl.jl_id AS journal_entry_id, je.transaction_id AS header_id, jl.account_id, (CASE WHEN jl.debit > 0 THEN 'debit' ELSE 'credit' END) AS entry_type, (jl.debit + jl.credit) AS amount, je.je_date AS entry_date, h.txn_number, h.txn_type
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        LEFT JOIN accounts a ON jl.account_id = a.id
         WHERE (a.id IS NULL OR a.is_deleted = 1)
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
-        ORDER BY j.entry_date DESC
+        ORDER BY je.je_date DESC
     ");
 }
 
@@ -749,13 +785,14 @@ function re_get_accounts_by_subtype($db, $subtypes, ?string $as_of = null, ?arra
         $excl_ids_sql = " AND a.id NOT IN (" . implode(',', array_map('intval', $exclude_ids)) . ")";
     }
     $row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS net_bal
-        FROM journal_entries j
-        JOIN accounts a          ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.debit - jl.credit) AS net_bal
+        FROM journal_lines jl
+        JOIN journal_entries je  ON jl.je_id = je.je_id
+        JOIN accounts a          ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_subtype IN ('{$subtype_str}')
           AND a.account_type = 'asset'
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND (h.source IS NULL OR h.source NOT IN ('{$close_src}'))
@@ -783,12 +820,13 @@ function re_get_retained_earnings($db, ?string $as_of = null): float
 
     // Net income to date (all income - all expense through this date)
     $revenue = (float)($db->fetchOne("
-        SELECT -SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS v
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.credit - jl.debit) AS v
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type = 'income'
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND (h.source IS NULL OR h.source NOT IN ('{$close_src}'))
@@ -796,12 +834,13 @@ function re_get_retained_earnings($db, ?string $as_of = null): float
     ", [$as_of])['v'] ?? 0);
 
     $expenses = (float)($db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END) AS v
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT SUM(jl.debit - jl.credit) AS v
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE a.account_type = 'expense'
-          AND j.entry_date <= ?
+          AND je.je_date <= ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           AND (h.source IS NULL OR h.source NOT IN ('{$close_src}'))

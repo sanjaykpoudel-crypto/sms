@@ -1394,9 +1394,9 @@ if ($is_logged_in) {
                                 if (cellId === 'foot-open' && colSums[3] !== undefined) {
                                     $c.text(fmtNum(colSums[3]));
                                 } else if (cellId === 'foot-in' && colSums[4] !== undefined) {
-                                    $c.text('+' + fmtNum(colSums[4]));
+                                    $c.text('+' + fmtNum(Math.abs(colSums[4])));
                                 } else if (cellId === 'foot-out' && colSums[5] !== undefined) {
-                                    $c.text('-' + fmtNum(colSums[5]));
+                                    $c.text('-' + fmtNum(Math.abs(colSums[5])));
                                 } else if (cellId === 'foot-close' && colSums[6] !== undefined) {
                                     $c.text(fmtNum(colSums[6]));
                                 } else if (cellId === 'foot-val' && colSums[7] !== undefined) {

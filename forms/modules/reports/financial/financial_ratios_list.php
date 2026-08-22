@@ -29,55 +29,60 @@ $net_profit   = $pnl['net_profit'];
 
 // Cash & Bank: asset accounts with subtype 'Cash' or 'Bank'
 $cash_bank = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as v
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset'
       AND a.account_subtype IN ('Cash', 'Bank')
-      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 // AR: accounts with account_subtype = 'Accounts Receivable'
 $receivables = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as v
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset' AND a.account_subtype = 'Accounts Receivable'
-      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 // Inventory: accounts with account_subtype = 'Inventory Asset'
 $inventory_asset = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as v
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as v
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset' AND a.account_subtype = 'Inventory Asset'
-      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 $current_assets = $cash_bank + $receivables + $inventory_asset;
 
 // Liabilities: all accounts with account_type = 'liability'
 $current_liabilities = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as v
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT COALESCE(SUM(jl.credit - jl.debit), 0) as v
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'liability'
-      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 // Equity: accounts with account_type = 'equity' (credit-normal, so flip sign)
 $equity_accts = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as v
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT COALESCE(SUM(jl.credit - jl.debit), 0) as v
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity'
-      AND j.entry_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
+      AND je.je_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['v'] ?? 0);
 
 $total_equity = $equity_accts + $net_profit; // equity + current period net income

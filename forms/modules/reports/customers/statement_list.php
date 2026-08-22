@@ -22,11 +22,18 @@ if ($customer_id) {
                                 JOIN transaction_headers th ON ci.header_id = th.id 
                                 WHERE ci.customer_id = ? AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date])['total'] ?? 0;
     
-    $jour_before = $db->fetchOne("SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total 
-                                 FROM journal_entries j
-                                 JOIN transaction_headers th ON j.header_id = th.id 
-                                 WHERE j.party_id = ? AND j.party_type = 'customer'
-                                   AND th.txn_date < ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}", [$customer_id, $from_date])['total'] ?? 0;
+    $jour_before = (float)($db->fetchOne("
+        SELECT SUM(jl.debit - jl.credit) as total 
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id 
+        WHERE (jl.entity_id = ? OR th.party_id = ?) 
+          AND (UPPER(jl.entity_type) = 'CUSTOMER' OR jl.entity_type IS NULL OR LOWER(th.party_type) = 'customer')
+          AND th.txn_date < ? 
+          AND th.status NOT IN ('void', 'voided', 'draft') 
+          AND th.is_deleted = 0 
+          AND LOWER(th.txn_type) IN ('journal', 'journal_entry', 'opening balance', 'opening_balance', 'debit_note', 'credit_note') {$loc_sql}
+    ", [$customer_id, $customer_id, $from_date])['total'] ?? 0);
 
     $pay_before = $db->fetchOne("
         SELECT COALESCE(SUM(p.amount), 0) as total 
@@ -70,15 +77,31 @@ if ($customer_id) {
                                WHERE ci.customer_id = ? AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 {$loc_sql}", [$customer_id, $from_date, $to_date]);
 
     // 2b. Get Tagged Journals in range
-    $journals = $db->fetchAll("SELECT th.txn_date as date, th.txn_number as number, 'Journal' as type,
-                                      SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END) as debit,
-                                      SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) as credit,
-                                      th.memo
-                               FROM journal_entries j
-                               JOIN transaction_headers th ON j.header_id = th.id
-                               WHERE j.party_id = ? AND j.party_type = 'customer'
-                                 AND th.txn_date BETWEEN ? AND ? AND th.status NOT IN ('void', 'voided', 'draft') AND th.is_deleted = 0 AND th.txn_type IN ('Journal', 'journal_entry') {$loc_sql}
-                               GROUP BY th.id, th.txn_date, th.txn_number, th.memo", [$customer_id, $from_date, $to_date]);
+    $journals = $db->fetchAll("
+        SELECT th.txn_date as date, 
+               th.txn_number as number, 
+               CASE 
+                   WHEN UPPER(COALESCE(je.memo, th.memo)) LIKE '%DEBIT NOTE%' OR LOWER(th.txn_type) = 'debit_note' THEN 'Debit Note'
+                   WHEN UPPER(COALESCE(je.memo, th.memo)) LIKE '%CREDIT NOTE%' OR LOWER(th.txn_type) = 'credit_note' THEN 'Credit Note'
+                   WHEN UPPER(COALESCE(je.memo, th.memo)) LIKE '%OPENING BALANCE%' OR LOWER(th.txn_type) LIKE '%opening%' THEN 'Opening Balance'
+                   ELSE 'Journal'
+               END as type,
+               jl.debit as debit,
+               jl.credit as credit,
+               COALESCE(NULLIF(je.memo, ''), NULLIF(th.memo, ''), 'Journal Entry') as memo,
+               '' as applied_to_ref
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id
+        WHERE (jl.entity_id = ? OR th.party_id = ?) 
+          AND (UPPER(jl.entity_type) = 'CUSTOMER' OR jl.entity_type IS NULL OR LOWER(th.party_type) = 'customer')
+          AND (jl.debit > 0 OR jl.credit > 0)
+          AND th.txn_date BETWEEN ? AND ? 
+          AND th.status NOT IN ('void', 'voided', 'draft') 
+          AND th.is_deleted = 0 
+          AND LOWER(th.txn_type) IN ('journal', 'journal_entry', 'opening balance', 'opening_balance', 'debit_note', 'credit_note') {$loc_sql}
+        ORDER BY th.txn_date ASC, jl.jl_id ASC
+    ", [$customer_id, $customer_id, $from_date, $to_date]);
 
     // 3. Get Payments in range (Money IN from customer)
     $payments = $db->fetchAll("
@@ -173,8 +196,8 @@ if ($customer_id) {
 
 rpt_filter_bar('Customer Statement', [
     ['name'=>'customer_id', 'label'=>'Customer', 'type'=>'select', 'options'=>$customer_options],
-    ['name'=>'from_date', 'label'=>'From', 'type'=>'date', 'default'=>date('Y-m-01')],
-    ['name'=>'to_date', 'label'=>'To', 'type'=>'date', 'default'=>date('Y-m-d')],
+    ['name'=>'from_date', 'label'=>'From', 'type'=>'date', 'default'=>$from_date],
+    ['name'=>'to_date', 'label'=>'To', 'type'=>'date', 'default'=>$to_date],
 ], 'tbl-statement', $wa_btn); ?>
 
 <?php if ($customer_id): ?>
@@ -314,10 +337,12 @@ rpt_filter_bar('Customer Statement', [
                                 $badgeClass = 'ns-badge-primary';
                             } elseif ($row['type'] == 'Payment') {
                                 $badgeClass = 'ns-badge-success';
-                            } elseif ($row['type'] == 'Credit Memo') {
+                            } elseif ($row['type'] == 'Credit Memo' || $row['type'] == 'Credit Note') {
                                 $badgeClass = 'ns-badge-warning';
                             } elseif ($row['type'] == 'Customer Refund' || $row['type'] == 'Refund') {
                                 $badgeClass = 'ns-badge-danger';
+                            } elseif ($row['type'] == 'Journal' || $row['type'] == 'Journal Voucher' || $row['type'] == 'Debit Note' || $row['type'] == 'Opening Balance') {
+                                $badgeClass = 'ns-badge-info';
                             }
                             ?>
                             <span class="ns-badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($row['type']); ?></span>

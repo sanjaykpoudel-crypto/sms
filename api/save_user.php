@@ -2,6 +2,18 @@
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 require_once '../database/DBConnection.php';
 
+// Strict Authentication and RBAC Check
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Admin privileges required.']);
+        exit;
+    }
+    $_SESSION['error'] = "Unauthorized access. Admin privileges required.";
+    header("Location: ../index.php");
+    exit;
+}
+
 $db = db();
 $pdo = $db->getConnection();
 
@@ -13,7 +25,7 @@ $password = $_POST['password'] ?? '';
 $role       = trim($_POST['role'] ?? 'cashier');
 $locationId = !empty($_POST['location_id']) ? trim($_POST['location_id']) : null;
 $isActive   = isset($_POST['is_inactive']) ? 0 : (isset($_POST['is_active']) ? (int)$_POST['is_active'] : 1);
-$userId     = $_SESSION['user_id'] ?? null;
+$userId     = $_SESSION['user_id'];
 
 $phone            = trim($_POST['phone'] ?? '');
 $designation      = trim($_POST['designation'] ?? '');

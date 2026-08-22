@@ -137,8 +137,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const footVal   = document.getElementById('foot-val');
 
         if (footOpen)  footOpen.innerText  = fmtNum(openSum);
-        if (footIn)    footIn.innerText    = '+' + fmtNum(inSum);
-        if (footOut)   footOut.innerText   = '-' + fmtNum(outSum);
+        if (footIn)    footIn.innerText    = '+' + fmtNum(Math.abs(inSum));
+        if (footOut)   footOut.innerText   = '-' + fmtNum(Math.abs(outSum));
         if (footClose) footClose.innerText = fmtNum(closeSum);
         if (footVal)   footVal.innerText   = fmtCurr(valSum);
     }

@@ -31,16 +31,17 @@ $sql = "
         COALESCE(
             ci.total_amount,
             (
-                SELECT j.amount 
-                FROM journal_entries j 
-                WHERE j.id = SUBSTRING_INDEX(SUBSTRING_INDEX(tl.link_type, ':', 2), ':', -1)
+                SELECT jl.debit 
+                FROM journal_lines jl 
+                WHERE jl.jl_id = CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(tl.link_type, ':', 2), ':', -1) AS UNSIGNED)
             ),
             (
-                SELECT SUM(j.amount) 
-                FROM journal_entries j 
-                WHERE j.header_id = hb.id 
-                  AND j.entry_type = 'debit' 
-                  AND (j.party_id = COALESCE(p.customer_id, hp.party_id) OR j.account_id IN (SELECT id FROM accounts WHERE account_subtype IN ('Accounts Receivable', 'receivable')))
+                SELECT SUM(jl.debit) 
+                FROM journal_lines jl 
+                JOIN journal_entries je ON jl.je_id = je.je_id
+                WHERE je.transaction_id = hb.id 
+                  AND jl.debit > 0
+                  AND (jl.entity_id = COALESCE(p.customer_id, hp.party_id) OR jl.account_id IN (SELECT id FROM accounts WHERE account_subtype IN ('Accounts Receivable', 'receivable', 'AR')))
             ),
             hb.net_amount,
             0.00

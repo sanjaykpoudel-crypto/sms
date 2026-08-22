@@ -51,41 +51,44 @@ if (!empty($account_ids)) {
 
   $loc_sql = rpt_location_sql('h');
   $op_row = $db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE j.account_id IN ($placeholders)
-          AND j.entry_date >= ? AND j.entry_date < ? 
+        SELECT SUM(jl.debit - jl.credit) as bal
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE jl.account_id IN ($placeholders)
+          AND je.je_date >= ? AND je.je_date < ? 
           AND h.is_deleted = 0 
           AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
     ", $op_params);
   $opening_bal = (float) ($op_row['bal'] ?? 0.0);
 }
 
-// Build the query from journal_entries
-$where = "j.entry_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') " . rpt_location_sql('h');
+// Build the query from journal_lines
+$where = "je.je_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') " . rpt_location_sql('h');
 $params = [$date_from, $date_to];
 
 if (!empty($account_ids)) {
   $placeholders = implode(',', array_fill(0, count($account_ids), '?'));
-  $where .= " AND j.account_id IN ($placeholders)";
+  $where .= " AND jl.account_id IN ($placeholders)";
   $params = array_merge($params, $account_ids);
 }
 
 $sql = "
     SELECT 
-        j.entry_date,
+        je.je_date as entry_date,
         h.txn_number,
         h.txn_type,
-        j.memo,
+        je.memo,
         a.account_name,
         REPLACE(a.id, 'acc-', '') as account_code,
-        j.entry_type,
-        j.amount,
+        jl.debit,
+        jl.credit,
+        IF(jl.debit > 0, 'debit', 'credit') as entry_type,
+        IF(jl.debit > 0, jl.debit, jl.credit) as amount,
         COALESCE(
-            CASE WHEN j.party_type = 'customer' THEN (SELECT full_name FROM customers WHERE id = j.party_id LIMIT 1) END,
-            CASE WHEN j.party_type = 'vendor' THEN (SELECT company_name FROM vendors WHERE id = j.party_id LIMIT 1) END,
-            CASE WHEN j.party_type = 'user' THEN (SELECT full_name FROM users WHERE id = j.party_id LIMIT 1) END,
+            CASE WHEN jl.entity_type = 'CUSTOMER' THEN (SELECT full_name FROM customers WHERE id = jl.entity_id LIMIT 1) END,
+            CASE WHEN jl.entity_type = 'VENDOR' THEN (SELECT company_name FROM vendors WHERE id = jl.entity_id LIMIT 1) END,
+            CASE WHEN jl.entity_type = 'USER' THEN (SELECT full_name FROM users WHERE id = jl.entity_id LIMIT 1) END,
             CASE WHEN h.party_type = 'customer' THEN (SELECT full_name FROM customers WHERE id = h.party_id LIMIT 1) END,
             CASE WHEN h.party_type = 'vendor' THEN (SELECT company_name FROM vendors WHERE id = h.party_id LIMIT 1) END,
             CASE WHEN h.party_type = 'user' THEN (SELECT full_name FROM users WHERE id = h.party_id LIMIT 1) END,
@@ -98,11 +101,12 @@ $sql = "
             (SELECT v.company_name FROM expenses e JOIN vendors v ON e.vendor_id = v.id WHERE e.header_id = h.id LIMIT 1),
             '-'
         ) as party
-    FROM journal_entries j
-    JOIN transaction_headers h ON j.header_id = h.id
-    JOIN accounts a ON j.account_id = a.id
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    JOIN accounts a ON jl.account_id = a.id
     WHERE $where
-    ORDER BY j.entry_date DESC, h.updated_at DESC
+    ORDER BY je.je_date DESC, h.updated_at DESC
 ";
 
 $rows = $db->fetchAll($sql, $params);
@@ -110,10 +114,8 @@ $rows = $db->fetchAll($sql, $params);
 $total_debit = 0.0;
 $total_credit = 0.0;
 foreach ($rows as $r) {
-  if ($r['entry_type'] === 'debit')
-    $total_debit += (float) $r['amount'];
-  else
-    $total_credit += (float) $r['amount'];
+  $total_debit += (float) ($r['debit'] ?? 0);
+  $total_credit += (float) ($r['credit'] ?? 0);
 }
 
 $net_change = $total_debit - $total_credit;

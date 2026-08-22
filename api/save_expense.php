@@ -86,7 +86,7 @@ try {
         
         // Clean up old entries
         $db->execute("DELETE FROM expenses WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     // Insert into expenses table
@@ -96,15 +96,23 @@ try {
     ]);
 
     // GL Entries
-    // 1. Debit Expense Account
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-        generate_uuid(), $id, $expense_account_id, 'debit', $net_amount, 'Expense ' . $txn_number . ': ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $party_id, 'user'
-    ]);
-
-    // 2. Credit Bank/Cash Account
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-        generate_uuid(), $id, $paid_from_account_id, 'credit', $net_amount, 'Expense ' . $txn_number . ': ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $party_id, 'user'
-    ]);
+    $gl_lines = [
+        [
+            'account_id'  => $expense_account_id,
+            'debit'       => $net_amount,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ],
+        [
+            'account_id'  => $paid_from_account_id,
+            'debit'       => 0.00,
+            'credit'      => $net_amount,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ],
+    ];
+    AccountingEngine::getInstance()->postJournalEntry($id, 'EXPENSE', $gl_lines, $txn_date, 'Expense ' . $txn_number . ': ' . $memo);
 
     log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $net_amount, 'memo' => $memo, 'status' => 'posted']);
 

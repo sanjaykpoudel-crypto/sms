@@ -18,7 +18,7 @@ foreach ($customers_list as $c) {
 
 $loc_sql_th = rpt_location_sql('th');
 $where_cust = ($customer_id !== '') ? " AND ci.customer_id = '$customer_id'" : "";
-$where_cust_j = ($customer_id !== '') ? " AND (j.party_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
+$where_cust_j = ($customer_id !== '') ? " AND (jl.entity_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
 
 $sql = "
     SELECT 
@@ -60,23 +60,24 @@ $sql = "
         0.00 as subtotal,
         0.00 as discount_amount,
         0.00 as tax_amount,
-        j.amount as total_amount,
+        jl.debit as total_amount,
         COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
-        (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
-        CASE WHEN (j.amount - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
-    FROM journal_entries j
-    JOIN transaction_headers th ON j.header_id = th.id
-    LEFT JOIN customers c ON COALESCE(j.party_id, th.party_id) = c.id
-    LEFT JOIN accounts a ON j.account_id = a.id
-    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND (tl.link_type = CONCAT('payment:', j.id) OR tl.link_type LIKE CONCAT('payment:', j.id, ':%'))
-    WHERE (j.party_type = 'customer' OR a.account_subtype IN ('Accounts Receivable', 'AR'))
-      AND j.entry_type = 'debit'
-      AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
+        (jl.debit - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+        CASE WHEN (jl.debit - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) <= 0.01 THEN 'paid' ELSE 'unpaid' END as payment_status
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers th ON je.transaction_id = th.id
+    LEFT JOIN customers c ON COALESCE(jl.entity_id, th.party_id) = c.id
+    LEFT JOIN accounts a ON jl.account_id = a.id
+    LEFT JOIN transaction_links tl ON tl.child_id = th.id AND (tl.link_type = CONCAT('payment:', jl.jl_id) OR tl.link_type LIKE CONCAT('payment:', jl.jl_id, ':%') OR tl.link_type LIKE 'payment:%')
+    WHERE (UPPER(jl.entity_type) = 'CUSTOMER' OR a.account_subtype IN ('Accounts Receivable', 'AR', 'receivable') OR a.account_name LIKE '%Receivable%')
+      AND jl.debit > 0
+      AND (jl.entity_id IS NOT NULL OR th.party_id IS NOT NULL)
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_type IN ('Journal', 'journal_entry')
+      AND LOWER(th.txn_type) IN ('journal', 'journal_entry', 'opening_balance', 'opening balance', 'debit_note')
       AND th.txn_date BETWEEN ? AND ? {$where_cust_j} {$loc_sql_th}
-    GROUP BY j.id, th.id, th.txn_date, th.txn_number, c.full_name
+    GROUP BY jl.jl_id, th.id, th.txn_date, th.txn_number, c.full_name
     ORDER BY txn_date DESC, txn_number DESC
 ";
 $params = [$date_from, $date_to, $date_from, $date_to];

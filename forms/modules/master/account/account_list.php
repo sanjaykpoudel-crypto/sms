@@ -25,8 +25,8 @@ $accounts = $db->fetchAll("
                 CASE 
                     WHEN h.id IS NOT NULL THEN
                         CASE 
-                            WHEN LOWER(COALESCE(atm.NormalBalance, a.normal_balance)) = 'debit' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END)
-                            ELSE (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END)
+                            WHEN LOWER(COALESCE(atm.NormalBalance, a.normal_balance)) = 'debit' THEN (jl.debit - jl.credit)
+                            ELSE (jl.credit - jl.debit)
                         END
                     ELSE 0
                 END
@@ -35,8 +35,9 @@ $accounts = $db->fetchAll("
         ) as balance
     FROM accounts a
     LEFT JOIN AccountTypeMaster atm ON a.account_type_id = atm.AccountTypeId
-    LEFT JOIN journal_entries j ON a.id = j.account_id
-    LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+    LEFT JOIN journal_lines jl ON a.id = jl.account_id
+    LEFT JOIN journal_entries je ON jl.je_id = je.je_id
+    LEFT JOIN transaction_headers h ON je.transaction_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
     WHERE a.is_deleted = 0 $status_filter
     GROUP BY a.id, atm.AccountTypeId
     ORDER BY a.account_name ASC

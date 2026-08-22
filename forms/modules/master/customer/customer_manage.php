@@ -72,7 +72,7 @@ $curr_loc_id = $data['location_id'] ?? get_user_default_location_id();
             <div style="flex: 1;">
                 <div class="ns-form-group">
                     <label class="ns-label">Phone</label>
-                    <input type="text" name="phone" class="ns-input" value="<?php echo $data['phone'] ?? ''; ?>">
+                    <input type="tel" name="phone" id="phone" class="ns-input" maxlength="20" autocomplete="tel" value="<?php echo htmlspecialchars($data['phone'] ?? ''); ?>">
                 </div>
                 <div class="ns-form-group">
                     <label class="ns-label">Email</label>

@@ -15,10 +15,11 @@ $customers = $db->fetchAll(
         JOIN transaction_headers th ON ci.header_id = th.id 
         WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ) + (
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE j.party_id = c.id AND j.party_type = 'customer'
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0)
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id
+        WHERE jl.entity_id = c.id AND jl.entity_type = 'CUSTOMER'
           AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')
     ) + (
         SELECT COALESCE(SUM(p.amount), 0)

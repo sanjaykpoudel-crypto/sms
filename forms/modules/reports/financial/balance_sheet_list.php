@@ -40,21 +40,25 @@ $bs = re_get_balance_sheet($db, $as_of, $location_id);
 // ── Classify assets by subtype (exactly matching actual COA subtypes) ───
 // COA actual subtypes: Cash, Bank, Accounts Receivable, Inventory Asset,
 //                      Fixed Asset, Contra Asset, Other Current Asset
-$cash_subtypes         = ['Cash'];                   // Only account_subtype = 'Cash'
-$bank_subtypes         = ['Bank'];                   // Only account_subtype = 'Bank'
-$inv_subtypes          = ['Inventory Asset'];         // Only account_subtype = 'Inventory Asset'
-$ar_subtypes           = ['Accounts Receivable'];     // Only account_subtype = 'Accounts Receivable'
-$fixed_asset_subtypes  = ['Fixed Asset'];             // Property/Equipment
-$contra_subtypes       = ['Contra Asset'];            // Accumulated Depreciation (deducted)
+$cash_subtypes         = ['Cash', 'cash'];
+$bank_subtypes         = ['Bank', 'bank'];
+$inv_subtypes          = ['Inventory Asset', 'inventory', 'Inventory'];
+$ar_subtypes           = ['Accounts Receivable', 'receivable'];
+$fixed_asset_subtypes  = ['Fixed Asset'];
+$contra_subtypes       = ['Contra Asset'];
 
-$cash_on_hand   = 0; $bank_balance  = 0; $ar_balance = 0;
+$cash_on_hand   = 0; $bank_balance  = 0; $fd_balance = 0; $ar_balance = 0;
 $inventory_val  = 0; $fixed_assets  = 0; $contra_assets = 0;
 $other_assets   = [];
 
 foreach ($bs['assets'] as $a) {
     $sub  = $a['subtype'] ?? '';
     $name = $a['name'] ?? '';
-    if (in_array($sub, $cash_subtypes)) {
+    
+    // Check if this is Fixed Deposit
+    if (stripos($name, 'Fixed Deposit') !== false || stripos($name, 'FD ') !== false || stripos($sub, 'Fixed Deposit') !== false) {
+        $fd_balance += $a['balance'];
+    } elseif (in_array($sub, $cash_subtypes) || stripos($name, 'Cash') !== false) {
         $cash_on_hand += $a['balance'];
     } elseif (in_array($sub, $bank_subtypes)) {
         $bank_balance += $a['balance'];
@@ -72,7 +76,7 @@ foreach ($bs['assets'] as $a) {
 }
 
 $net_fixed_assets     = $fixed_assets - $contra_assets; // Net Book Value
-$total_current_assets = $cash_on_hand + $bank_balance + $ar_balance + $inventory_val;
+$total_current_assets = $cash_on_hand + $bank_balance + $fd_balance + $ar_balance + $inventory_val;
 $total_other_assets   = array_sum(array_column($other_assets, 'balance')) + $fixed_assets - $contra_assets;
 $total_assets         = $bs['total_assets'];
 
@@ -193,6 +197,12 @@ $inv_tolerated  = ($inv_diff <= 500.00) || ($inv_subledger > 0 && ($inv_diff / $
       <span><i class="fas fa-university" style="color:#003087;margin-right:6px"></i>Bank / Digital Balance</span>
       <span><?= rpt_currency($bank_balance) ?></span>
     </div>
+    <?php if ($fd_balance > 0): ?>
+    <div class="bs-row">
+      <span><i class="fas fa-piggy-bank" style="color:#2b6cb0;margin-right:6px"></i>Fixed Deposit Account</span>
+      <span style="font-weight:600;color:#2b6cb0"><?= rpt_currency($fd_balance) ?></span>
+    </div>
+    <?php endif; ?>
     <div class="bs-row">
       <span><i class="fas fa-file-invoice-dollar" style="color:#1a7f37;margin-right:6px"></i>
         Accounts Receivable (AR)

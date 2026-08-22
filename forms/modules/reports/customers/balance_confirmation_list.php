@@ -133,21 +133,23 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
 
         // 3. Prior Tagged Journals before $from_date
         $prior_j_dr = (float)($db->fetchOne("
-            SELECT COALESCE(SUM(j.amount), 0) as total
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-              AND j.entry_type = 'debit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-              AND h.txn_date < ? AND h.txn_type IN ('Journal', 'journal_entry', 'debit_note')
+            SELECT COALESCE(SUM(jl.debit), 0) as total
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR h.party_type = 'customer')
+              AND jl.debit > 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+              AND h.txn_date < ? AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'debit_note', 'opening_balance')
         ", [$party_id, $party_id, $from_date])['total'] ?? 0);
 
         $prior_j_cr = (float)($db->fetchOne("
-            SELECT COALESCE(SUM(j.amount), 0) as total
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-              AND j.entry_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-              AND h.txn_date < ? AND h.txn_type IN ('Journal', 'journal_entry', 'credit_note')
+            SELECT COALESCE(SUM(jl.credit), 0) as total
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR h.party_type = 'customer')
+              AND jl.credit > 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+              AND h.txn_date < ? AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'credit_note', 'opening_balance')
         ", [$party_id, $party_id, $from_date])['total'] ?? 0);
 
         $opening_balance = ($prior_inv + $prior_j_dr) - ($prior_pay + $prior_j_cr);
@@ -181,17 +183,18 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
         $jour_rows = $db->fetchAll("
             SELECT h.txn_date as date, h.txn_date as due_date, h.txn_number as number,
                    CASE 
-                     WHEN UPPER(h.memo) LIKE '%DEBIT NOTE%' OR h.txn_type = 'debit_note' THEN 'Debit Note'
-                     WHEN UPPER(h.memo) LIKE '%CREDIT NOTE%' OR h.txn_type = 'credit_note' THEN 'Credit Note'
+                     WHEN UPPER(COALESCE(je.memo, h.memo)) LIKE '%DEBIT NOTE%' OR h.txn_type = 'debit_note' THEN 'Debit Note'
+                     WHEN UPPER(COALESCE(je.memo, h.memo)) LIKE '%CREDIT NOTE%' OR h.txn_type = 'credit_note' THEN 'Credit Note'
                      ELSE 'Journal Entry' 
                    END as txn_type,
-                   j.memo as memo,
-                   CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END as debit,
-                   CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END as credit
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_type IN ('Journal', 'journal_entry', 'debit_note', 'credit_note')
+                   COALESCE(je.memo, h.memo) as memo,
+                   jl.debit as debit,
+                   jl.credit as credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR h.party_type = 'customer')
+              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'debit_note', 'credit_note', 'opening_balance')
               AND h.txn_date BETWEEN ? AND ?
         ", [$party_id, $party_id, $from_date, $as_on_date]);
 
@@ -220,15 +223,16 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
 
             UNION ALL
 
-            SELECT (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+            SELECT (SUM(jl.debit - jl.credit) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
                    h.txn_date as doc_date
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            LEFT JOIN transaction_links tl ON tl.child_id = h.id AND tl.link_type LIKE 'payment:%'
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'customer' OR j.party_type IS NULL)
-              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_type IN ('Journal', 'journal_entry')
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            LEFT JOIN transaction_links tl ON (tl.child_id = jl.jl_id OR tl.child_id = h.id) AND tl.link_type LIKE 'payment:%'
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR h.party_type = 'customer')
+              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'opening_balance')
               AND h.txn_date <= ?
-            GROUP BY h.id, h.txn_date
+            GROUP BY jl.jl_id, h.id, h.txn_date
             HAVING balance_due > 0.01
         ", [$party_id, $as_on_date, $party_id, $party_id, $as_on_date]);
 
@@ -265,21 +269,23 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
 
         // 3. Prior Tagged Journals before $from_date
         $prior_j_cr = (float)($db->fetchOne("
-            SELECT COALESCE(SUM(j.amount), 0) as total
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
-              AND j.entry_type = 'credit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-              AND h.txn_date < ?
+            SELECT COALESCE(SUM(jl.credit), 0) as total
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor')
+              AND jl.credit > 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+              AND h.txn_date < ? AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'opening_balance')
         ", [$party_id, $party_id, $from_date])['total'] ?? 0);
 
         $prior_j_dr = (float)($db->fetchOne("
-            SELECT COALESCE(SUM(j.amount), 0) as total
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
-              AND j.entry_type = 'debit' AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
-              AND h.txn_date < ?
+            SELECT COALESCE(SUM(jl.debit), 0) as total
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor')
+              AND jl.debit > 0 AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+              AND h.txn_date < ? AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'opening_balance')
         ", [$party_id, $party_id, $from_date])['total'] ?? 0);
 
         $opening_balance = ($prior_bills + $prior_j_cr) - ($prior_pay + $prior_j_dr);
@@ -313,17 +319,18 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
         $jour_rows = $db->fetchAll("
             SELECT h.txn_date as date, h.txn_date as due_date, h.txn_number as number,
                    CASE 
-                     WHEN UPPER(h.memo) LIKE '%CREDIT NOTE%' OR h.txn_type = 'credit_note' THEN 'Credit Note'
-                     WHEN UPPER(h.memo) LIKE '%DEBIT NOTE%' OR h.txn_type = 'debit_note' THEN 'Debit Note'
+                     WHEN UPPER(COALESCE(je.memo, h.memo)) LIKE '%CREDIT NOTE%' OR h.txn_type = 'credit_note' THEN 'Credit Note'
+                     WHEN UPPER(COALESCE(je.memo, h.memo)) LIKE '%DEBIT NOTE%' OR h.txn_type = 'debit_note' THEN 'Debit Note'
                      ELSE 'Journal Entry' 
                    END as txn_type,
-                   j.memo as memo,
-                   CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END as debit,
-                   CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END as credit
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
-              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_type IN ('Journal', 'journal_entry', 'debit_note', 'credit_note')
+                   COALESCE(je.memo, h.memo) as memo,
+                   jl.debit as debit,
+                   jl.credit as credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor')
+              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'debit_note', 'credit_note', 'opening_balance')
               AND h.txn_date BETWEEN ? AND ?
         ", [$party_id, $party_id, $from_date, $as_on_date]);
 
@@ -352,15 +359,16 @@ function calculate_party_balance_confirmation($db, $confirmation_type, $party_id
 
             UNION ALL
 
-            SELECT (SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
+            SELECT (SUM(jl.credit - jl.debit) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due,
                    h.txn_date as doc_date
-            FROM journal_entries j
-            JOIN transaction_headers h ON j.header_id = h.id
-            LEFT JOIN transaction_links tl ON tl.child_id = h.id AND tl.link_type LIKE 'payment:%'
-            WHERE (j.party_id = ? OR h.party_id = ?) AND (j.party_type = 'vendor' OR j.party_type IS NULL)
-              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND h.txn_type IN ('Journal', 'journal_entry')
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            LEFT JOIN transaction_links tl ON (tl.child_id = jl.jl_id OR tl.child_id = h.id) AND tl.link_type LIKE 'payment:%'
+            WHERE (jl.entity_id = ? OR h.party_id = ?) AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor')
+              AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') AND LOWER(th.txn_type) IN ('journal', 'journal_entry', 'opening_balance')
               AND h.txn_date <= ?
-            GROUP BY h.id, h.txn_date
+            GROUP BY jl.jl_id, h.id, h.txn_date
             HAVING balance_due > 0.01
         ", [$party_id, $as_on_date, $party_id, $party_id, $as_on_date]);
 

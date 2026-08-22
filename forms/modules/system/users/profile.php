@@ -1,10 +1,11 @@
 <?php 
-$user = $conn->query("SELECT * FROM entity_list where id ='".$_settings->userdata('id')."' AND entity_type = 'User'");
-foreach($user->fetch_array() as $k =>$v){
-	$meta[$k] = $v;
-}
+require_once 'database/DBConnection.php';
+$db = db();
+$user_id = $_SESSION['user_id'] ?? 1;
+$user = $db->fetchOne("SELECT * FROM users WHERE id = ?", [$user_id]);
+$meta = $user ?: [];
 ?>
-<?php if($_settings->chk_flashdata('success')): ?>
+<?php if(isset($_settings) && is_object($_settings) && method_exists($_settings, 'chk_flashdata') && $_settings->chk_flashdata('success')): ?>
 <script>
 	alert_toast("<?php echo $_settings->flashdata('success') ?>",'success')
 </script>
@@ -14,7 +15,7 @@ foreach($user->fetch_array() as $k =>$v){
 		<div class="container-fluid">
 			<div id="msg"></div>
 			<form action="" id="manage-user">	
-				<input type="hidden" name="id" value="<?php echo $_settings->userdata('id') ?>">
+				<input type="hidden" name="id" value="<?php echo htmlspecialchars((string)$user_id); ?>">
 				<div class="form-group">
 					<label for="name">First Name</label>
 					<input type="text" name="firstname" id="firstname" class="form-control" value="<?php echo isset($meta['firstname']) ? $meta['firstname']: '' ?>" required>
@@ -40,7 +41,7 @@ foreach($user->fetch_array() as $k =>$v){
 		            </div>
 				</div>
 				<div class="form-group d-flex justify-content-center">
-					<img src="<?php echo validate_image(isset($meta['avatar']) ? $meta['avatar'] :'') ?>" alt="" id="cimg" class="img-fluid img-thumbnail">
+					<img src="<?php echo function_exists('validate_image') ? validate_image($meta['avatar'] ?? '') : (!empty($meta['avatar']) ? $meta['avatar'] : 'dist/img/avatar.png'); ?>" alt="" id="cimg" class="img-fluid img-thumbnail">
 				</div>
 			</form>
 		</div>

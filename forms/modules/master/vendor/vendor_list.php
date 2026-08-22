@@ -14,10 +14,11 @@ $vendors = $db->fetchAll("
         JOIN transaction_headers th ON vb.header_id = th.id 
         WHERE vb.vendor_id = v.id AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     ) + (
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0)
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE j.party_id = v.id AND (j.party_type = 'vendor' OR j.party_type IS NULL) 
+        SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id
+        WHERE jl.entity_id = v.id AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL) 
           AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_type IN ('Journal', 'journal_entry')
     )) AS total_purchase,
     (

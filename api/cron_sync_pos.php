@@ -5,6 +5,16 @@ require_once __DIR__ . '/reference_helper.php';
 
 header('Content-Type: application/json');
 
+// Authorization guard: CLI, active logged-in session, or secret key
+$cron_key = $_GET['key'] ?? ($_SERVER['HTTP_X_CRON_KEY'] ?? '');
+$expected_key = $_ENV['CRON_SECRET_KEY'] ?? getenv('CRON_SECRET_KEY') ?: 'SMS_CRON_SECRET_KEY_8182';
+
+if (PHP_SAPI !== 'cli' && !isset($_SESSION['user_id']) && $cron_key !== $expected_key) {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Forbidden: Unauthorized access to background sync endpoint.']);
+    exit;
+}
+
 try {
     auto_sync_pos_items_and_invoices(true);
     echo json_encode([

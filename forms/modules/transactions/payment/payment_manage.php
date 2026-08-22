@@ -11,9 +11,15 @@ if ($id) {
     $payment_lines = $db->fetchAll("SELECT * FROM payments WHERE header_id = ?", [$id]);
     $data['party_type'] = ($data['txn_type'] === 'vendor_payment') ? 'vendor' : 'customer';
     $first_line = $payment_lines[0] ?? [];
-    $data['party_id'] = ($first_line['customer_id'] ?? null) ?: ($first_line['vendor_id'] ?? null) ?: '';
+    $data['party_id'] = ($data['party_id'] ?? null) ?: ($first_line['customer_id'] ?? null) ?: ($first_line['vendor_id'] ?? null) ?: '';
     $applied_links = $db->fetchAll("SELECT tl.*, th.txn_number, th.txn_type, th.txn_date FROM transaction_links tl JOIN transaction_headers th ON tl.child_id = th.id WHERE tl.parent_id = ?", [$id]);
-    $gl_entries = $db->fetchAll("SELECT je.*, a.account_name FROM journal_entries je JOIN accounts a ON je.account_id = a.id WHERE je.header_id = ? ORDER BY je.entry_type DESC", [$id]);
+    $gl_entries = $db->fetchAll("
+        SELECT jl.*, a.account_name, jl.debit, jl.credit 
+        FROM journal_lines jl 
+        JOIN journal_entries je ON jl.je_id = je.je_id 
+        JOIN accounts a ON jl.account_id = a.id 
+        WHERE je.transaction_id = ?
+    ", [$id]);
 } else {
     $party_type = $_GET['party_type'] ?? 'customer';
     $txn_prefix = $party_type === 'vendor' ? 'vendor_payment' : 'customer_payment';
@@ -35,14 +41,15 @@ $accounts = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype, a.normal_balance,
         COALESCE(SUM(CASE WHEN h.id IS NOT NULL THEN
             CASE WHEN a.normal_balance = 'debit'
-                THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END)
-                ELSE (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END)
+                THEN (jl.debit - jl.credit)
+                ELSE (jl.credit - jl.debit)
             END ELSE 0 END), 0) as balance
     FROM accounts a
-    LEFT JOIN journal_entries j ON a.id = j.account_id
-    LEFT JOIN transaction_headers h ON j.header_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
+    LEFT JOIN journal_lines jl ON a.id = jl.account_id
+    LEFT JOIN journal_entries je ON jl.je_id = je.je_id
+    LEFT JOIN transaction_headers h ON je.transaction_id = h.id AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
     WHERE (a.account_type_id = 1 OR a.account_subtype IN ('Bank', 'Cash', 'Liquid Assets')) AND a.is_active = 1 AND a.is_deleted = 0
-    GROUP BY a.id ORDER BY a.account_name ASC
+    GROUP BY a.id, a.account_name, a.account_subtype, a.normal_balance ORDER BY a.account_name ASC
 ");
 
 $customers  = $db->fetchAll("SELECT id, full_name FROM customers WHERE is_active = 1 AND is_deleted = 0 ORDER BY full_name ASC");
@@ -686,8 +693,8 @@ textarea.pm-control { height: 68px; resize: vertical; }
                   <?php foreach ($gl_entries as $gle): ?>
                     <tr>
                       <td><?php echo htmlspecialchars($gle['account_name']); ?></td>
-                      <td class="r"><?php echo $gle['entry_type']=='debit' ? number_format($gle['amount'],2) : '—'; ?></td>
-                      <td class="r"><?php echo $gle['entry_type']=='credit' ? number_format($gle['amount'],2) : '—'; ?></td>
+                      <td class="r"><?php echo (float)($gle['debit'] ?? 0) > 0 ? number_format((float)$gle['debit'], 2) : '—'; ?></td>
+                      <td class="r"><?php echo (float)($gle['credit'] ?? 0) > 0 ? number_format((float)$gle['credit'], 2) : '—'; ?></td>
                     </tr>
                   <?php endforeach; ?>
                 </tbody>

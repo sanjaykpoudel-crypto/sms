@@ -122,13 +122,18 @@ if ($txn_type == 'vendor_bill') {
 }
 
 // Fetch Items / Journal Lines
-if ($txn_type == 'journal_entry' || $txn_type == 'Journal') {
+if (in_array(strtolower($txn_type), ['journal_entry', 'journal', 'opening_balance', 'opening balance'])) {
     $items = $db->fetchAll("
-        SELECT je.*, REPLACE(a.id, 'acc-', '') as account_code, a.account_name as item_name, je.entry_type
-        FROM journal_entries je
-        LEFT JOIN accounts a ON je.account_id = a.id
-        WHERE je.header_id = :id
-        ORDER BY je.entry_type DESC, je.id ASC
+        SELECT jl.*, REPLACE(a.id, 'acc-', '') as account_code, a.account_name as item_name,
+               COALESCE(c.full_name, v.company_name, u.full_name) as entity_name
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        LEFT JOIN accounts a ON jl.account_id = a.id
+        LEFT JOIN customers c ON jl.entity_id = c.id AND jl.entity_type = 'CUSTOMER'
+        LEFT JOIN vendors v ON jl.entity_id = v.id AND jl.entity_type = 'VENDOR'
+        LEFT JOIN users u ON jl.entity_id = u.id AND jl.entity_type = 'USER'
+        WHERE je.transaction_id = :id
+        ORDER BY jl.debit DESC, jl.jl_id ASC
     ", ['id' => $id]);
 } else {
     $items = $db->fetchAll("
@@ -527,20 +532,23 @@ if (strtolower($statusRaw) === 'paid') {
             $tot_credit = 0;
 
             foreach ($items as $item):
-                if ($txn_type == 'journal_entry' || $txn_type == 'Journal') {
-                    $is_debit = ($item['entry_type'] === 'debit');
-                    $amt = (float) $item['amount'];
-                    if ($is_debit)
-                        $tot_debit += $amt;
-                    else
-                        $tot_credit += $amt;
+                if (in_array(strtolower($txn_type), ['journal_entry', 'journal', 'opening_balance', 'opening balance'])) {
+                    $deb = (float)($item['debit'] ?? 0);
+                    $cre = (float)($item['credit'] ?? 0);
+                    $tot_debit += $deb;
+                    $tot_credit += $cre;
                     ?>
                     <tr>
                         <td class="text-center"><?php echo $sn++; ?></td>
                         <td style="font-weight: 600;"><?php echo htmlspecialchars($item['account_code'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($item['item_name'] ?? ''); ?></td>
-                        <td class="text-right"><?php echo $is_debit ? number_format($amt, 2) : '-'; ?></td>
-                        <td class="text-right"><?php echo !$is_debit ? number_format($amt, 2) : '-'; ?></td>
+                        <td>
+                            <?php echo htmlspecialchars($item['item_name'] ?? ''); ?>
+                            <?php if (!empty($item['entity_name'])): ?>
+                                <span style="font-size:11px; color:#64748b; margin-left:6px;">(<?php echo htmlspecialchars($item['entity_name']); ?>)</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="text-right"><?php echo $deb > 0 ? number_format($deb, 2) : '-'; ?></td>
+                        <td class="text-right"><?php echo $cre > 0 ? number_format($cre, 2) : '-'; ?></td>
                     </tr>
                     <?php
                 } else {

@@ -165,7 +165,7 @@ try {
         ", [$customer_id, $txn_date, $invoice_id, $return_to_stock, $subtotal, $tax_total, $grand_total, $grand_total, $id]);
 
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     // Dynamic GL accounts resolution
@@ -200,41 +200,54 @@ try {
     }
 
     // 4. Create General Ledger (Journal Entries) for Credit Memo
-    // DR: Sales Return / Sales Revenue (Subtotal)
+    $gl_lines = [];
     if ($subtotal > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $sales_ret_account, $subtotal, 'Credit Memo Sales Return - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+        $gl_lines[] = [
+            'account_id'  => $sales_ret_account,
+            'debit'       => $subtotal,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
-
-    // DR: Tax Collected / VAT Payable (Tax Amount)
     if ($tax_total > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $tax_account_id, $tax_total, 'Credit Memo Tax Return - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+        $gl_lines[] = [
+            'account_id'  => $tax_account_id,
+            'debit'       => $tax_total,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
-
-    // CR: Accounts Receivable (Grand Total Credit)
     if ($grand_total > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $ar_account_id, $grand_total, 'Credit Memo AR Credit - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+        $gl_lines[] = [
+            'account_id'  => $ar_account_id,
+            'debit'       => 0.00,
+            'credit'      => $grand_total,
+            'entity_type' => 'CUSTOMER',
+            'entity_id'   => $party_id,
+            'location_id' => $location_id,
+        ];
+    }
+    if ($return_to_stock === 1 && $total_cogs_valuation > 0) {
+        $gl_lines[] = [
+            'account_id'  => $inv_account_id,
+            'debit'       => $total_cogs_valuation,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
+        $gl_lines[] = [
+            'account_id'  => $cogs_account_id,
+            'debit'       => 0.00,
+            'credit'      => $total_cogs_valuation,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
 
-    // Inventory GL Impact if stock returned: DR Inventory Asset / CR COGS
-    if ($return_to_stock === 1 && $total_cogs_valuation > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $inv_account_id, $total_cogs_valuation, 'Credit Memo Restock Inventory DR - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
-
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $cogs_account_id, $total_cogs_valuation, 'Credit Memo COGS Reversal CR - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+    if (!empty($gl_lines)) {
+        AccountingEngine::getInstance()->postJournalEntry($id, 'CREDIT_MEMO', $gl_lines, $txn_date, 'Credit Memo ' . $txn_number);
     }
 
         // Record audit log for System Notes / Change Log

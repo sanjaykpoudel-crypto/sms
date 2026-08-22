@@ -1,28 +1,21 @@
 <?php
 /**
- * AccountingEngine.php
- * Centralized dynamic accounting resolution service for MNS Liquor ERP.
- * Strictly implements the 6-tier accounting resolution hierarchy:
- * 1. Transaction-specific override
- * 2. Item accounting configuration (erp_item_accounting)
- * 3. Item category accounting configuration (erp_category_accounting)
- * 4. Location accounting configuration (erp_location_accounting)
- * 5. Accounting Preferences (erp_accounting_preferences)
- * 6. Global default configuration
- * 
- * NEVER hard-codes account IDs or strings.
+ * api/AccountingEngine.php
+ * Double-Entry General Ledger & Accounting Engine for MNS Liquor ERP (PHP + MySQL).
+ *
+ * Implements strict double-entry GL validation (SUM(debit) = SUM(credit)),
+ * period locking enforcement, materialized account_balances maintenance with row-locking,
+ * and automated mapping functions for Purchase Bills, Sales Invoices, Payments, Adjustments & Transfers.
  */
 
-class AccountingException extends Exception {}
+if (!class_exists('AccountingException')) {
+    class AccountingException extends Exception {}
+}
 
 class AccountingEngine
 {
     private static $instance = null;
     private $pdo;
-    private $preferenceCache = [];
-    private $itemAccountCache = [];
-    private $categoryAccountCache = [];
-    private $locationAccountCache = [];
 
     private function __construct()
     {
@@ -38,253 +31,469 @@ class AccountingEngine
         return self::$instance;
     }
 
-    /**
-     * Resolve account by Preference Key and optional entity overrides.
-     * Hierarchy:
-     * 1. Direct override provided in $context['account_id']
-     * 2. Item accounting (if item_id set in $context)
-     * 3. Category accounting (if category_id / item_id set in $context)
-     * 4. Location accounting (if location_id set in $context)
-     * 5. Accounting Preferences (erp_accounting_preferences)
-     */
-    public function resolveAccount(string $preferenceKey, array $context = []): mixed
+    public function getPDO(): PDO
     {
-        // 1. Transaction-specific explicit override
-        if (!empty($context['account_id'])) {
-            return $context['account_id'];
-        }
-
-        $itemId = $context['item_id'] ?? null;
-        $locationId = $context['location_id'] ?? null;
-        $asOfDate = $context['date'] ?? date('Y-m-d');
-
-        // Extract categoryId from item if not provided
-        $categoryId = $context['category_id'] ?? null;
-        if ($itemId && !$categoryId) {
-            try {
-                $stmt = $this->pdo->prepare("SELECT category_id FROM items WHERE id = ?");
-                $stmt->execute([$itemId]);
-                $categoryId = $stmt->fetchColumn() ?: null;
-            } catch (Exception $e) {}
-
-            if (!$categoryId) {
-                try {
-                    $stmt = $this->pdo->prepare("SELECT category_id FROM erp_items WHERE id = ?");
-                    $stmt->execute([$itemId]);
-                    $categoryId = $stmt->fetchColumn() ?: null;
-                } catch (Exception $e) {}
-            }
-        }
-
-        // Mapping preference keys to entity field names
-        $keyFieldMap = [
-            'default_sales_account'           => 'income_account_id',
-            'default_cogs_account'            => 'cogs_account_id',
-            'default_inventory_asset_account' => 'inventory_asset_account_id',
-            'default_purchase_account'        => 'purchase_account_id',
-            'default_sales_return_account'    => 'sales_return_account_id',
-            'default_purchase_return_account' => 'purchase_return_account_id',
-        ];
-
-        $entityField = $keyFieldMap[$preferenceKey] ?? null;
-
-        // 2. Operational items table check
-        if ($itemId && $entityField) {
-            $opCol = ($entityField === 'inventory_asset_account_id') ? 'inventory_account_id' : $entityField;
-            try {
-                $stmt = $this->pdo->prepare("SELECT {$opCol} FROM items WHERE id = ?");
-                $stmt->execute([$itemId]);
-                $acc = $stmt->fetchColumn();
-                if (!empty($acc)) return $acc;
-            } catch (Exception $e) {}
-        }
-
-        // 3. Item Accounting Configuration (erp_item_accounting)
-        if ($itemId && $entityField) {
-            try {
-                if (!isset($this->itemAccountCache[$itemId])) {
-                    $stmt = $this->pdo->prepare("SELECT * FROM erp_item_accounting WHERE item_id = ?");
-                    $stmt->execute([$itemId]);
-                    $this->itemAccountCache[$itemId] = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
-                }
-                if (!empty($this->itemAccountCache[$itemId][$entityField])) {
-                    return $this->itemAccountCache[$itemId][$entityField];
-                }
-            } catch (Exception $e) {}
-        }
-
-        // 4. Accounting Preferences / system_info (Effective-dated match)
-        $prefAccountId = $this->getPreferenceAccountId($preferenceKey, $locationId, $asOfDate);
-        if ($prefAccountId !== null) {
-            return is_numeric($prefAccountId) ? (int)$prefAccountId : $prefAccountId;
-        }
-
-        // 5. Dynamic Fallback lookup from COA by account_type and account_subtype
-        $dynamicQueries = [
-            'default_cash_account'            => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Cash' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_ar_account'              => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Accounts Receivable' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_inventory_asset_account' => "SELECT id FROM accounts WHERE account_type = 'asset' AND account_subtype = 'Inventory Asset' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_ap_account'              => "SELECT id FROM accounts WHERE account_type = 'liability' AND account_subtype = 'Accounts Payable' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_sales_account'           => "SELECT id FROM accounts WHERE account_type = 'income' AND (account_subtype IN ('Sales Income', 'Sales') OR LOWER(account_name) LIKE '%sales%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_cogs_account'            => "SELECT id FROM accounts WHERE account_type = 'expense' AND (account_subtype = 'Cost of Goods Sold' OR LOWER(account_name) LIKE '%cost of goods%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_discount_account'        => "SELECT id FROM accounts WHERE LOWER(account_name) LIKE '%discount%' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_tax_account'             => "SELECT id FROM accounts WHERE account_type = 'liability' AND (LOWER(account_name) LIKE '%vat%' OR LOWER(account_name) LIKE '%tax%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_sales_return_account'    => "SELECT id FROM accounts WHERE account_type = 'income' AND (account_subtype IN ('Sales Income', 'Sales') OR LOWER(account_name) LIKE '%sales%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_purchase_return_account' => "SELECT id FROM accounts WHERE account_type = 'expense' AND (account_subtype = 'Cost of Goods Sold' OR LOWER(account_name) LIKE '%cost of goods%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_drawings_account'        => "SELECT id FROM accounts WHERE account_type = 'equity' AND (LOWER(account_name) LIKE '%drawing%' OR LOWER(account_name) LIKE '%withdrawal%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_interest_account'        => "SELECT id FROM accounts WHERE account_type = 'expense' AND LOWER(account_name) LIKE '%interest%' AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-            'default_freight_account'         => "SELECT id FROM accounts WHERE account_type = 'expense' AND (LOWER(account_name) LIKE '%freight%' OR LOWER(account_name) LIKE '%transport%') AND is_active = 1 AND is_deleted = 0 ORDER BY id ASC LIMIT 1",
-        ];
-
-        if (isset($dynamicQueries[$preferenceKey])) {
-            try {
-                $stmt = $this->pdo->query($dynamicQueries[$preferenceKey]);
-                $foundId = $stmt->fetchColumn();
-                if ($foundId !== false && $foundId !== null) {
-                    return is_numeric($foundId) ? (int)$foundId : $foundId;
-                }
-            } catch (Exception $e) {}
-        }
-
-        throw new AccountingException("Accounting account for preference key '{$preferenceKey}' is not configured.");
+        return $this->pdo;
     }
 
     /**
-     * Get configured preference account_id from erp_accounting_preferences or system_info.
+     * Resolve account_id by account_code or fallback
      */
-    public function getPreferenceAccountId(string $preferenceKey, ?int $locationId = null, string $asOfDate = null): mixed
+    public function getAccountIdByCode(string $code, string $defaultType = 'ASSET', string $defaultName = 'Default Account'): int
     {
-        $asOfDate = $asOfDate ?: date('Y-m-d');
+        $stmt = $this->pdo->prepare("SELECT account_id FROM chart_of_accounts WHERE account_code = ? LIMIT 1");
+        $stmt->execute([$code]);
+        $id = $stmt->fetchColumn();
+        if ($id) return (int)$id;
+
+        // Create if missing
+        $normalBal = in_array($defaultType, ['ASSET', 'EXPENSE', 'COGS']) ? 'DEBIT' : 'CREDIT';
+        $stmtIns = $this->pdo->prepare("INSERT INTO chart_of_accounts (account_code, account_name, account_type, normal_balance) VALUES (?, ?, ?, ?)");
+        $stmtIns->execute([$code, $defaultName, $defaultType, $normalBal]);
+        return (int)$this->pdo->lastInsertId();
+    }
+
+    /**
+     * Resolve accounting period ID for a given date & enforce period locks
+     */
+    public function resolvePeriodForDate($dateStr): array
+    {
+        $d = date('Y-m-d', strtotime($dateStr));
+        $stmt = $this->pdo->prepare("SELECT * FROM accounting_periods WHERE ? BETWEEN start_date AND end_date LIMIT 1");
+        $stmt->execute([$d]);
+        $period = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$period) {
+            // Auto-create month period if not found
+            $pName = date('M Y', strtotime($d));
+            $sDate = date('Y-m-01', strtotime($d));
+            $eDate = date('Y-m-t', strtotime($d));
+            $stmtIns = $this->pdo->prepare("INSERT INTO accounting_periods (period_name, start_date, end_date, status) VALUES (?, ?, ?, 'OPEN')");
+            $stmtIns->execute([$pName, $sDate, $eDate]);
+            $pId = (int)$this->pdo->lastInsertId();
+            return ['period_id' => $pId, 'period_name' => $pName, 'status' => 'OPEN', 'start_date' => $sDate, 'end_date' => $eDate];
+        }
+
+        if (in_array(strtoupper($period['status']), ['CLOSED', 'LOCKED'])) {
+            throw new AccountingException("Accounting Period '{$period['period_name']}' is " . strtoupper($period['status']) . ". Transactions are locked.");
+        }
+
+        return $period;
+    }
+
+    /**
+     * Core Low-Level Journal Entry Posting Function
+     * Enforces SUM(debit) = SUM(credit) and updates materialized account_balances.
+     */
+    public function postJournalEntry($transactionId, string $jeType, array $lines, $date = null, string $memo = ''): int
+    {
+        if (empty($lines)) {
+            throw new AccountingException("Journal Entry must contain at least one debit and credit line.");
+        }
+
+        $dateStr = $date ? (is_a($date, 'DateTime') ? $date->format('Y-m-d H:i:s') : date('Y-m-d H:i:s', strtotime($date))) : date('Y-m-d H:i:s');
         
-        $keysToTry = [$preferenceKey];
-        if ($preferenceKey === 'default_sales_return_account') {
-            $keysToTry[] = 'default_sales_account';
-            $keysToTry[] = 'default_income_account';
-        } elseif ($preferenceKey === 'default_purchase_return_account') {
-            $keysToTry[] = 'default_purchase_account';
-            $keysToTry[] = 'default_cogs_account';
+        // 1. Enforce Period Lock Check
+        $period = $this->resolvePeriodForDate($dateStr);
+        $periodId = (int)($period['period_id'] ?? $period['id']);
+
+        // 2. Validate Double-Entry Balance Rule: SUM(debit) = SUM(credit)
+        $totDebit = 0.0;
+        $totCredit = 0.0;
+        foreach ($lines as $l) {
+            $totDebit  += round((float)($l['debit'] ?? 0.0), 2);
+            $totCredit += round((float)($l['credit'] ?? 0.0), 2);
         }
 
-        foreach ($keysToTry as $pk) {
-            // 1. Check erp_accounting_preferences (location specific)
-            if ($locationId) {
-                try {
-                    $sql = "SELECT account_id FROM erp_accounting_preferences 
-                            WHERE preference_key = ? AND location_id = ? AND is_active = 1 
-                              AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
-                            ORDER BY effective_from DESC LIMIT 1";
-                    $stmt = $this->pdo->prepare($sql);
-                    $stmt->execute([$pk, $locationId, $asOfDate, $asOfDate]);
-                    $accId = $stmt->fetchColumn();
-                    if (!empty($accId)) return $accId;
-                } catch (Exception $e) {}
+        if (abs($totDebit - $totCredit) >= 0.01) {
+            throw new AccountingException(sprintf(
+                "Unbalanced Journal Entry! Total Debits ($%.2f) must equal Total Credits ($%.2f). Type: %s, TxnID: %s",
+                $totDebit, $totCredit, $jeType, (string)$transactionId
+            ));
+        }
+
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            // Check if JE already exists for transactionId & jeType, replace/update if posting again
+            if (!empty($transactionId)) {
+                $stmtPrev = $this->pdo->prepare("SELECT je_id FROM journal_entries WHERE transaction_id = ? AND je_type = ? AND status = 'POSTED'");
+                $stmtPrev->execute([$transactionId, $jeType]);
+                $prevJeIds = $stmtPrev->fetchAll(PDO::FETCH_COLUMN);
+
+                foreach ($prevJeIds as $oldJeId) {
+                    $this->reverseJournalEntry((int)$oldJeId, 'Replaced by updated posting');
+                }
             }
 
-            // 2. Check erp_accounting_preferences (global)
-            try {
-                $sql = "SELECT account_id FROM erp_accounting_preferences 
-                        WHERE preference_key = ? AND (location_id IS NULL OR location_id = 0) AND is_active = 1 
-                          AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
-                        ORDER BY effective_from DESC LIMIT 1";
-                $stmt = $this->pdo->prepare($sql);
-                $stmt->execute([$pk, $asOfDate, $asOfDate]);
-                $accId = $stmt->fetchColumn();
-                if (!empty($accId)) return $accId;
-            } catch (Exception $e) {}
+            // Insert Journal Entry Header
+            $stmtHeader = $this->pdo->prepare("
+                INSERT INTO journal_entries (transaction_id, je_date, je_type, memo, status, period_id)
+                VALUES (?, ?, ?, ?, 'POSTED', ?)
+            ");
+            $stmtHeader->execute([$transactionId, $dateStr, $jeType, $memo, $periodId]);
+            $jeId = (int)$this->pdo->lastInsertId();
 
-            // 3. Fallback to system_info operational table
-            try {
-                $sql = "SELECT meta_value FROM system_info WHERE meta_field = ? LIMIT 1";
-                $stmt = $this->pdo->prepare($sql);
-                $stmt->execute([$pk]);
-                $val = $stmt->fetchColumn();
-                if (!empty($val)) return $val;
-            } catch (Exception $e) {}
+            // Insert Lines & Update Account Balances
+            $stmtLine = $this->pdo->prepare("
+                INSERT INTO journal_lines 
+                (je_id, account_id, debit, credit, entity_type, entity_id, location_id, class_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+
+            foreach ($lines as $l) {
+                $accId  = (int)$l['account_id'];
+                $deb    = round((float)($l['debit'] ?? 0.0), 2);
+                $cred   = round((float)($l['credit'] ?? 0.0), 2);
+                $eType  = $l['entity_type'] ?? 'NONE';
+                $eId    = !empty($l['entity_id']) ? (int)$l['entity_id'] : null;
+                $locId  = !empty($l['location_id']) ? (int)$l['location_id'] : null;
+                $classId = !empty($l['class_id']) ? (int)$l['class_id'] : null;
+
+                if ($deb == 0 && $cred == 0) continue;
+
+                $stmtLine->execute([$jeId, $accId, $deb, $cred, $eType, $eId, $locId, $classId]);
+
+                // Update Materialized Account Balances with Row-Locking
+                $this->updateAccountBalance($accId, $periodId, $deb, $cred);
+            }
+
+            if (!$inTxn) {
+                $this->pdo->commit();
+            }
+
+            return $jeId;
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
         }
-
-        return null;
     }
 
     /**
-     * Validate that a General Ledger posting satisfies TOTAL DEBIT = TOTAL CREDIT.
+     * Materialized Account Balance Maintenance with Row Locking (SELECT ... FOR UPDATE)
      */
-    public function validateGL(array $glLines): bool
+    private function updateAccountBalance(int $accountId, int $periodId, float $debit, float $credit): void
     {
-        $totalDebit = 0.0;
-        $totalCredit = 0.0;
+        $stmtLock = $this->pdo->prepare("SELECT * FROM account_balances WHERE account_id = ? AND period_id = ? FOR UPDATE");
+        $stmtLock->execute([$accountId, $periodId]);
+        $balRow = $stmtLock->fetch(PDO::FETCH_ASSOC);
 
-        foreach ($glLines as $line) {
-            $totalDebit += (float) ($line['debit'] ?? 0);
-            $totalCredit += (float) ($line['credit'] ?? 0);
+        if (!$balRow) {
+            // Fetch normal balance of account
+            $stmtAcc = $this->pdo->prepare("SELECT normal_balance FROM chart_of_accounts WHERE account_id = ?");
+            $stmtAcc->execute([$accountId]);
+            $normalBal = strtoupper($stmtAcc->fetchColumn() ?: 'DEBIT');
+
+            // Fetch prior period closing balance if available
+            $stmtPrior = $this->pdo->prepare("
+                SELECT closing_balance 
+                FROM account_balances 
+                WHERE account_id = ? AND period_id < ? 
+                ORDER BY period_id DESC LIMIT 1
+            ");
+            $stmtPrior->execute([$accountId, $periodId]);
+            $openBal = (float)($stmtPrior->fetchColumn() ?: 0.0);
+
+            $newDebs  = $debit;
+            $newCreds = $credit;
+            $newClose = $normalBal === 'DEBIT' ? ($openBal + $newDebs - $newCreds) : ($openBal + $newCreds - $newDebs);
+
+            $stmtIns = $this->pdo->prepare("
+                INSERT INTO account_balances (account_id, period_id, opening_balance, period_debits, period_credits, closing_balance)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmtIns->execute([$accountId, $periodId, $openBal, $newDebs, $newCreds, $newClose]);
+        } else {
+            $stmtAcc = $this->pdo->prepare("SELECT normal_balance FROM chart_of_accounts WHERE account_id = ?");
+            $stmtAcc->execute([$accountId]);
+            $normalBal = strtoupper($stmtAcc->fetchColumn() ?: 'DEBIT');
+
+            $openBal  = (float)$balRow['opening_balance'];
+            $newDebs  = (float)$balRow['period_debits'] + $debit;
+            $newCreds = (float)$balRow['period_credits'] + $credit;
+            $newClose = $normalBal === 'DEBIT' ? ($openBal + $newDebs - $newCreds) : ($openBal + $newCreds - $newDebs);
+
+            $stmtUp = $this->pdo->prepare("
+                UPDATE account_balances 
+                SET period_debits = ?, period_credits = ?, closing_balance = ?, updated_at = NOW()
+                WHERE account_id = ? AND period_id = ?
+            ");
+            $stmtUp->execute([$newDebs, $newCreds, $newClose, $accountId, $periodId]);
         }
-
-        $diff = abs($totalDebit - $totalCredit);
-        if ($diff > 0.0001) {
-            throw new AccountingException(sprintf("GL Out of Balance Error: Total Debit (%.2f) != Total Credit (%.2f). Difference: %.2f", $totalDebit, $totalCredit, $diff));
-        }
-
-        return true;
     }
 
     /**
-     * Resolve Customer Receivable Account
+     * Reverse a Journal Entry
      */
-    public function resolveCustomerARAccount($customerId, ?int $locationId = null): mixed
+    public function reverseJournalEntry(int $jeId, string $reason = 'Reversal'): int
     {
-        if ($customerId) {
-            try {
-                $stmt = $this->pdo->prepare("SELECT receivable_account_id FROM customers WHERE id = ?");
-                $stmt->execute([$customerId]);
-                $custAcc = $stmt->fetchColumn();
-                if (!empty($custAcc)) return $custAcc;
-            } catch (Exception $e) {}
+        $stmtJE = $this->pdo->prepare("SELECT * FROM journal_entries WHERE je_id = ?");
+        $stmtJE->execute([$jeId]);
+        $je = $stmtJE->fetch(PDO::FETCH_ASSOC);
 
-            try {
-                $stmt = $this->pdo->prepare("SELECT receivable_account_id FROM erp_customers WHERE id = ?");
-                $stmt->execute([$customerId]);
-                $custAcc = $stmt->fetchColumn();
-                if (!empty($custAcc)) return $custAcc;
-            } catch (Exception $e) {}
+        if (!$je || $je['status'] === 'VOIDED') return 0;
+
+        $stmtLines = $this->pdo->prepare("SELECT * FROM journal_lines WHERE je_id = ?");
+        $stmtLines->execute([$jeId]);
+        $lines = $stmtLines->fetchAll(PDO::FETCH_ASSOC);
+
+        $revLines = [];
+        foreach ($lines as $l) {
+            $revLines[] = [
+                'account_id'  => $l['account_id'],
+                'debit'       => $l['credit'],  // Swap debit & credit
+                'credit'      => $l['debit'],
+                'entity_type' => $l['entity_type'],
+                'entity_id'   => $l['entity_id'],
+                'location_id' => $l['location_id'],
+                'class_id'    => $l['class_id'],
+            ];
         }
-        return $this->resolveAccount('default_ar_account', ['location_id' => $locationId]);
+
+        // Mark original JE as VOIDED
+        $stmtMark = $this->pdo->prepare("UPDATE journal_entries SET status = 'VOIDED' WHERE je_id = ?");
+        $stmtMark->execute([$jeId]);
+
+        return $this->postJournalEntry($je['transaction_id'], $je['je_type'] . '_VOID', $revLines, date('Y-m-d H:i:s'), "Reversal of JE #{$jeId}: {$reason}");
     }
 
     /**
-     * Resolve Vendor Payable Account
+     * Delete all journal entries and lines associated with a transaction
      */
-    public function resolveVendorAPAccount($vendorId, ?int $locationId = null): mixed
+    public function deleteJournalForTransaction($transactionId): void
     {
-        if ($vendorId) {
-            try {
-                $stmt = $this->pdo->prepare("SELECT payable_account_id FROM vendors WHERE id = ?");
-                $stmt->execute([$vendorId]);
-                $vendAcc = $stmt->fetchColumn();
-                if (!empty($vendAcc)) return $vendAcc;
-            } catch (Exception $e) {}
+        if (empty($transactionId)) return;
+        $stmtJe = $this->pdo->prepare("SELECT je_id FROM journal_entries WHERE transaction_id = ?");
+        $stmtJe->execute([$transactionId]);
+        $jeIds = $stmtJe->fetchAll(PDO::FETCH_COLUMN);
 
-            try {
-                $stmt = $this->pdo->prepare("SELECT payable_account_id FROM erp_vendors WHERE id = ?");
-                $stmt->execute([$vendorId]);
-                $vendAcc = $stmt->fetchColumn();
-                if (!empty($vendAcc)) return $vendAcc;
-            } catch (Exception $e) {}
+        if (!empty($jeIds)) {
+            $inClause = implode(',', array_fill(0, count($jeIds), '?'));
+            $stmtDelLines = $this->pdo->prepare("DELETE FROM journal_lines WHERE je_id IN ({$inClause})");
+            $stmtDelLines->execute($jeIds);
+
+            $stmtDelJe = $this->pdo->prepare("DELETE FROM journal_entries WHERE je_id IN ({$inClause})");
+            $stmtDelJe->execute($jeIds);
         }
-        return $this->resolveAccount('default_ap_account', ['location_id' => $locationId]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // AUTO-POSTING MAPPING FUNCTIONS (Transaction -> GL Double Entry)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Purchase Bill: Debit Inventory Asset (1030), Credit Accounts Payable (2010)
+     */
+    public function postPurchaseBill($transactionId, $vendorId, $locationId, float $totalAmount, $date = null, string $memo = ''): int
+    {
+        $invAcc = $this->getAccountIdByCode('1030', 'ASSET', 'Inventory Asset');
+        $apAcc  = $this->getAccountIdByCode('2010', 'LIABILITY', 'Accounts Payable (AP)');
+
+        $lines = [
+            ['account_id' => $invAcc, 'debit' => $totalAmount, 'credit' => 0, 'entity_type' => 'VENDOR', 'entity_id' => $vendorId, 'location_id' => $locationId],
+            ['account_id' => $apAcc,  'debit' => 0, 'credit' => $totalAmount, 'entity_type' => 'VENDOR', 'entity_id' => $vendorId, 'location_id' => $locationId],
+        ];
+
+        return $this->postJournalEntry($transactionId, 'PURCHASE', $lines, $date, $memo ?: "Purchase Bill #{$transactionId}");
     }
 
     /**
-     * Resolve Payment Method Account (Cash, Bank, eSewa, Khalti, etc.)
+     * Vendor Payment: Debit Accounts Payable (2010), Credit Cash/Bank (1010)
      */
-    public function resolvePaymentMethodAccount(int $paymentMethodId): int
+    public function postVendorPayment($transactionId, $vendorId, $locationId, float $amount, $date = null, string $memo = ''): int
     {
-        $stmt = $this->pdo->prepare("SELECT account_id FROM erp_payment_methods WHERE id = ? AND is_active = 1");
-        $stmt->execute([$paymentMethodId]);
-        $accId = $stmt->fetchColumn();
+        $apAcc   = $this->getAccountIdByCode('2010', 'LIABILITY', 'Accounts Payable (AP)');
+        $cashAcc = $this->getAccountIdByCode('1010', 'ASSET', 'Cash and Bank Balances');
 
-        if ($accId) {
-            return (int) $accId;
+        $lines = [
+            ['account_id' => $apAcc,   'debit' => $amount, 'credit' => 0, 'entity_type' => 'VENDOR', 'entity_id' => $vendorId, 'location_id' => $locationId],
+            ['account_id' => $cashAcc, 'debit' => 0, 'credit' => $amount, 'entity_type' => 'VENDOR', 'entity_id' => $vendorId, 'location_id' => $locationId],
+        ];
+
+        return $this->postJournalEntry($transactionId, 'PAYMENT', $lines, $date, $memo ?: "Vendor Payment #{$transactionId}");
+    }
+
+    /**
+     * Sale Invoice / POS: 
+     * Revenue Leg: Debit Accounts Receivable (1020), Credit Sales Revenue (4010)
+     * COGS Leg: Debit COGS (5010), Credit Inventory Asset (1030) using exact unit_cost from InventoryEngine
+     */
+    public function postSaleInvoice($transactionId, $customerId, $locationId, float $revenueAmount, float $cogsAmount, $date = null, string $memo = ''): int
+    {
+        $arAcc   = $this->getAccountIdByCode('1020', 'ASSET', 'Accounts Receivable (AR)');
+        $revAcc  = $this->getAccountIdByCode('4010', 'INCOME', 'Sales Revenue');
+        $cogsAcc = $this->getAccountIdByCode('5010', 'COGS', 'Cost of Goods Sold (COGS)');
+        $invAcc  = $this->getAccountIdByCode('1030', 'ASSET', 'Inventory Asset');
+
+        $lines = [
+            // Revenue Leg
+            ['account_id' => $arAcc,   'debit' => $revenueAmount, 'credit' => 0, 'entity_type' => 'CUSTOMER', 'entity_id' => $customerId, 'location_id' => $locationId],
+            ['account_id' => $revAcc,  'debit' => 0, 'credit' => $revenueAmount, 'entity_type' => 'CUSTOMER', 'entity_id' => $customerId, 'location_id' => $locationId],
+        ];
+
+        if ($cogsAmount > 0) {
+            // COGS Leg
+            $lines[] = ['account_id' => $cogsAcc, 'debit' => $cogsAmount, 'credit' => 0, 'entity_type' => 'ITEM', 'location_id' => $locationId];
+            $lines[] = ['account_id' => $invAcc,  'debit' => 0, 'credit' => $cogsAmount, 'entity_type' => 'ITEM', 'location_id' => $locationId];
         }
 
-        throw new AccountingException("Payment Method ID {$paymentMethodId} has no active linked COA account.");
+        return $this->postJournalEntry($transactionId, 'SALE', $lines, $date, $memo ?: "Sales Invoice #{$transactionId}");
+    }
+
+    /**
+     * Customer Payment: Debit Cash/Bank (1010), Credit Accounts Receivable (1020)
+     */
+    public function postCustomerPayment($transactionId, $customerId, $locationId, float $amount, $date = null, string $memo = ''): int
+    {
+        $cashAcc = $this->getAccountIdByCode('1010', 'ASSET', 'Cash and Bank Balances');
+        $arAcc   = $this->getAccountIdByCode('1020', 'ASSET', 'Accounts Receivable (AR)');
+
+        $lines = [
+            ['account_id' => $cashAcc, 'debit' => $amount, 'credit' => 0, 'entity_type' => 'CUSTOMER', 'entity_id' => $customerId, 'location_id' => $locationId],
+            ['account_id' => $arAcc,   'debit' => 0, 'credit' => $amount, 'entity_type' => 'CUSTOMER', 'entity_id' => $customerId, 'location_id' => $locationId],
+        ];
+
+        return $this->postJournalEntry($transactionId, 'PAYMENT', $lines, $date, $memo ?: "Customer Payment #{$transactionId}");
+    }
+
+    /**
+     * Inventory Adjustment: 
+     * Increase: Debit Inventory Asset (1030), Credit Other Income / Adjustment Gain (4020)
+     * Decrease: Debit Inventory Adjustment Expense (6020), Credit Inventory Asset (1030)
+     */
+    public function postInventoryAdjustment($transactionId, $locationId, float $totalVal, bool $isIncrease, $date = null, string $memo = ''): int
+    {
+        $invAcc  = $this->getAccountIdByCode('1030', 'ASSET', 'Inventory Asset');
+        $gainAcc = $this->getAccountIdByCode('4020', 'INCOME', 'Other Income / Adjustment Gain');
+        $expAcc  = $this->getAccountIdByCode('6020', 'EXPENSE', 'Inventory Adjustment / Shrinkage Expense');
+
+        $val = abs($totalVal);
+        if ($isIncrease) {
+            $lines = [
+                ['account_id' => $invAcc,  'debit' => $val, 'credit' => 0, 'location_id' => $locationId],
+                ['account_id' => $gainAcc, 'debit' => 0, 'credit' => $val, 'location_id' => $locationId],
+            ];
+        } else {
+            $lines = [
+                ['account_id' => $expAcc, 'debit' => $val, 'credit' => 0, 'location_id' => $locationId],
+                ['account_id' => $invAcc, 'debit' => 0, 'credit' => $val, 'location_id' => $locationId],
+            ];
+        }
+
+        return $this->postJournalEntry($transactionId, 'INVENTORY_ADJ', $lines, $date, $memo ?: "Inventory Adjustment #{$transactionId}");
+    }
+
+    /**
+     * Inventory Transfer between Locations:
+     * Debit Destination Location Inventory Asset, Credit Source Location Inventory Asset
+     */
+    public function postTransfer($transactionId, $fromLocId, $toLocId, float $totalVal, $date = null, string $memo = ''): int
+    {
+        $invAcc = $this->getAccountIdByCode('1030', 'ASSET', 'Inventory Asset');
+
+        $lines = [
+            ['account_id' => $invAcc, 'debit' => $totalVal, 'credit' => 0, 'location_id' => $toLocId],
+            ['account_id' => $invAcc, 'debit' => 0, 'credit' => $totalVal, 'location_id' => $fromLocId],
+        ];
+
+        return $this->postJournalEntry($transactionId, 'TRANSFER', $lines, $date, $memo ?: "Inventory Transfer #{$transactionId}");
+    }
+
+    /**
+     * Linkage with InventoryEngine recostForward():
+     * Re-posts COGS Journal Entry lines when historical unit costs change during recosting.
+     */
+    public function updateCogsJournalLines($transactionId, float $newCogsAmount): void
+    {
+        $stmt = $this->pdo->prepare("SELECT je_id, je_date, period_id FROM journal_entries WHERE transaction_id = ? AND je_type = 'SALE' AND status = 'POSTED'");
+        $stmt->execute([$transactionId]);
+        $je = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$je) return;
+
+        $period = $this->resolvePeriodForDate($je['je_date']);
+        if (in_array(strtoupper($period['status']), ['CLOSED', 'LOCKED'])) {
+            // Post correcting entry in current open period if past period is closed
+            $this->postInventoryAdjustment($transactionId, 1, $newCogsAmount, false, date('Y-m-d H:i:s'), "COGS Correction for closed period JE #{$je['je_id']}");
+            return;
+        }
+
+        // Fetch transaction details and re-post Sale GL Entry with updated COGS amount
+        $stmtLines = $this->pdo->prepare("
+            SELECT jl.* 
+            FROM journal_lines jl 
+            JOIN chart_of_accounts c ON jl.account_id = c.account_id
+            WHERE jl.je_id = ? AND c.account_code = '1020' AND jl.debit > 0
+            LIMIT 1
+        ");
+        $stmtLines->execute([$je['je_id']]);
+        $arLine = $stmtLines->fetch(PDO::FETCH_ASSOC);
+
+        $revAmount = (float)($arLine['debit'] ?? 0.0);
+        $custId    = (int)($arLine['entity_id'] ?? 0);
+        $locId     = (int)($arLine['location_id'] ?? 1);
+
+        $this->postSaleInvoice($transactionId, $custId, $locId, $revAmount, $newCogsAmount, $je['je_date'], "COGS Updated via RecostForward");
+    }
+
+    /**
+     * Close an Accounting Period and Roll Forward Balance Sheet Balances
+     */
+    public function closePeriod(int $periodId): void
+    {
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) $this->pdo->beginTransaction();
+
+        try {
+            $stmtP = $this->pdo->prepare("SELECT * FROM accounting_periods WHERE period_id = ?");
+            $stmtP->execute([$periodId]);
+            $period = $stmtP->fetch(PDO::FETCH_ASSOC);
+
+            if (!$period) throw new AccountingException("Period ID {$periodId} not found.");
+
+            // 1. Lock period
+            $stmtLock = $this->pdo->prepare("UPDATE accounting_periods SET status = 'CLOSED' WHERE period_id = ?");
+            $stmtLock->execute([$periodId]);
+
+            // 2. Fetch next period
+            $stmtNext = $this->pdo->prepare("SELECT period_id FROM accounting_periods WHERE start_date > ? ORDER BY start_date ASC LIMIT 1");
+            $stmtNext->execute([$period['end_date']]);
+            $nextPeriodId = $stmtNext->fetchColumn();
+
+            if ($nextPeriodId) {
+                // Roll forward Balance Sheet closing balances to next period's opening balances
+                $stmtBals = $this->pdo->prepare("
+                    SELECT ab.*, c.account_type 
+                    FROM account_balances ab
+                    JOIN chart_of_accounts c ON ab.account_id = c.account_id
+                    WHERE ab.period_id = ?
+                ");
+                $stmtBals->execute([$periodId]);
+                $bals = $stmtBals->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($bals as $b) {
+                    // Income / COGS / Expense accounts reset opening balance to 0 in new period
+                    $openBal = in_array(strtoupper($b['account_type']), ['INCOME', 'COGS', 'EXPENSE']) ? 0.0 : (float)$b['closing_balance'];
+                    $accId   = (int)$b['account_id'];
+
+                    $stmtNextBal = $this->pdo->prepare("
+                        INSERT INTO account_balances (account_id, period_id, opening_balance, period_debits, period_credits, closing_balance)
+                        VALUES (?, ?, ?, 0, 0, ?)
+                        ON DUPLICATE KEY UPDATE opening_balance = VALUES(opening_balance), closing_balance = VALUES(opening_balance) + period_debits - period_credits
+                    ");
+                    $stmtNextBal->execute([$accId, $nextPeriodId, $openBal, $openBal]);
+                }
+            }
+
+            if (!$inTxn) $this->pdo->commit();
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $e;
+        }
     }
 }

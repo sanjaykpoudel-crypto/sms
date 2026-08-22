@@ -228,13 +228,14 @@ function get_daily_pnl_for_date($db, $date) {
 
     $j = $db->fetchOne("
         SELECT 
-            COALESCE(SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0) as j_income,
-            COALESCE(SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0) as j_cogs,
-            COALESCE(SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END), 0) as j_expenses
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE h.txn_type IN ('Journal', 'journal_entry')
+            COALESCE(SUM(CASE WHEN a.account_type = 'income' THEN (jl.credit - jl.debit) ELSE 0 END), 0) as j_income,
+            COALESCE(SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END), 0) as j_cogs,
+            COALESCE(SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END), 0) as j_expenses
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE h.txn_type IN ('Journal', 'journal_entry', 'journal')
           AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND h.txn_date = ?
           AND a.is_deleted = 0 {$loc_sql_h}
@@ -301,10 +302,11 @@ function get_balances($db, $as_of) {
     // Bank: accounts with subtype 'Bank' (excl. Fixed Deposit)
     $bank_rows = $db->fetchAll("
         SELECT a.id, a.account_name,
-               SUM(CASE WHEN je.entry_type='debit' THEN je.amount ELSE -je.amount END) as bal
+               COALESCE(SUM(jl.debit - jl.credit), 0) as bal
         FROM accounts a
-        LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
-        LEFT JOIN transaction_headers h ON je.header_id = h.id
+        LEFT JOIN journal_lines jl ON jl.account_id = a.id
+        LEFT JOIN journal_entries je ON jl.je_id = je.je_id AND je.je_date <= ?
+        LEFT JOIN transaction_headers h ON je.transaction_id = h.id
             AND h.is_deleted = 0 AND h.status NOT IN ('voided','void','draft')
             {$loc_sql_h}
         WHERE a.account_type = 'asset'
@@ -317,10 +319,11 @@ function get_balances($db, $as_of) {
 
     // Fixed Deposit total
     $fd_val = (float)($db->fetchOne("
-        SELECT COALESCE(SUM(CASE WHEN je.entry_type='debit' THEN je.amount ELSE -je.amount END), 0) as bal
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as bal
         FROM accounts a
-        LEFT JOIN journal_entries je ON je.account_id = a.id AND je.entry_date <= ?
-        LEFT JOIN transaction_headers h ON je.header_id = h.id
+        LEFT JOIN journal_lines jl ON jl.account_id = a.id
+        LEFT JOIN journal_entries je ON jl.je_id = je.je_id AND je.je_date <= ?
+        LEFT JOIN transaction_headers h ON je.transaction_id = h.id
             AND h.is_deleted = 0 AND h.status NOT IN ('voided','void','draft')
         WHERE LOWER(a.account_name) LIKE '%fixed deposit%'
           AND a.is_active = 1 AND a.is_deleted = 0
@@ -408,21 +411,24 @@ if ($closing_cash <= 0) {
 }
 
 // Total Cash In (debits to cash account today from journal entries)
-// Uses the resolved numeric account ID — not the 'acc-XXXX' string alias
 $loc_sql_h = dash_loc_sql('h');
 $cash_in = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount FROM journal_entries je
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE CAST(je.account_id AS UNSIGNED) = ? AND je.entry_type = 'debit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.debit), 0) as amount
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE CAST(jl.account_id AS UNSIGNED) = ?
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
 ", [(int)$default_cash_acct, $today])['amount'] ?? 0);
 
 // Total Cash Out (credits to cash account today from journal entries)
 $cash_out = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount FROM journal_entries je
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE CAST(je.account_id AS UNSIGNED) = ? AND je.entry_type = 'credit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.credit), 0) as amount
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE CAST(jl.account_id AS UNSIGNED) = ?
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status != 'voided' {$loc_sql_h}
 ", [(int)$default_cash_acct, $today])['amount'] ?? 0);
 
 // Cash difference (closing - opening - in + out = surplus/shortage)
@@ -453,37 +459,45 @@ $net_profit_yest  = $pnl_yest['net_profit'];
 
 // 2. Bank Flow Today (Net inflow/outflow today vs yesterday)
 $bank_inflow_today = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount 
-    FROM journal_entries je JOIN accounts a ON je.account_id = a.id
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND je.entry_type = 'debit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.debit), 0) as amount 
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE a.account_subtype = 'Bank'
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$today])['amount'] ?? 0);
 
 $bank_outflow_today = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount 
-    FROM journal_entries je JOIN accounts a ON je.account_id = a.id
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND je.entry_type = 'credit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.credit), 0) as amount 
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE a.account_subtype = 'Bank'
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$today])['amount'] ?? 0);
 
 $bank_flow_today = $bank_inflow_today - $bank_outflow_today;
 
 $bank_inflow_yest = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount 
-    FROM journal_entries je JOIN accounts a ON je.account_id = a.id
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND je.entry_type = 'debit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.debit), 0) as amount 
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE a.account_subtype = 'Bank'
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$yesterday])['amount'] ?? 0);
 
 $bank_outflow_yest = (float)($db->fetchOne("
-    SELECT COALESCE(SUM(je.amount), 0) as amount 
-    FROM journal_entries je JOIN accounts a ON je.account_id = a.id
-    JOIN transaction_headers h ON je.header_id = h.id
-    WHERE a.account_subtype = 'Bank' AND je.entry_type = 'credit'
-      AND je.entry_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
+    SELECT COALESCE(SUM(jl.credit), 0) as amount 
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE a.account_subtype = 'Bank'
+      AND je.je_date = ? AND h.is_deleted = 0 AND h.status NOT IN ('voided', 'draft') {$loc_sql_h}
 ", [$yesterday])['amount'] ?? 0);
 
 $bank_flow_yest = $bank_inflow_yest - $bank_outflow_yest;
@@ -873,8 +887,9 @@ $all_cust_rows = $db->fetchAll("
             SELECT MAX(th.txn_date)
             FROM transaction_headers th
             LEFT JOIN customer_invoices ci ON ci.header_id = th.id
-            LEFT JOIN journal_entries j ON j.header_id = th.id
-            WHERE (ci.customer_id = c.id OR j.party_id = c.id OR th.party_id = c.id)
+            LEFT JOIN journal_entries je ON je.transaction_id = th.id
+            LEFT JOIN journal_lines jl ON jl.je_id = je.je_id
+            WHERE (ci.customer_id = c.id OR th.party_id = c.id OR (jl.entity_id = c.id AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL)))
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
         ) as last_txn
     FROM customers c
@@ -898,8 +913,9 @@ $all_vend_rows = $db->fetchAll("
             SELECT MAX(th.txn_date)
             FROM transaction_headers th
             LEFT JOIN vendor_bills vb ON vb.header_id = th.id
-            LEFT JOIN journal_entries j ON j.header_id = th.id
-            WHERE (vb.vendor_id = v.id OR j.party_id = v.id OR th.party_id = v.id)
+            LEFT JOIN journal_entries je ON je.transaction_id = th.id
+            LEFT JOIN journal_lines jl ON jl.je_id = je.je_id
+            WHERE (vb.vendor_id = v.id OR th.party_id = v.id OR (jl.entity_id = v.id AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL)))
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql_th}
         ) as last_txn
     FROM vendors v
@@ -1184,7 +1200,7 @@ foreach ($recent_txns as $r) {
             $type = 'Journal';
             $party = $r['memo'] ?: 'Journal Entry';
             $amount = (float)$r['net_amount'];
-            $link = '?page=transactions/journal/view&id=' . $r['id'];
+            $link = '?page=transactions/view&id=' . $r['id'];
             break;
         case 'Expense':
         case 'expense':
@@ -1263,15 +1279,16 @@ if (!empty($bank_acct_ids)) {
     $loc_sql_h = dash_loc_sql('h');
     $bank_agg_raw = $db->fetchAll("
         SELECT
-            je.account_id,
-            COALESCE(SUM(CASE WHEN je.entry_type = 'debit'  AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS money_in,
-            COALESCE(SUM(CASE WHEN je.entry_type = 'credit' AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS money_out,
-            COALESCE(SUM(CASE WHEN je.entry_type = 'debit'  AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS today_in,
-            COALESCE(SUM(CASE WHEN je.entry_type = 'credit' AND je.entry_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN je.amount ELSE 0 END), 0) AS today_out
-        FROM journal_entries je
-        JOIN transaction_headers h ON je.header_id = h.id
-        WHERE je.account_id IN ({$ba_ph}) {$loc_sql_h}
-        GROUP BY je.account_id
+            jl.account_id,
+            COALESCE(SUM(CASE WHEN h.is_deleted = 0 AND h.status != 'voided' THEN jl.debit ELSE 0 END), 0) AS money_in,
+            COALESCE(SUM(CASE WHEN h.is_deleted = 0 AND h.status != 'voided' THEN jl.credit ELSE 0 END), 0) AS money_out,
+            COALESCE(SUM(CASE WHEN je.je_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN jl.debit ELSE 0 END), 0) AS today_in,
+            COALESCE(SUM(CASE WHEN je.je_date = ? AND h.is_deleted = 0 AND h.status != 'voided' THEN jl.credit ELSE 0 END), 0) AS today_out
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE jl.account_id IN ({$ba_ph}) {$loc_sql_h}
+        GROUP BY jl.account_id
     ", array_merge([$today, $today], $bank_acct_ids));
     foreach ($bank_agg_raw as $bar) {
         $bank_agg_rows[$bar['account_id']] = $bar;

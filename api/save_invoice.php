@@ -107,7 +107,7 @@ try {
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
         $db->execute("DELETE FROM customer_invoices WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     $item_ids   = $_POST['item_id']  ?? [];
@@ -417,48 +417,78 @@ try {
 
     // GL Impact
     if (in_array($status, ['posted', 'paid', 'partial', 'open'])) {
-        // Use pre-fetched account IDs
         $tax_account      = $acct_defaults['tax'];
         $discount_account = $acct_defaults['discount'];
-        $cogs_account     = $acct_defaults['cogs'];
-        $inventory_account= $acct_defaults['inventory'];
 
+        $gl_lines = [];
         // Dr Accounts Receivable
         if ($grand_total > 0) {
-            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                $id, $ar_account, $grand_total, 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $ar_account,
+                'debit'       => $grand_total,
+                'credit'      => 0.00,
+                'entity_type' => 'CUSTOMER',
+                'entity_id'   => $party_id,
+                'location_id' => $location_id,
+            ];
         }
-        // Dr Discount (if any)
+        // Dr Discount
         if ($discount_amount > 0) {
-            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                $id, $discount_account, $discount_amount, 'Discount ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $discount_account,
+                'debit'       => $discount_amount,
+                'credit'      => 0.00,
+                'entity_type' => 'NONE',
+                'location_id' => $location_id,
+            ];
         }
         // Cr Sales Revenue (per item)
         foreach ($gl_items as $gi) {
             if ($gi['sales_amount'] > 0) {
-                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    $id, $gi['sales_acc'], $gi['item_id'], $gi['sales_amount'], 'Invoice ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $gl_lines[] = [
+                    'account_id'  => $gi['sales_acc'],
+                    'debit'       => 0.00,
+                    'credit'      => $gi['sales_amount'],
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $gi['item_id'],
+                    'location_id' => $location_id,
+                ];
             }
         }
         // Cr Tax Payable
         if ($tax_total > 0) {
-            $db->execute("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                $id, $tax_account, $tax_total, 'VAT ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-            ]);
+            $gl_lines[] = [
+                'account_id'  => $tax_account,
+                'debit'       => 0.00,
+                'credit'      => $tax_total,
+                'entity_type' => 'NONE',
+                'location_id' => $location_id,
+            ];
         }
         // COGS and Inventory (per item)
         foreach ($gl_items as $gi) {
             if ($gi['cogs_amount'] > 0) {
-                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                    $id, $gi['cogs_acc'], $gi['item_id'], $gi['cogs_amount'], 'COGS ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
-                $db->execute("INSERT INTO journal_entries (header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    $id, $gi['inv_acc'], $gi['item_id'], $gi['cogs_amount'], 'Inventory Out ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $gl_lines[] = [
+                    'account_id'  => $gi['cogs_acc'],
+                    'debit'       => $gi['cogs_amount'],
+                    'credit'      => 0.00,
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $gi['item_id'],
+                    'location_id' => $location_id,
+                ];
+                $gl_lines[] = [
+                    'account_id'  => $gi['inv_acc'],
+                    'debit'       => 0.00,
+                    'credit'      => $gi['cogs_amount'],
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $gi['item_id'],
+                    'location_id' => $location_id,
+                ];
             }
+        }
+
+        if (!empty($gl_lines)) {
+            AccountingEngine::getInstance()->postJournalEntry($id, 'SALE', $gl_lines, $txn_date, 'Invoice ' . $txn_number);
         }
     }
 

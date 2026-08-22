@@ -1,5 +1,5 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
+if (session_status() === PHP_SESSION_NONE && PHP_SAPI !== 'cli' && !headers_sent()) {
     @ini_set('session.cookie_httponly', '1');
     @ini_set('session.cookie_samesite', 'Lax');
     if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
@@ -105,10 +105,11 @@ function get_customer_net_balance($db, $customer_id, ?string $as_of = null, ?str
             JOIN transaction_headers th ON ci.header_id = th.id 
             WHERE ci.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql}
         ) + (
-            SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0)
-            FROM journal_entries j
-            JOIN transaction_headers th ON j.header_id = th.id
-            WHERE j.party_id = ? AND j.party_type = 'customer'
+            SELECT COALESCE(SUM(jl.debit - jl.credit), 0)
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers th ON je.transaction_id = th.id
+            WHERE jl.entity_type = 'CUSTOMER' AND jl.entity_id = ?
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') 
               AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance') AND th.txn_date <= ? {$loc_sql}
         ) + (
@@ -162,10 +163,11 @@ function get_vendor_net_balance($db, $vendor_id, ?string $as_of = null, ?string 
             JOIN transaction_headers th ON vb.header_id = th.id 
             WHERE vb.vendor_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') AND th.txn_date <= ? {$loc_sql}
         ) + (
-            SELECT COALESCE(SUM(CASE WHEN j.entry_type='credit' THEN j.amount ELSE -j.amount END), 0)
-            FROM journal_entries j
-            JOIN transaction_headers th ON j.header_id = th.id
-            WHERE j.party_id = ? AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+            SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers th ON je.transaction_id = th.id
+            WHERE jl.entity_type = 'VENDOR' AND jl.entity_id = ?
               AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') 
               AND th.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance') AND th.txn_date <= ? {$loc_sql}
         )) as total
@@ -335,6 +337,16 @@ function getNextTransactionNumber($type, $location_id = null)
         "ref_{$type}_suffix"
     ];
     $ph   = implode(',', array_fill(0, count($keys), '?'));
+    
+    // Lock key row if in transaction to prevent race conditions
+    try {
+        $existing = $db->fetchOne("SELECT id FROM system_info WHERE meta_field = ? LIMIT 1", ["ref_{$type}_next"]);
+        if (!$existing) {
+            $db->execute("INSERT INTO system_info (meta_field, meta_value) VALUES (?, '1')", ["ref_{$type}_next"]);
+        }
+        $db->fetchOne("SELECT meta_value FROM system_info WHERE meta_field = ? FOR UPDATE", ["ref_{$type}_next"]);
+    } catch (\Throwable $t) {}
+
     $rows = $db->fetchAll(
         "SELECT meta_field, meta_value FROM system_info WHERE meta_field IN ({$ph})",
         $keys
@@ -358,20 +370,17 @@ function getNextTransactionNumber($type, $location_id = null)
             $location_id = get_user_default_location_id();
         }
         if ($location_id) {
-            $loc = $db->fetchOne("SELECT code, name FROM locations WHERE id = ?", [$location_id]);
-            if ($loc) {
-                $locCode = !empty($loc['code']) ? strtoupper(trim($loc['code'])) : strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $loc['name']), 0, 4));
+            $locRow = $db->fetchOne("SELECT * FROM locations WHERE id = ?", [$location_id]);
+            if ($locRow) {
+                $locCode = !empty($locRow['location_code']) ? $locRow['location_code'] : (!empty($locRow['code']) ? $locRow['code'] : strtoupper(substr($locRow['location_name'] ?? $locRow['name'] ?? 'LOC', 0, 4)));
             }
         }
     }
 
     $parts = [];
+    if (!empty($prefix)) $parts[] = strtoupper(trim($prefix));
     if ($locMode === 'prefix' && !empty($locCode)) $parts[] = $locCode;
-    if (!empty($prefix))                           $parts[] = strtoupper($prefix);
-    if ($locMode === 'mid' && !empty($locCode))    $parts[] = $locCode;
-
-    $numStr = str_pad($next, (int)$pad, '0', STR_PAD_LEFT);
-    $parts[] = $numStr;
+    $parts[] = str_pad($next, (int)$pad, '0', STR_PAD_LEFT);
 
     if (!empty($suffix)) {
         $cleanSuffix = strtoupper(trim(str_replace('{LOC}', $locCode, $suffix)));
@@ -383,21 +392,16 @@ function getNextTransactionNumber($type, $location_id = null)
 }
 
 /**
- * Increments the next number in system_info
+ * Increments the next number in system_info atomically
  */
 function incrementTransactionNumber($type)
 {
     $db = db();
     $key = "ref_{$type}_next";
 
-    $row = $db->fetchOne("SELECT id, meta_value FROM system_info WHERE meta_field = ?", [$key]);
-
-    if ($row) {
-        $next = (int) $row['meta_value'] + 1;
-        $db->execute("UPDATE system_info SET meta_value = ? WHERE id = ?", [$next, $row['id']]);
-    } else {
-        // If it doesn't exist, start from 2 (since 1 was just used)
-        $db->execute("INSERT INTO system_info (meta_field, meta_value) VALUES (?, '2')", [$key]);
+    $affected = $db->execute("UPDATE system_info SET meta_value = CAST(meta_value AS UNSIGNED) + 1 WHERE meta_field = ?", [$key]);
+    if ($affected === 0) {
+        $db->execute("INSERT INTO system_info (meta_field, meta_value) VALUES (?, '2') ON DUPLICATE KEY UPDATE meta_value = CAST(meta_value AS UNSIGNED) + 1", [$key]);
     }
 }
 
@@ -656,7 +660,7 @@ function sync_opening_balance_journal_entries($pdo, $date = null, $location_id =
     if (empty($opening_accounts)) {
         // If no opening balances configured, clean up any existing journal entries and the header
         if ($header_id) {
-            $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$header_id]);
+            AccountingEngine::getInstance()->deleteJournalForTransaction($header_id);
             $pdo->prepare("DELETE FROM transaction_headers WHERE id = ?")->execute([$header_id]);
         }
         return;
@@ -715,7 +719,7 @@ function sync_opening_balance_journal_entries($pdo, $date = null, $location_id =
         $stmt->execute([$header_id, $txn_date, $fiscal_year, $fiscal_month, $fiscal_period, $userId, $location_id]);
     } else {
         // Clear existing lines for this header
-        $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$header_id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($header_id);
         // Update header details just in case
         $stmt = $pdo->prepare("
             UPDATE transaction_headers 
@@ -896,13 +900,13 @@ function sync_daily_pos_summary($date)
             $inv_id = $existing_inv['id'];
             $pdo->prepare("DELETE FROM transaction_lines WHERE header_id = ?")->execute([$inv_id]);
             $pdo->prepare("DELETE FROM customer_invoices WHERE header_id = ?")->execute([$inv_id]);
-            $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$inv_id]);
+            AccountingEngine::getInstance()->deleteJournalForTransaction($inv_id);
             $pdo->prepare("DELETE FROM transaction_headers WHERE id = ?")->execute([$inv_id]);
         }
         if ($existing_pay) {
             $pay_id = $existing_pay['id'];
             $pdo->prepare("DELETE FROM payments WHERE header_id = ?")->execute([$pay_id]);
-            $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$pay_id]);
+            AccountingEngine::getInstance()->deleteJournalForTransaction($pay_id);
             $pdo->prepare("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?")->execute([$pay_id, $pay_id]);
             $pdo->prepare("DELETE FROM transaction_headers WHERE id = ?")->execute([$pay_id]);
         }
@@ -956,10 +960,10 @@ function sync_daily_pos_summary($date)
     // Clear child details (rebuild them dynamically)
     $pdo->prepare("DELETE FROM transaction_lines WHERE header_id = ?")->execute([$invoice_header_id]);
     $pdo->prepare("DELETE FROM customer_invoices WHERE header_id = ? OR invoice_number = ?")->execute([$invoice_header_id, $summary_invoice_no]);
-    $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$invoice_header_id]);
+    AccountingEngine::getInstance()->deleteJournalForTransaction($invoice_header_id);
 
     $pdo->prepare("DELETE FROM payments WHERE header_id = ?")->execute([$payment_header_id]);
-    $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$payment_header_id]);
+    AccountingEngine::getInstance()->deleteJournalForTransaction($payment_header_id);
     $pdo->prepare("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?")->execute([$payment_header_id, $payment_header_id]);
 
     // 1. Aggregate Items
@@ -1070,67 +1074,122 @@ function sync_daily_pos_summary($date)
     ")->execute([$payment_header_id, $invoice_header_id, 'payment:' . $summary_total]);
 
     // 3. Invoice GL
-    $ar_account = $engine->resolveAccount('default_ar_account');
-    $tax_account = $engine->resolveAccount('default_tax_account');
-    $disc_account = $engine->resolveAccount('default_discount_account');
+    $ar_account = get_effective_account($customer_id, 'receivable');
+    $tax_account = get_accounting_preference('default_tax_account') ?: 13;
+    $disc_account = get_accounting_preference('default_discount_account') ?: 36;
 
-    $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-        ->execute([$invoice_header_id, $ar_account, $summary_total, 'Daily POS Sales Invoice ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
-
+    $gl_inv_lines = [];
+    if ($summary_total > 0) {
+        $gl_inv_lines[] = [
+            'account_id'  => $ar_account,
+            'debit'       => $summary_total,
+            'credit'      => 0.00,
+            'entity_type' => 'CUSTOMER',
+            'entity_id'   => $customer_id,
+            'location_id' => $def_location_id,
+        ];
+    }
     if ($summary_discount > 0) {
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-            ->execute([$invoice_header_id, $disc_account, $summary_discount, 'Daily POS Invoice Discount ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $gl_inv_lines[] = [
+            'account_id'  => $disc_account,
+            'debit'       => $summary_discount,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $def_location_id,
+        ];
     }
-
     foreach ($sales_distributions as $inc_acct => $amt) {
-        $inc_acct_id = is_numeric($inc_acct) ? (int)$inc_acct : $engine->resolveAccount('default_sales_account');
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([$invoice_header_id, $inc_acct_id, $amt, 'Daily POS Invoice Sales ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $inc_acct_id = is_numeric($inc_acct) ? (int)$inc_acct : (get_accounting_preference('default_income_account') ?: 24);
+        if ($amt > 0) {
+            $gl_inv_lines[] = [
+                'account_id'  => $inc_acct_id,
+                'debit'       => 0.00,
+                'credit'      => $amt,
+                'entity_type' => 'NONE',
+                'location_id' => $def_location_id,
+            ];
+        }
     }
-
     if ($summary_tax > 0) {
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([$invoice_header_id, $tax_account, $summary_tax, 'Daily POS Invoice VAT ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $gl_inv_lines[] = [
+            'account_id'  => $tax_account,
+            'debit'       => 0.00,
+            'credit'      => $summary_tax,
+            'entity_type' => 'NONE',
+            'location_id' => $def_location_id,
+        ];
     }
-
     foreach ($cogs_distributions as $cogs_acct => $amt) {
-        $cogs_acct_id = is_numeric($cogs_acct) ? (int)$cogs_acct : $engine->resolveAccount('default_cogs_account');
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'debit', ?, ?, ?, ?, ?, ?)")
-            ->execute([$invoice_header_id, $cogs_acct_id, $amt, 'Daily POS Invoice COGS ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $cogs_acct_id = is_numeric($cogs_acct) ? (int)$cogs_acct : (get_accounting_preference('default_cogs_account') ?: 26);
+        if ($amt > 0) {
+            $gl_inv_lines[] = [
+                'account_id'  => $cogs_acct_id,
+                'debit'       => $amt,
+                'credit'      => 0.00,
+                'entity_type' => 'NONE',
+                'location_id' => $def_location_id,
+            ];
+        }
     }
     foreach ($inv_distributions as $inv_acct => $amt) {
-        $inv_acct_id = is_numeric($inv_acct) ? (int)$inv_acct : $engine->resolveAccount('default_inventory_asset_account');
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-            ->execute([$invoice_header_id, $inv_acct_id, $amt, 'Daily POS Invoice Inventory Out ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
-    }
-
-    // 4. Payment GL
-    $payment_total = 0.0;
-    foreach ($agg_payments as $pay) {
-        $payment_total += (float) $pay['total_amount'];
-    }
-    $discrepancy = $summary_total - $payment_total;
-
-    foreach ($agg_payments as $pay) {
-        $entry_type = ($pay['total_amount'] >= 0) ? 'debit' : 'credit';
-        $abs_amount = abs($pay['total_amount']);
-        if ($abs_amount > 0) {
-            $pay_acct_id = is_numeric($pay['account_id']) ? (int)$pay['account_id'] : 2; // 2 = Cash
-            $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                ->execute([$payment_header_id, $pay_acct_id, $entry_type, $abs_amount, 'Daily POS Invoice Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+        $inv_acct_id = is_numeric($inv_acct) ? (int)$inv_acct : (get_accounting_preference('default_asset_account') ?: 7);
+        if ($amt > 0) {
+            $gl_inv_lines[] = [
+                'account_id'  => $inv_acct_id,
+                'debit'       => 0.00,
+                'credit'      => $amt,
+                'entity_type' => 'NONE',
+                'location_id' => $def_location_id,
+            ];
         }
     }
 
-    if (abs($discrepancy) > 0.005) {
-        $misc_expense_acct = 37; // Miscellaneous Expenses ID: 37
-        $entry_type = ($discrepancy > 0) ? 'debit' : 'credit'; // Positive is shortage (debit expense), negative is overage (credit)
-        $abs_discrepancy = abs($discrepancy);
-        $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            ->execute([$payment_header_id, $misc_expense_acct, $entry_type, $abs_discrepancy, 'POS Daily Cash Discrepancy ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+    if (!empty($gl_inv_lines)) {
+        $engine->postJournalEntry($invoice_header_id, 'SALE', $gl_inv_lines, $date, 'Daily POS Sales Invoice ' . $summary_invoice_no);
     }
 
-    $pdo->prepare("INSERT INTO journal_entries (header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, 'credit', ?, ?, ?, ?, ?, ?)")
-        ->execute([$payment_header_id, $ar_account, $summary_total, 'POS Daily Payment ' . $summary_invoice_no, $user_id, $date, $fiscal['period'], $fiscal['year']]);
+    // 4. Payment GL
+    $gl_pay_lines = [];
+    $payment_total = 0.0;
+    foreach ($agg_payments as $pay) {
+        $pay_amount = (float)$pay['total_amount'];
+        $payment_total += $pay_amount;
+        if (abs($pay_amount) > 0.001) {
+            $pay_acct_id = is_numeric($pay['account_id']) ? (int)$pay['account_id'] : 2;
+            $gl_pay_lines[] = [
+                'account_id'  => $pay_acct_id,
+                'debit'       => $pay_amount > 0 ? $pay_amount : 0.00,
+                'credit'      => $pay_amount < 0 ? abs($pay_amount) : 0.00,
+                'entity_type' => 'NONE',
+                'location_id' => $def_location_id,
+            ];
+        }
+    }
+    $discrepancy = $summary_total - $payment_total;
+    if (abs($discrepancy) > 0.005) {
+        $misc_expense_acct = 37;
+        $gl_pay_lines[] = [
+            'account_id'  => $misc_expense_acct,
+            'debit'       => $discrepancy > 0 ? $discrepancy : 0.00,
+            'credit'      => $discrepancy < 0 ? abs($discrepancy) : 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $def_location_id,
+        ];
+    }
+    if ($summary_total > 0) {
+        $gl_pay_lines[] = [
+            'account_id'  => $ar_account,
+            'debit'       => 0.00,
+            'credit'      => $summary_total,
+            'entity_type' => 'CUSTOMER',
+            'entity_id'   => $customer_id,
+            'location_id' => $def_location_id,
+        ];
+    }
+
+    if (!empty($gl_pay_lines)) {
+        $engine->postJournalEntry($payment_header_id, 'CUSTOMER_PAYMENT', $gl_pay_lines, $date, 'POS Daily Payment ' . $summary_invoice_no);
+    }
 
     // 5. Update transaction_headers with the correct net_amount and customer
     $old_inv_hdr = $db->fetchOne("SELECT net_amount FROM transaction_headers WHERE id = ?", [$invoice_header_id]);

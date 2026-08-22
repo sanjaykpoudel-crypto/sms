@@ -20,9 +20,10 @@ $customers_list = $db->fetchAll("
               WHERE ci.customer_id = c.id AND th.is_deleted = 0 AND th.status NOT IN ('void','voided','draft') AND ci.balance_due > 0.01
           )
           OR EXISTS (
-              SELECT 1 FROM journal_entries j 
-              JOIN transaction_headers th ON j.header_id = th.id 
-              WHERE j.party_id = c.id AND (j.party_type = 'customer' OR j.party_type IS NULL) AND th.is_deleted = 0 AND th.status NOT IN ('void','voided','draft') AND th.txn_type IN ('Journal','journal_entry')
+              SELECT 1 FROM journal_lines jl
+              JOIN journal_entries je ON jl.je_id = je.je_id
+              JOIN transaction_headers th ON je.transaction_id = th.id 
+              WHERE (jl.entity_id = c.id OR th.party_id = c.id) AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR th.party_type = 'customer') AND th.is_deleted = 0 AND th.status NOT IN ('void','voided','draft') AND LOWER(th.txn_type) IN ('journal','journal_entry')
           )
       )
     ORDER BY c.full_name ASC
@@ -34,7 +35,7 @@ foreach ($customers_list as $c) {
 
 $loc_sql_th = rpt_location_sql('th');
 $where_cust = ($customer_id !== '') ? " AND ci.customer_id = '$customer_id'" : "";
-$where_cust_j = ($customer_id !== '') ? " AND (j.party_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
+$where_cust_j = ($customer_id !== '') ? " AND (jl.entity_id = '$customer_id' OR th.party_id = '$customer_id')" : "";
 $where_overdue = ($status === 'overdue') ? " AND ci.due_date < '$as_of_date'" : "";
 $where_overdue_j = ($status === 'overdue') ? " AND th.txn_date < '$as_of_date'" : "";
 
@@ -65,41 +66,43 @@ $sql = "
         COALESCE(c.full_name, 'Unknown Customer') as customer_name,
         th.txn_date as due_date,
         DATEDIFF(?, th.txn_date) as days_overdue,
-        SUM(CASE WHEN j.party_id = c.id THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(jl.debit - jl.credit) as total_amount,
         COALESCE((
             SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
             FROM transaction_links tl
             JOIN transaction_headers ph ON tl.parent_id = ph.id
             JOIN payments p ON p.header_id = ph.id
-            WHERE tl.child_id = th.id 
+            WHERE (tl.child_id = jl.jl_id OR tl.child_id = th.id)
               AND tl.link_type LIKE 'payment:%'
               AND ph.txn_type = 'customer_payment'
               AND (p.customer_id = c.id OR ph.party_id = c.id)
               AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
         ), 0.00) as amount_paid,
         (
-            SUM(CASE WHEN j.party_id = c.id THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(jl.debit - jl.credit) 
             - 
             COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
                 JOIN transaction_headers ph ON tl.parent_id = ph.id
                 JOIN payments p ON p.header_id = ph.id
-                WHERE tl.child_id = th.id 
+                WHERE (tl.child_id = jl.jl_id OR tl.child_id = th.id)
                   AND tl.link_type LIKE 'payment:%'
                   AND ph.txn_type = 'customer_payment'
                   AND (p.customer_id = c.id OR ph.party_id = c.id)
                   AND ph.is_deleted = 0 AND ph.status NOT IN ('void', 'voided', 'draft')
             ), 0.00)
         ) as balance_due
-    FROM journal_entries j
-    JOIN transaction_headers th ON j.header_id = th.id
-    JOIN customers c ON j.party_id = c.id
-    WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers th ON je.transaction_id = th.id
+    JOIN customers c ON COALESCE(jl.entity_id, th.party_id) = c.id
+    WHERE (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR th.party_type = 'customer')
+      AND jl.debit > 0
       AND th.is_deleted = 0 
       AND th.status NOT IN ('void', 'voided', 'draft')
-      AND th.txn_type IN ('Journal', 'journal_entry') {$where_cust_j} {$where_overdue_j} {$loc_sql_th}
-    GROUP BY th.id, th.txn_date, th.txn_number, c.id, c.full_name
+      AND LOWER(th.txn_type) IN ('journal', 'journal_entry', 'opening_balance') {$where_cust_j} {$where_overdue_j} {$loc_sql_th}
+    GROUP BY jl.jl_id, th.id, th.txn_date, th.txn_number, c.id, c.full_name
     HAVING balance_due > 0.01
     ORDER BY customer_name ASC, due_date ASC, invoice_number DESC
 ";

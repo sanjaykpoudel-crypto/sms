@@ -82,44 +82,34 @@ try {
             "UPDATE transaction_headers SET txn_date = ?, fiscal_year = ?, fiscal_month = ?, fiscal_period = ?, reference_number = ?, memo = ?, net_amount = ?, location_id = ?, updated_by = ? WHERE id = ?",
             [$txn_date, $fiscal['year'], $fiscal['month'], $fiscal['period'], $ref_number, $memo, $total_debit, $location_id, $_SESSION['user_id'], $id]
         );
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
+    $gl_lines = [];
     foreach ($account_ids as $idx => $acc_id) {
-        if (empty($acc_id))
-            continue;
+        if (empty($acc_id)) continue;
+        $debit = (float)($debits[$idx] ?? 0);
+        $credit = (float)($credits[$idx] ?? 0);
+        if ($debit == 0 && $credit == 0) continue;
 
-        $debit = (float) ($debits[$idx] ?? 0);
-        $credit = (float) ($credits[$idx] ?? 0);
-        $amount = $debit > 0 ? $debit : $credit;
-        $type = $debit > 0 ? 'debit' : 'credit';
+        $raw_ptype = !empty($line_party_types[$idx]) ? strtoupper(trim($line_party_types[$idx])) : 'NONE';
+        if (!in_array($raw_ptype, ['CUSTOMER', 'VENDOR', 'ITEM', 'NONE'], true)) {
+            $raw_ptype = 'NONE';
+        }
+        $pid = !empty($line_party_ids[$idx]) ? (int)trim($line_party_ids[$idx]) : null;
 
-        if ($amount == 0)
-            continue;
+        $gl_lines[] = [
+            'account_id'  => $acc_id,
+            'debit'       => $debit,
+            'credit'      => $credit,
+            'entity_type' => $raw_ptype,
+            'entity_id'   => $pid,
+            'location_id' => $location_id,
+        ];
+    }
 
-        $raw_ptype = !empty($line_party_types[$idx]) ? trim($line_party_types[$idx]) : null;
-        $ptype = in_array($raw_ptype, ['customer', 'vendor', 'user'], true) ? $raw_ptype : null;
-        $pid = !empty($line_party_ids[$idx]) ? trim($line_party_ids[$idx]) : null;
-
-        $db->execute(
-            "INSERT INTO journal_entries
-                (id, header_id, account_id, entry_type, amount, memo, party_type, party_id, entry_date, fiscal_period, fiscal_year, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                generate_uuid(),
-                $id,
-                $acc_id,
-                $type,
-                $amount,
-                $line_memos[$idx] ?? $memo,
-                $ptype,
-                $pid,
-                $txn_date,
-                $fiscal['period'],
-                $fiscal['year'],
-                $_SESSION['user_id']
-            ]
-        );
+    if (!empty($gl_lines)) {
+        AccountingEngine::getInstance()->postJournalEntry($id, 'JOURNAL', $gl_lines, $txn_date, $memo);
     }
 
     // Sync to Bank Opening Balances if this is the OPENING-BALANCES journal entry
@@ -127,27 +117,27 @@ try {
         // Reset all bank and cash opening balances to 0
         $db->execute("UPDATE accounts SET opening_balance = 0.00 WHERE account_subtype IN ('Bank')");
 
-        // Fetch the saved journal entries for this transaction
-        $saved_entries = $db->fetchAll("SELECT account_id, entry_type, amount FROM journal_entries WHERE header_id = ?", [$id]);
+        // Fetch the saved journal lines for this transaction
+        $saved_entries = $db->fetchAll("
+            SELECT jl.account_id, (jl.debit - jl.credit) AS amount
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            WHERE je.transaction_id = ?
+        ", [$id]);
 
         // Group by account_id and calculate the net balance
         $balances = [];
         foreach ($saved_entries as $entry) {
             $acc_id = $entry['account_id'];
-            $entry_type = $entry['entry_type'];
-            $amount = (float) $entry['amount'];
+            $amount = (float)$entry['amount'];
 
             // Check if this account is cash/bank
             $acc = $db->fetchOne("SELECT account_subtype FROM accounts WHERE id = ?", [$acc_id]);
-            if ($acc && in_array($acc['account_subtype'], ['Bank'])) {
+            if ($acc && in_array($acc['account_subtype'], ['Bank', 'Cash', 'cash', 'bank'])) {
                 if (!isset($balances[$acc_id])) {
                     $balances[$acc_id] = 0.00;
                 }
-                if ($entry_type === 'debit') {
-                    $balances[$acc_id] += $amount;
-                } else {
-                    $balances[$acc_id] -= $amount;
-                }
+                $balances[$acc_id] += $amount;
             }
         }
 

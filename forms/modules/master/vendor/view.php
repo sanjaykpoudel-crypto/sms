@@ -28,9 +28,9 @@ $bills = $db->fetchAll("
     WHERE vb.vendor_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as total_amount,
+        SUM(jl.credit - jl.debit) as total_amount,
         (
-            SUM(CASE WHEN (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) 
+            SUM(jl.credit - jl.debit) 
             - COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
@@ -42,16 +42,17 @@ $bills = $db->fetchAll("
             ), 0.00)
         ) as balance_due,
         h.status as payment_status
-    FROM journal_entries j
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (j.party_id = ? OR (h.party_id = ? AND (h.party_type = 'vendor' OR h.party_type IS NULL))) 
-      AND (j.party_type = 'vendor' OR j.party_type IS NULL OR h.party_type = 'vendor') 
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE (jl.entity_id = ? OR h.party_id = ?) 
+      AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor') 
       AND h.is_deleted = 0 
       AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_type IN ('Journal', 'journal_entry')
     GROUP BY h.id, h.txn_number, h.txn_date, h.status
     ORDER BY doc_date DESC LIMIT 50
-", [$id, $id, $id, $id, $id, $id, $id]);
+", [$id, $id, $id]);
 
 // Fetch related records (Payments)
 $payments = $db->fetchAll("

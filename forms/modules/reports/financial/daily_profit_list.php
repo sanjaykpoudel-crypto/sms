@@ -60,13 +60,14 @@ $expense_rows = $db->fetchAll("
 $journal_rows = $db->fetchAll("
     SELECT 
         h.txn_date,
-        SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as journal_income,
-        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as journal_cogs,
-        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as journal_expenses
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE h.txn_type IN ('Journal', 'journal_entry')
+        SUM(CASE WHEN a.account_type = 'income' THEN (jl.credit - jl.debit) ELSE 0 END) as journal_income,
+        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END) as journal_cogs,
+        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END) as journal_expenses
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE h.txn_type IN ('Journal', 'journal_entry', 'journal')
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 {$loc_sql}
@@ -165,17 +166,18 @@ $dt_jour_txns = $db->fetchAll("
         h.txn_date,
         h.txn_number as ref_no,
         'Journal Entry' as type_label,
-        COALESCE(NULLIF(TRIM(GROUP_CONCAT(DISTINCT CASE WHEN a.account_type IN ('income', 'expense') AND j.memo IS NOT NULL AND TRIM(j.memo) != '' THEN j.memo END SEPARATOR ', ')), ''), NULLIF(TRIM(h.memo), ''), NULLIF(TRIM(h.reference_number), ''), 'Journal Entry') as party_name,
-        SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as sales,
-        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as cogs,
-        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as expense,
+        COALESCE(NULLIF(TRIM(GROUP_CONCAT(DISTINCT CASE WHEN a.account_type IN ('income', 'expense') AND je.memo IS NOT NULL AND TRIM(je.memo) != '' THEN je.memo END SEPARATOR ', ')), ''), NULLIF(TRIM(h.memo), ''), NULLIF(TRIM(h.reference_number), ''), 'Journal Entry') as party_name,
+        SUM(CASE WHEN a.account_type = 'income' THEN (jl.credit - jl.debit) ELSE 0 END) as sales,
+        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype = 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END) as cogs,
+        SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype != 'Cost of Goods Sold' THEN (jl.debit - jl.credit) ELSE 0 END) as expense,
         0.00 as net_profit,
         NULL as pos_id,
         h.id as header_id
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE h.txn_type IN ('Journal', 'journal_entry')
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE h.txn_type IN ('Journal', 'journal_entry', 'journal')
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_date BETWEEN ? AND ?
       AND a.is_deleted = 0 {$loc_sql}

@@ -3,9 +3,9 @@ ob_start();
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 header('Content-Type: application/json');
 
-if (!isset($_SESSION['user_id'])) {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     ob_end_clean();
-    echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Please login.']);
+    echo json_encode(['status' => 'error', 'message' => 'Unauthorized access. Admin privileges required.']);
     exit;
 }
 

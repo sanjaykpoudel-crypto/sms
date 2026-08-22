@@ -148,10 +148,11 @@ if ($net_sales < $break_even_sales || $net_profit < 0) {
 // A. Asset Accounts from COA
 $asset_accounts_coa = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype,
-           COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as balance
+           COALESCE(SUM(jl.debit - jl.credit), 0) as balance
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset' AND a.is_active = 1 AND a.is_deleted = 0
       AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft') {$loc_sql_h}
     GROUP BY a.id, a.account_name, a.account_subtype
@@ -162,10 +163,11 @@ $asset_accounts_coa = $db->fetchAll("
 // B. Liability Accounts from COA
 $liability_accounts_coa = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype,
-           COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as balance
+           COALESCE(SUM(jl.credit - jl.debit), 0) as balance
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'liability' AND a.is_active = 1 AND a.is_deleted = 0
       AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft') {$loc_sql_h}
     GROUP BY a.id, a.account_name, a.account_subtype
@@ -176,10 +178,11 @@ $liability_accounts_coa = $db->fetchAll("
 // C. Equity Accounts from COA
 $equity_accounts_coa = $db->fetchAll("
     SELECT a.id, a.account_name, a.account_subtype,
-           COALESCE(SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END), 0) as balance
+           COALESCE(SUM(jl.credit - jl.debit), 0) as balance
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity' AND a.is_active = 1 AND a.is_deleted = 0
       AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft') {$loc_sql_h}
     GROUP BY a.id, a.account_name, a.account_subtype
@@ -201,12 +204,13 @@ if ($d1 && $d2) {
 $monthly_rows = $db->fetchAll("
     SELECT DATE_FORMAT(h.txn_date, '%b %Y') as month_label,
            DATE_FORMAT(h.txn_date, '%Y-%m') as sort_key,
-           SUM(CASE WHEN a.account_type = 'income' THEN (CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as sales,
-           SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype IN ('Cost of Goods Sold', 'cogs', 'COGS') THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as cogs,
-           SUM(CASE WHEN a.account_type = 'expense' AND (a.account_subtype NOT IN ('Cost of Goods Sold', 'cogs', 'COGS') OR a.account_subtype IS NULL) THEN (CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) ELSE 0 END) as opex
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+           SUM(CASE WHEN a.account_type = 'income' THEN (jl.credit - jl.debit) ELSE 0 END) as sales,
+           SUM(CASE WHEN a.account_type = 'expense' AND a.account_subtype IN ('Cost of Goods Sold', 'cogs', 'COGS') THEN (jl.debit - jl.credit) ELSE 0 END) as cogs,
+           SUM(CASE WHEN a.account_type = 'expense' AND (a.account_subtype NOT IN ('Cost of Goods Sold', 'cogs', 'COGS') OR a.account_subtype IS NULL) THEN (jl.debit - jl.credit) ELSE 0 END) as opex
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE h.is_deleted = 0 AND h.status NOT IN ('void','voided','draft')
       AND h.txn_date BETWEEN ? AND ? {$loc_sql_h}
     GROUP BY DATE_FORMAT(h.txn_date, '%b %Y'), DATE_FORMAT(h.txn_date, '%Y-%m')

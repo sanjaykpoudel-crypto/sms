@@ -1,9 +1,11 @@
 <?php
 /**
  * api/InventoryEngine.php
- * Centralized, authoritative Inventory Engine for MNS Liquor ERP.
- * Single business layer for inventory quantity, movements, moving-average costing,
- * valuation, stock transfers, adjustments, stock reversals, and inventory-to-accounting integration.
+ * Perpetual Inventory Costing Engine for MNS Liquor ERP (PHP + MySQL).
+ *
+ * Implements transaction-driven inventory valuation & monotonic sequence-numbered ledger.
+ * Supports Moving-Average Costing, FIFO layer consumption, row-locking (SELECT ... FOR UPDATE),
+ * and targeted forward-recosting (recostForward) for backdated edits, deletions, and voiding.
  */
 
 if (!class_exists('InventoryException')) {
@@ -29,126 +31,759 @@ class InventoryEngine
         return self::$instance;
     }
 
+    public function getPDO(): PDO
+    {
+        return $this->pdo;
+    }
+
     /**
-     * Get available stock quantity for an item at a specific location
+     * Fast O(1) balance lookup on inventory_balances snapshot
+     */
+    public function getBalance($itemId, $locationId = null): array
+    {
+        $rawLoc = $locationId ?: (function_exists('get_user_default_location_id') ? get_user_default_location_id() : 1);
+        $locId = function_exists('resolve_location_id') ? resolve_location_id($rawLoc) : (is_numeric($rawLoc) ? (int)$rawLoc : 1);
+
+        $stmt = $this->pdo->prepare("SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?");
+        $stmt->execute([$itemId, $locId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($row) {
+            return [
+                'quantity_on_hand' => (float)$row['quantity_on_hand'],
+                'average_cost'     => (float)$row['average_cost'],
+                'total_value'      => (float)$row['total_value'],
+                'last_ledger_id'   => $row['last_ledger_id'] ? (int)$row['last_ledger_id'] : null,
+            ];
+        }
+
+        // Fallback to global items master stock
+        $stmt = $this->pdo->prepare("SELECT current_stock, cost_price FROM items WHERE id = ?");
+        $stmt->execute([$itemId]);
+        $item = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stock = (float)($item['current_stock'] ?? 0.0);
+        $cost  = (float)($item['cost_price'] ?? 0.0);
+
+        return [
+            'quantity_on_hand' => $stock,
+            'average_cost'     => $cost,
+            'total_value'      => round($stock * $cost, 4),
+            'last_ledger_id'   => null,
+        ];
+    }
+
+    /**
+     * Get available stock quantity
      */
     public function getAvailableStock($itemId, $locationId = null): float
     {
-        $rawLoc = $locationId ?: get_user_default_location_id();
-        $locationId = function_exists('resolve_location_id') ? resolve_location_id($rawLoc) : (is_numeric($rawLoc) ? (int)$rawLoc : 1);
-        $stmt = $this->pdo->prepare("SELECT quantity_on_hand FROM inventory_balances WHERE item_id = ? AND location_id = ?");
-        $stmt->execute([$itemId, $locationId]);
-        $qty = $stmt->fetchColumn();
-        if ($qty !== false) {
-            return (float)$qty;
-        }
-
-        // Fallback to global items.current_stock
-        $stmt = $this->pdo->prepare("SELECT current_stock FROM items WHERE id = ?");
-        $stmt->execute([$itemId]);
-        return (float)($stmt->fetchColumn() ?: 0.0);
+        $bal = $this->getBalance($itemId, $locationId);
+        return $bal['quantity_on_hand'];
     }
 
     /**
-     * Calculate and update moving-average unit cost upon incoming inventory
+     * Core NetSuite-style Inventory Movement Line Posting
+     * Every inventory-affecting line funnels through postLine().
+     */
+    public function postLine(
+        $itemId,
+        $locationId,
+        float $quantity,
+        ?float $unitCost,
+        $transactionId,
+        $lineId,
+        $date = null,
+        string $txnType = 'UNKNOWN',
+        array $options = []
+    ): int {
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            $rawLoc = $locationId ?: (function_exists('get_user_default_location_id') ? get_user_default_location_id() : 1);
+            $locId  = function_exists('resolve_location_id') ? resolve_location_id($rawLoc) : (is_numeric($rawLoc) ? (int)$rawLoc : 1);
+            $txnDateStr = $date ? (is_a($date, 'DateTime') ? $date->format('Y-m-d H:i:s') : date('Y-m-d H:i:s', strtotime($date))) : date('Y-m-d H:i:s');
+
+            // 1. Lock item+location balance row with SELECT ... FOR UPDATE
+            $stmtLock = $this->pdo->prepare("SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ? FOR UPDATE");
+            $stmtLock->execute([$itemId, $locId]);
+            $currentBalRow = $stmtLock->fetch(PDO::FETCH_ASSOC);
+
+            if (!$currentBalRow) {
+                $stmtInsBal = $this->pdo->prepare("INSERT IGNORE INTO inventory_balances (item_id, location_id, quantity_on_hand, average_cost, total_value) VALUES (?, ?, 0, 0, 0)");
+                $stmtInsBal->execute([$itemId, $locId]);
+                $stmtLock->execute([$itemId, $locId]);
+                $currentBalRow = $stmtLock->fetch(PDO::FETCH_ASSOC);
+            }
+
+            // 2. Fetch monotonic sequence number for item+location
+            $stmtSeq = $this->pdo->prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM inventory_ledger WHERE item_id = ? AND location_id = ?");
+            $stmtSeq->execute([$itemId, $locId]);
+            $nextSeq = (int)$stmtSeq->fetchColumn();
+
+            // 3. Check if entry is backdated compared to latest ledger entry date
+            $stmtLatestDate = $this->pdo->prepare("SELECT transaction_date FROM inventory_ledger WHERE item_id = ? AND location_id = ? ORDER BY sequence_number DESC LIMIT 1");
+            $stmtLatestDate->execute([$itemId, $locId]);
+            $latestDateStr = $stmtLatestDate->fetchColumn();
+            $isBackdated   = ($latestDateStr && strtotime($txnDateStr) < strtotime($latestDateStr)) ? 1 : 0;
+
+            // 4. Compute movement quantities, unit cost, and running balances
+            $ledgerId = $this->postLineInternal(
+                $itemId, $locId, $quantity, $unitCost, $transactionId, $lineId, $txnDateStr, $nextSeq, $txnType, $isBackdated, $options
+            );
+
+            // 5. If backdated insert, trigger targeted forward-recosting
+            if ($isBackdated) {
+                $this->recostForward($itemId, $locId, $nextSeq);
+            }
+
+            if (!$inTxn) {
+                $this->pdo->commit();
+            }
+
+            return $ledgerId;
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Internal line posting without starting new transactions
+     */
+    private function postLineInternal(
+        $itemId,
+        $locationId,
+        float $quantity,
+        ?float $unitCost,
+        $transactionId,
+        $lineId,
+        string $txnDateStr,
+        int $sequenceNumber,
+        string $txnType,
+        int $isBackdated,
+        array $options = []
+    ): int {
+        // Fetch item costing method
+        $stmtItem = $this->pdo->prepare("SELECT costing_method, cost_price, case_purchase_price, units_per_case FROM items WHERE id = ?");
+        $stmtItem->execute([$itemId]);
+        $itemMeta = $stmtItem->fetch(PDO::FETCH_ASSOC);
+        $costingMethod = strtoupper($itemMeta['costing_method'] ?? 'AVERAGE');
+
+        // Fetch latest running balances immediately before this sequence number
+        $stmtPrev = $this->pdo->prepare("
+            SELECT running_qty_balance, running_value_balance, unit_cost 
+            FROM inventory_ledger 
+            WHERE item_id = ? AND location_id = ? AND sequence_number < ? 
+            ORDER BY sequence_number DESC LIMIT 1
+        ");
+        $stmtPrev->execute([$itemId, $locationId, $sequenceNumber]);
+        $prev = $stmtPrev->fetch(PDO::FETCH_ASSOC);
+
+        $currQty   = (float)($prev['running_qty_balance'] ?? 0.0);
+        $currValue = (float)($prev['running_value_balance'] ?? 0.0);
+        $currCost  = $currQty > 0 ? round($currValue / $currQty, 6) : (float)($itemMeta['cost_price'] ?? 0.0);
+
+        $qtyIn  = $quantity > 0 ? $quantity : 0.0;
+        $qtyOut = $quantity < 0 ? abs($quantity) : 0.0;
+        $netQty = $quantity;
+
+        $moveCost  = 0.0;
+        $valIn     = 0.0;
+        $valOut    = 0.0;
+
+        if ($netQty > 0) {
+            // RECEIPT (Purchase, Stock In, positive adjustment, Build)
+            $moveCost = ($unitCost !== null && $unitCost >= 0) ? $unitCost : $currCost;
+            $valIn    = round($qtyIn * $moveCost, 6);
+            $valOut   = 0.0;
+            $newQty   = round($currQty + $qtyIn, 6);
+            $newValue = round($currValue + $valIn, 6);
+
+            // Update master item cost_price if purchase receipt
+            if ($unitCost !== null && $unitCost > 0 && in_array(strtoupper($txnType), ['PURCHASE', 'PURCHASE_RECEIPT', 'VENDOR_BILL'])) {
+                $conv = !empty($itemMeta['units_per_case']) && (int)$itemMeta['units_per_case'] > 0 ? (int)$itemMeta['units_per_case'] : 1;
+                $newCaseCost = round($unitCost * $conv, 2);
+                $stmtUpItem = $this->pdo->prepare("UPDATE items SET cost_price = ?, case_purchase_price = ? WHERE id = ?");
+                $stmtUpItem->execute([$unitCost, $newCaseCost, $itemId]);
+            }
+
+            // Create FIFO cost layer if FIFO
+            if ($costingMethod === 'FIFO') {
+                $stmtFifo = $this->pdo->prepare("INSERT INTO fifo_cost_layers (item_id, location_id, ledger_id, receipt_date, original_qty, remaining_qty, unit_cost) VALUES (?, ?, 0, ?, ?, ?, ?)");
+                // Will update ledger_id after ledger insert
+            }
+        } else {
+            // ISSUE (Sale, POS, Stock Out, negative adjustment, Unbuild)
+            if ($costingMethod === 'FIFO') {
+                // Consume FIFO cost layers
+                $moveCost = $this->consumeFifoCostLayers($itemId, $locationId, $qtyOut, $currCost);
+            } else {
+                $moveCost = $currCost;
+            }
+
+            $valIn    = 0.0;
+            $valOut   = round($qtyOut * $moveCost, 6);
+            $newQty   = round($currQty - $qtyOut, 6);
+            $newValue = round($currValue - $valOut, 6);
+        }
+
+        $movementType = $options['movement_type'] ?? $this->mapMovementType($txnType, $quantity);
+
+        // Insert into inventory_ledger
+        $stmtLedger = $this->pdo->prepare("
+            INSERT INTO inventory_ledger 
+            (item_id, location_id, transaction_id, transaction_line_id, transaction_type, movement_type, transaction_date, sequence_number, quantity_in, quantity_out, net_quantity, unit_cost, total_value_in, total_value_out, running_qty_balance, running_value_balance, costing_method_used, is_backdated, reason, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmtLedger->execute([
+            $itemId,
+            $locationId,
+            $transactionId,
+            $lineId,
+            $txnType,
+            $movementType,
+            $txnDateStr,
+            $sequenceNumber,
+            $qtyIn,
+            $qtyOut,
+            $netQty,
+            $moveCost,
+            $valIn,
+            $valOut,
+            $newQty,
+            $newValue,
+            $costingMethod,
+            $isBackdated,
+            $options['reason'] ?? null,
+            $_SESSION['user_id'] ?? null
+        ]);
+        $ledgerId = (int)$this->pdo->lastInsertId();
+
+        // Also sync legacy inventory_movements table for backwards compatibility
+        $this->syncLegacyMovement($ledgerId, $itemId, $locationId, $transactionId, $lineId, $txnType, $movementType, $qtyIn, $qtyOut, $netQty, $moveCost, $valIn + $valOut, $txnDateStr, $options['reason'] ?? null);
+
+        // Update inventory_balances snapshot
+        $avgCost = $newQty > 0 ? round($newValue / $newQty, 6) : $moveCost;
+        $stmtBalUp = $this->pdo->prepare("
+            INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, average_cost, total_value, last_ledger_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+                quantity_on_hand = VALUES(quantity_on_hand),
+                average_cost     = VALUES(average_cost),
+                total_value      = VALUES(total_value),
+                last_ledger_id   = VALUES(last_ledger_id),
+                updated_at       = NOW()
+        ");
+        $stmtBalUp->execute([$itemId, $locationId, $newQty, $avgCost, $newValue, $ledgerId]);
+
+        // Sync global items.current_stock
+        $this->syncGlobalItemStock($itemId);
+
+        return $ledgerId;
+    }
+
+    /**
+     * Targeted Forward-Recosting Engine (NetSuite model)
+     * When a transaction is backdated, edited, or voided, recost forward from that sequence number.
+     */
+    public function recostForward($itemId, $locationId, $fromSequenceOrDate): int
+    {
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            // Lock balance row
+            $stmtLock = $this->pdo->prepare("SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ? FOR UPDATE");
+            $stmtLock->execute([$itemId, $locationId]);
+
+            // Resolve starting sequence number
+            $fromSeq = 0;
+            $fromDateStr = null;
+
+            if (is_numeric($fromSequenceOrDate)) {
+                $fromSeq = (int)$fromSequenceOrDate;
+                $stmtGetDate = $this->pdo->prepare("SELECT transaction_date FROM inventory_ledger WHERE item_id = ? AND location_id = ? AND sequence_number = ?");
+                $stmtGetDate->execute([$itemId, $locationId, $fromSeq]);
+                $fromDateStr = $stmtGetDate->fetchColumn();
+            } else {
+                $fromDateStr = is_a($fromSequenceOrDate, 'DateTime') ? $fromSequenceOrDate->format('Y-m-d H:i:s') : date('Y-m-d H:i:s', strtotime($fromSequenceOrDate));
+                $stmtGetSeq = $this->pdo->prepare("SELECT COALESCE(MIN(sequence_number), 0) FROM inventory_ledger WHERE item_id = ? AND location_id = ? AND transaction_date >= ?");
+                $stmtGetSeq->execute([$itemId, $locationId, $fromDateStr]);
+                $fromSeq = (int)$stmtGetSeq->fetchColumn();
+            }
+
+            if ($fromSeq <= 0) {
+                if (!$inTxn) $this->pdo->commit();
+                return 0;
+            }
+
+            // 1. Archive affected ledger rows to inventory_ledger_history
+            $stmtArchive = $this->pdo->prepare("
+                INSERT INTO inventory_ledger_history 
+                (ledger_id, item_id, location_id, transaction_id, transaction_line_id, transaction_date, sequence_number, quantity_in, quantity_out, unit_cost, running_qty_balance, running_value_balance, archived_reason)
+                SELECT ledger_id, item_id, location_id, transaction_id, transaction_line_id, transaction_date, sequence_number, quantity_in, quantity_out, unit_cost, running_qty_balance, running_value_balance, 'Recost Forward Replay'
+                FROM inventory_ledger
+                WHERE item_id = ? AND location_id = ? AND sequence_number >= ?
+            ");
+            $stmtArchive->execute([$itemId, $locationId, $fromSeq]);
+
+            // 2. Delete affected ledger rows and legacy movements
+            $stmtDelLedger = $this->pdo->prepare("DELETE FROM inventory_ledger WHERE item_id = ? AND location_id = ? AND sequence_number >= ?");
+            $stmtDelLedger->execute([$itemId, $locationId, $fromSeq]);
+
+            // 3. Reset FIFO cost layers created at or after affected point
+            if ($fromDateStr) {
+                $stmtDelFifo = $this->pdo->prepare("DELETE FROM fifo_cost_layers WHERE item_id = ? AND location_id = ? AND receipt_date >= ?");
+                $stmtDelFifo->execute([$itemId, $locationId, $fromDateStr]);
+            }
+
+            // 4. Fetch all active transaction lines from transaction_headers & transaction_lines from starting point forward
+            $stmtTxnLines = $this->pdo->prepare("
+                SELECT 
+                    h.id as transaction_id,
+                    l.id as line_id,
+                    h.txn_number,
+                    h.txn_type,
+                    h.txn_date,
+                    l.quantity,
+                    l.unit_price,
+                    l.cost_price,
+                    l.conversion_factor,
+                    COALESCE(NULLIF(l.base_qty, 0), l.quantity * COALESCE(NULLIF(l.conversion_factor, 0), 1)) as calc_qty
+                FROM transaction_lines l
+                JOIN transaction_headers h ON l.header_id = h.id
+                WHERE l.item_id = ?
+                  AND COALESCE(NULLIF(l.location_id, ''), h.location_id, 1) = ?
+                  AND h.is_deleted = 0
+                  AND h.status NOT IN ('void', 'voided', 'draft')
+                  AND h.txn_type IN ('vendor_bill', 'purchase_receipt', 'credit_memo', 'sales_return', 'customer_invoice', 'pos_sale', 'sales_issue', 'vendor_return', 'purchase_return', 'inventory_adjustment', 'inventory_transfer', 'adjustment')
+                  AND h.txn_date >= ?
+                ORDER BY h.txn_date ASC, h.id ASC, l.id ASC
+            ");
+
+            $startDateForFetch = $fromDateStr ? date('Y-m-d 00:00:00', strtotime($fromDateStr)) : '2000-01-01 00:00:00';
+            $stmtTxnLines->execute([$itemId, $locationId, $startDateForFetch]);
+            $linesToReplay = $stmtTxnLines->fetchAll(PDO::FETCH_ASSOC);
+
+            // 5. Replay every transaction line in chronological order
+            $replayedCount = 0;
+            foreach ($linesToReplay as $line) {
+                $qty = (float)$line['calc_qty'];
+                $txnType = $line['txn_type'];
+
+                // Standardize net sign convention based on transaction type
+                if (in_array($txnType, ['customer_invoice', 'pos_sale', 'sales_issue', 'vendor_return', 'purchase_return'])) {
+                    $qty = -abs($qty);
+                } elseif (in_array($txnType, ['vendor_bill', 'purchase_receipt', 'credit_memo', 'sales_return'])) {
+                    $qty = abs($qty);
+                }
+
+                $cost = (float)($line['cost_price'] ?: $line['unit_price']);
+
+                // Fetch next sequence
+                $stmtSeq = $this->pdo->prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM inventory_ledger WHERE item_id = ? AND location_id = ?");
+                $stmtSeq->execute([$itemId, $locationId]);
+                $seq = (int)$stmtSeq->fetchColumn();
+
+                $this->postLineInternal(
+                    $itemId,
+                    $locationId,
+                    $qty,
+                    $cost,
+                    $line['transaction_id'],
+                    $line['line_id'],
+                    $line['txn_date'],
+                    $seq,
+                    $txnType,
+                    1,
+                    ['reason' => 'Recost Forward Replay']
+                );
+                $replayedCount++;
+            }
+
+            if (!$inTxn) {
+                $this->pdo->commit();
+            }
+
+            return $replayedCount;
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Void a transaction and trigger targeted forward recosting for affected items & locations
+     */
+    public function voidTransaction($transactionId, string $reason = 'Transaction Voided'): int
+    {
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            // 1. Fetch lines for transaction
+            $stmtLines = $this->pdo->prepare("
+                SELECT l.item_id, COALESCE(NULLIF(l.location_id, ''), h.location_id, 1) as location_id, h.txn_date
+                FROM transaction_lines l
+                JOIN transaction_headers h ON l.header_id = h.id
+                WHERE h.id = ?
+            ");
+            $stmtLines->execute([$transactionId]);
+            $affected = $stmtLines->fetchAll(PDO::FETCH_ASSOC);
+
+            // 2. Mark transaction header as VOIDED
+            $stmtVoid = $this->pdo->prepare("UPDATE transaction_headers SET status = 'voided', is_deleted = 1, updated_at = NOW() WHERE id = ?");
+            $stmtVoid->execute([$transactionId]);
+
+            // 3. Forward-recost each affected item + location
+            $affectedPairs = [];
+            foreach ($affected as $a) {
+                $key = $a['item_id'] . '_' . $a['location_id'];
+                if (!isset($affectedPairs[$key])) {
+                    $affectedPairs[$key] = [
+                        'item_id'     => $a['item_id'],
+                        'location_id' => $a['location_id'],
+                        'date'        => $a['txn_date']
+                    ];
+                }
+            }
+
+            foreach ($affectedPairs as $p) {
+                $this->recostForward($p['item_id'], $p['location_id'], $p['date']);
+            }
+
+            if (!$inTxn) {
+                $this->pdo->commit();
+            }
+
+            return count($affectedPairs);
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Reverse / wipe stock movements for a specific transaction header prior to re-posting (e.g. on Edit)
+     * and trigger forward-recosting on all affected item/location pairs.
+     */
+    public function reverseMovementsForHeader($headerId, string $reason = 'Transaction Edit Reversal'): int
+    {
+        $inTxn = $this->pdo->inTransaction();
+        if (!$inTxn) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            // 1. Fetch lines/items for transaction
+            $stmtLines = $this->pdo->prepare("
+                SELECT l.item_id, COALESCE(NULLIF(l.location_id, ''), h.location_id, 1) as location_id, h.txn_date
+                FROM transaction_lines l
+                JOIN transaction_headers h ON l.header_id = h.id
+                WHERE h.id = ?
+            ");
+            $stmtLines->execute([$headerId]);
+            $affected = $stmtLines->fetchAll(PDO::FETCH_ASSOC);
+
+            // If no lines found in transaction_lines, check stock_movement / inventory_ledger
+            if (empty($affected)) {
+                $stmtLedger = $this->pdo->prepare("
+                    SELECT item_id, location_id, transaction_date as txn_date
+                    FROM inventory_ledger
+                    WHERE transaction_id = ?
+                ");
+                $stmtLedger->execute([$headerId]);
+                $affected = $stmtLedger->fetchAll(PDO::FETCH_ASSOC);
+            }
+
+            // 2. Delete inventory_ledger records for this header
+            $stmtDelLedger = $this->pdo->prepare("DELETE FROM inventory_ledger WHERE transaction_id = ?");
+            $stmtDelLedger->execute([$headerId]);
+
+            try {
+                $this->pdo->prepare("DELETE FROM stock_movements WHERE header_id = ?")->execute([$headerId]);
+            } catch (Exception $ignore) {}
+            try {
+                $this->pdo->prepare("DELETE FROM stock_movement WHERE header_id = ?")->execute([$headerId]);
+            } catch (Exception $ignore) {}
+
+            // 3. Recost forward for all affected item-location pairs
+            $affectedPairs = [];
+            foreach ($affected as $a) {
+                if (empty($a['item_id'])) continue;
+                $locId = function_exists('resolve_location_id') ? resolve_location_id($a['location_id']) : (is_numeric($a['location_id']) ? (int)$a['location_id'] : 1);
+                $key = $a['item_id'] . '_' . $locId;
+                if (!isset($affectedPairs[$key])) {
+                    $affectedPairs[$key] = [
+                        'item_id'     => $a['item_id'],
+                        'location_id' => $locId,
+                        'date'        => $a['txn_date'] ?? date('Y-m-d')
+                    ];
+                }
+            }
+
+            foreach ($affectedPairs as $p) {
+                $this->recostForward($p['item_id'], $p['location_id'], $p['date']);
+            }
+
+            if (!$inTxn) {
+                $this->pdo->commit();
+            }
+
+            return count($affectedPairs);
+        } catch (Exception $e) {
+            if (!$inTxn && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Issue Stock (Sales / POS / Outward Movement)
+     */
+    public function issueStock(
+        $itemId,
+        $locationId,
+        float $quantity,
+        $transactionId = null,
+        $lineId = null,
+        string $txnType = 'SALE',
+        ?float $rate = null,
+        $date = null,
+        array $options = []
+    ): int {
+        return $this->postLine($itemId, $locationId, -abs($quantity), null, $transactionId, $lineId, $date, $txnType, array_merge($options, ['rate' => $rate]));
+    }
+
+    /**
+     * Receive Stock (Purchases / Inward Movement)
+     */
+    public function receiveStock(
+        $itemId,
+        $locationId,
+        float $quantity,
+        ?float $unitCost = null,
+        $transactionId = null,
+        $lineId = null,
+        string $txnType = 'PURCHASE',
+        $date = null,
+        array $options = []
+    ): int {
+        return $this->postLine($itemId, $locationId, abs($quantity), $unitCost, $transactionId, $lineId, $date, $txnType, $options);
+    }
+
+    /**
+     * Transfer Stock between locations
+     */
+    public function transferStock(
+        $itemId,
+        $fromLocationId,
+        $toLocationId,
+        float $quantity,
+        $transactionId = null,
+        $lineId = null,
+        $date = null,
+        array $options = []
+    ): array {
+        $outId = $this->postLine($itemId, $fromLocationId, -abs($quantity), null, $transactionId, $lineId, $date, 'TRANSFER_OUT', $options);
+        $bal = $this->getBalance($itemId, $fromLocationId);
+        $transferCost = $bal['average_cost'] ?: null;
+        $inId = $this->postLine($itemId, $toLocationId, abs($quantity), $transferCost, $transactionId, $lineId, $date, 'TRANSFER_IN', $options);
+
+        return ['out_ledger_id' => $outId, 'in_ledger_id' => $inId];
+    }
+
+    /**
+     * Adjust Stock (Inventory Adjustment)
+     */
+    public function adjustStock(
+        $itemId,
+        $locationId,
+        float $quantity,
+        ?float $unitCost = null,
+        $transactionId = null,
+        $lineId = null,
+        string $memo = '',
+        $date = null,
+        array $options = []
+    ): int {
+        return $this->postLine($itemId, $locationId, $quantity, $unitCost, $transactionId, $lineId, $date, 'ADJUSTMENT', array_merge($options, ['memo' => $memo]));
+    }
+
+    /**
+     * Calculate Moving Average Cost
      */
     public function calculateMovingAverageCost($itemId, $locationId, float $incomingQty, float $incomingUnitCost): float
     {
-        $locationId = function_exists('resolve_location_id') ? resolve_location_id($locationId) : (is_numeric($locationId) ? (int)$locationId : 1);
-        if ($incomingQty <= 0) {
-            $stmt = $this->pdo->prepare("SELECT cost_price FROM items WHERE id = ?");
-            $stmt->execute([$itemId]);
-            return (float)($stmt->fetchColumn() ?: 0.0);
+        $bal = $this->getBalance($itemId, $locationId);
+        $currQty = $bal['quantity_on_hand'];
+        $currVal = $bal['total_value'];
+
+        $newQty = $currQty + $incomingQty;
+        $newVal = $currVal + ($incomingQty * $incomingUnitCost);
+
+        if ($newQty <= 0) {
+            return $incomingUnitCost > 0 ? $incomingUnitCost : $bal['average_cost'];
         }
 
-        // Fetch current quantity and current avg cost
-        $stmt = $this->pdo->prepare("SELECT quantity_on_hand, average_cost FROM inventory_balances WHERE item_id = ? AND location_id = ?");
-        $stmt->execute([$itemId, $locationId]);
-        $currBal = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        $currentQty = (float)($currBal['quantity_on_hand'] ?? 0);
-        $currentCost = (float)($currBal['average_cost'] ?? 0);
-
-        // Use Last Purchase Price directly for cost updates as required
-        $newUnitCost = round($incomingUnitCost, 4);
-
-        // Fetch old cost & packaging info for case cost calculation & audit logging
-        $stmtOld = $this->pdo->prepare("SELECT cost_price, case_purchase_price, units_per_case FROM items WHERE id = ?");
-        $stmtOld->execute([$itemId]);
-        $itemMeta = $stmtOld->fetch(PDO::FETCH_ASSOC);
-
-        $oldCost = (float)($itemMeta['cost_price'] ?? 0);
-        $conv = !empty($itemMeta['units_per_case']) && (int)$itemMeta['units_per_case'] > 0 ? (int)$itemMeta['units_per_case'] : 1;
-        $newCaseCost = round($newUnitCost * $conv, 2);
-
-        // Update items master cost_price and case_purchase_price to Last Purchase Price
-        $stmtUp = $this->pdo->prepare("UPDATE items SET cost_price = ?, case_purchase_price = ? WHERE id = ?");
-        $stmtUp->execute([$newUnitCost, $newCaseCost, $itemId]);
-
-        if (function_exists('log_audit') && abs($oldCost - $newUnitCost) > 0.0001) {
-            log_audit('items', 'update', $itemId, 
-                ['cost_price' => $oldCost, 'case_purchase_price' => $itemMeta['case_purchase_price'] ?? 0], 
-                ['cost_price' => $newUnitCost, 'case_purchase_price' => $newCaseCost, 'reason' => 'Cost updated to Last Purchase Price on purchase/receipt']
-            );
-        }
-
-        return $newUnitCost;
+        return round($newVal / $newQty, 4);
     }
 
     /**
-     * Internal helper to upsert inventory balance & record movement line
+     * Reconcile Inventory Valuation with General Ledger
      */
-    private function recordMovementAndSyncBalance(array $movement): int
+    public function reconcileInventoryValuationWithGL($asOfDate = null, $locationId = null): array
     {
-        $locId = function_exists('resolve_location_id') ? resolve_location_id($movement['location_id'] ?? 1) : (is_numeric($movement['location_id'] ?? 1) ? (int)$movement['location_id'] : 1);
-        $movement['location_id'] = $locId;
+        $date = $asOfDate ?: date('Y-m-d');
+        $val = $this->getRealtimeStockValuation($date, $locationId);
+        return [
+            'as_of_date' => $date,
+            'total_valuation' => $val['grand_total_value'] ?? 0.0,
+            'total_items' => count($val['items'] ?? [])
+        ];
+    }
 
-        $stmt = $this->pdo->prepare("INSERT INTO inventory_movements 
-            (header_id, line_id, txn_number, txn_type, movement_type, item_id, location_id, qty_in, qty_out, net_qty, unit_cost, total_cost, movement_date, reversal_of_id, reason, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        $stmt->execute([
-            $movement['header_id'] ?? null,
-            $movement['line_id'] ?? null,
-            $movement['txn_number'] ?? null,
-            $movement['txn_type'] ?? 'UNKNOWN',
-            $movement['movement_type'],
-            $movement['item_id'],
-            $movement['location_id'],
-            $movement['qty_in'] ?? 0.0,
-            $movement['qty_out'] ?? 0.0,
-            $movement['net_qty'] ?? 0.0,
-            $movement['unit_cost'] ?? 0.0,
-            $movement['total_cost'] ?? 0.0,
-            $movement['movement_date'] ?? date('Y-m-d'),
-            $movement['reversal_of_id'] ?? null,
-            $movement['reason'] ?? null,
-            $_SESSION['user_id'] ?? null
-        ]);
-        $movementId = (int)$this->pdo->lastInsertId();
+    /**
+     * Instant As-Of-Date Historical Valuation Lookup from inventory_ledger
+     */
+    public function getValuationAsOf($itemId, $locationId, $date): array
+    {
+        $dateStr = is_a($date, 'DateTime') ? $date->format('Y-m-d 23:59:59') : date('Y-m-d 23:59:59', strtotime($date));
+        $locId = function_exists('resolve_location_id') ? resolve_location_id($locationId) : (is_numeric($locationId) ? (int)$locationId : 1);
 
-        $itemId = $movement['item_id'];
-        $locationId = $movement['location_id'];
-        $netQty = (float)($movement['net_qty'] ?? 0.0);
-        $unitCost = (float)($movement['unit_cost'] ?? 0.0);
-
-        // Upsert inventory_balances
-        $stmtBal = $this->pdo->prepare("
-            INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, available_qty, average_cost)
-            VALUES (?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-                quantity_on_hand = quantity_on_hand + VALUES(quantity_on_hand),
-                available_qty = available_qty + VALUES(available_qty),
-                average_cost = IF(quantity_on_hand + VALUES(quantity_on_hand) > 0, 
-                                  ((quantity_on_hand * average_cost) + (VALUES(quantity_on_hand) * VALUES(average_cost))) / (quantity_on_hand + VALUES(quantity_on_hand)), 
-                                  average_cost)
+        $stmt = $this->pdo->prepare("
+            SELECT running_qty_balance, running_value_balance, unit_cost
+            FROM inventory_ledger
+            WHERE item_id = ? AND location_id = ? AND transaction_date <= ?
+            ORDER BY sequence_number DESC LIMIT 1
         ");
-        $stmtBal->execute([$itemId, $locationId, $netQty, $netQty, $unitCost]);
+        $stmt->execute([$itemId, $locId, $dateStr]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        // Sync items.current_stock
-        $this->syncGlobalItemStock($itemId);
+        if ($row) {
+            $qty   = (float)$row['running_qty_balance'];
+            $val   = (float)$row['running_value_balance'];
+            $cost  = $qty > 0 ? round($val / $qty, 6) : (float)$row['unit_cost'];
+            return [
+                'quantity_on_hand' => $qty,
+                'average_cost'     => $cost,
+                'total_value'      => $val
+            ];
+        }
 
-        return $movementId;
+        return ['quantity_on_hand' => 0.0, 'average_cost' => 0.0, 'total_value' => 0.0];
+    }
+
+    /**
+     * Real-time Stock Ledger Report Query reading from inventory_ledger
+     */
+    public function getRealtimeStockLedger(string $fromDate, string $toDate, $locationId = null, $categoryId = null, $itemId = null): array
+    {
+        $params = [];
+        $locSql = "";
+        if (!empty($locationId) && $locationId !== 'all') {
+            $locSql = " AND l.location_id = ? ";
+            $params[] = (int)$locationId;
+        }
+
+        $itemSql = "";
+        if (!empty($itemId)) {
+            $itemSql = " AND i.id = ? ";
+            $params[] = $itemId;
+        }
+
+        $catSql = "";
+        if (!empty($categoryId)) {
+            $catSql = " AND i.item_category = ? ";
+            $params[] = $categoryId;
+        }
+
+        $fromStart = date('Y-m-d 00:00:00', strtotime($fromDate));
+        $toEnd     = date('Y-m-d 23:59:59', strtotime($toDate));
+
+        $sql = "
+            SELECT 
+                i.id, i.sku, i.item_name, i.cost_price,
+                
+                -- Opening Quantity from latest ledger row before fromDate
+                COALESCE((
+                    SELECT l_open.running_qty_balance 
+                    FROM inventory_ledger l_open 
+                    WHERE l_open.item_id = i.id 
+                      " . ($locationId && $locationId !== 'all' ? "AND l_open.location_id = " . (int)$locationId : "") . "
+                      AND l_open.transaction_date < " . $this->pdo->quote($fromStart) . "
+                    ORDER BY l_open.sequence_number DESC LIMIT 1
+                ), 0) AS opening_qty,
+                
+                -- Qty In between dates
+                COALESCE(SUM(CASE WHEN l.transaction_date BETWEEN " . $this->pdo->quote($fromStart) . " AND " . $this->pdo->quote($toEnd) . " THEN l.quantity_in ELSE 0 END), 0) AS qty_in,
+                
+                -- Qty Out between dates
+                COALESCE(SUM(CASE WHEN l.transaction_date BETWEEN " . $this->pdo->quote($fromStart) . " AND " . $this->pdo->quote($toEnd) . " THEN l.quantity_out ELSE 0 END), 0) AS qty_out
+
+            FROM items i
+            LEFT JOIN inventory_ledger l ON l.item_id = i.id {$locSql}
+            WHERE i.is_deleted = 0 AND i.is_active = 1 {$itemSql} {$catSql}
+            GROUP BY i.id, i.sku, i.item_name, i.cost_price
+            HAVING (opening_qty != 0 OR qty_in != 0 OR qty_out != 0)
+            ORDER BY i.item_name ASC
+        ";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * Real-time Stock Valuation Query reading from inventory_balances
+     */
+    public function getRealtimeStockValuation($asOfDate = null, $locationId = null, $categoryId = null): array
+    {
+        $params = [];
+        $locSql = "";
+        if (!empty($locationId) && $locationId !== 'all') {
+            $locSql = " AND ib.location_id = ? ";
+            $params[] = (int)$locationId;
+        }
+
+        $catSql = "";
+        if (!empty($categoryId)) {
+            $catSql = " AND i.item_category = ? ";
+            $params[] = $categoryId;
+        }
+
+        $sql = "
+            SELECT 
+                i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
+                COALESCE(ib.average_cost, i.cost_price) as cost_price, 
+                i.selling_price, i.reorder_level, i.reorder_qty, i.item_category as category_id,
+                COALESCE(ib.quantity_on_hand, i.current_stock, 0) AS stock_qty,
+                COALESCE(ib.total_value, (i.current_stock * i.cost_price), 0) AS stock_value
+            FROM items i
+            LEFT JOIN inventory_balances ib ON ib.item_id = i.id {$locSql}
+            LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
+            LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
+            WHERE i.is_deleted = 0 AND i.is_active = 1 {$catSql}
+            ORDER BY rc1.name, i.item_name
+        ";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
     /**
@@ -165,385 +800,63 @@ class InventoryEngine
     }
 
     /**
-     * Stock Receipt (Purchases)
+     * Sync legacy inventory_movements table for backwards compatibility
      */
-    public function receiveStock($itemId, $locationId, float $qty, float $unitCost, $headerId = null, $lineId = null, string $txnType = 'PURCHASE', string $date = null, array $context = []): int
+    private function syncLegacyMovement($ledgerId, $itemId, $locationId, $headerId, $lineId, $txnType, $movementType, $qtyIn, $qtyOut, $netQty, $unitCost, $totalCost, $dateStr, $reason): void
     {
-        if ($qty <= 0) {
-            throw new InventoryException("Stock receipt quantity must be greater than zero.");
-        }
-        $date = $date ?: date('Y-m-d');
-        $locationId = $locationId ?: get_user_default_location_id();
-
-        // Calculate Moving Average Cost
-        $avgCost = $this->calculateMovingAverageCost($itemId, $locationId, $qty, $unitCost);
-
-        return $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => $txnType,
-            'movement_type' => 'PURCHASE_RECEIPT',
-            'item_id' => $itemId,
-            'location_id' => $locationId,
-            'qty_in' => $qty,
-            'qty_out' => 0.0,
-            'net_qty' => $qty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round($qty * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => $context['reason'] ?? 'Purchase Receipt'
-        ]);
-    }
-
-    /**
-     * Stock Issue (Sales & POS)
-     */
-    public function issueStock($itemId, $locationId, float $qty, $headerId = null, $lineId = null, string $txnType = 'SALE', float $unitPrice = 0.0, string $date = null, array $context = []): int
-    {
-        if ($qty <= 0) {
-            throw new InventoryException("Stock issue quantity must be greater than zero.");
-        }
-        $date = $date ?: date('Y-m-d');
-        $locationId = $locationId ?: get_user_default_location_id();
-
-        // Stock availability check (unless forced)
-        $available = $this->getAvailableStock($itemId, $locationId);
-        if ($available < $qty && empty($context['force_issue'])) {
-            $stmt = $this->pdo->prepare("SELECT item_name FROM items WHERE id = ?");
-            $stmt->execute([$itemId]);
-            $itemName = $stmt->fetchColumn() ?: 'Item';
-            throw new InventoryException("Insufficient stock for '{$itemName}'. Available: {$available}, Requested: {$qty}.");
-        }
-
-        // Fetch item cost price for COGS
-        $stmt = $this->pdo->prepare("SELECT cost_price FROM items WHERE id = ?");
-        $stmt->execute([$itemId]);
-        $unitCost = (float)($stmt->fetchColumn() ?: 0.0);
-
-        $mType = ($txnType === 'POS') ? 'POS_ISSUE' : 'SALES_ISSUE';
-
-        return $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => $txnType,
-            'movement_type' => $mType,
-            'item_id' => $itemId,
-            'location_id' => $locationId,
-            'qty_in' => 0.0,
-            'qty_out' => $qty,
-            'net_qty' => -$qty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round($qty * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => $context['reason'] ?? 'Stock Issue'
-        ]);
-    }
-
-    /**
-     * Stock Return (Sales Return / Purchase Return)
-     */
-    public function returnStock($itemId, $locationId, float $qty, $headerId = null, $lineId = null, string $txnType = 'SALES_RETURN', bool $isCustomerReturn = true, string $date = null, array $context = []): int
-    {
-        if ($qty <= 0) {
-            throw new InventoryException("Return quantity must be greater than zero.");
-        }
-        $date = $date ?: date('Y-m-d');
-        $locationId = $locationId ?: get_user_default_location_id();
-
-        $stmt = $this->pdo->prepare("SELECT cost_price FROM items WHERE id = ?");
-        $stmt->execute([$itemId]);
-        $unitCost = (float)($stmt->fetchColumn() ?: 0.0);
-
-        if ($isCustomerReturn) {
-            $mType = 'SALES_RETURN';
-            $netQty = $qty;
-            $qtyIn = $qty;
-            $qtyOut = 0.0;
-        } else {
-            $mType = 'PURCHASE_RETURN';
-            $netQty = -$qty;
-            $qtyIn = 0.0;
-            $qtyOut = $qty;
-        }
-
-        return $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => $txnType,
-            'movement_type' => $mType,
-            'item_id' => $itemId,
-            'location_id' => $locationId,
-            'qty_in' => $qtyIn,
-            'qty_out' => $qtyOut,
-            'net_qty' => $netQty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round($qty * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => $context['reason'] ?? 'Stock Return'
-        ]);
-    }
-
-    /**
-     * Stock Transfer between two locations
-     */
-    public function transferStock($itemId, $fromLocationId, $toLocationId, float $qty, $headerId = null, $lineId = null, string $date = null, array $context = []): array
-    {
-        if ($qty <= 0) {
-            throw new InventoryException("Transfer quantity must be greater than zero.");
-        }
-        $date = $date ?: date('Y-m-d');
-
-        // Check source location stock
-        $avail = $this->getAvailableStock($itemId, $fromLocationId);
-        if ($avail < $qty && empty($context['force_issue'])) {
-            throw new InventoryException("Insufficient stock for transfer at source location. Available: {$avail}, Requested: {$qty}.");
-        }
-
-        $stmt = $this->pdo->prepare("SELECT cost_price FROM items WHERE id = ?");
-        $stmt->execute([$itemId]);
-        $unitCost = (float)($stmt->fetchColumn() ?: 0.0);
-
-        // 1. Transfer Out
-        $mOut = $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => 'STOCK_TRANSFER',
-            'movement_type' => 'TRANSFER_OUT',
-            'item_id' => $itemId,
-            'location_id' => $fromLocationId,
-            'qty_in' => 0.0,
-            'qty_out' => $qty,
-            'net_qty' => -$qty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round($qty * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => "Transfer to location {$toLocationId}"
-        ]);
-
-        // 2. Transfer In
-        $mIn = $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => 'STOCK_TRANSFER',
-            'movement_type' => 'TRANSFER_IN',
-            'item_id' => $itemId,
-            'location_id' => $toLocationId,
-            'qty_in' => $qty,
-            'qty_out' => 0.0,
-            'net_qty' => $qty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round($qty * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => "Transfer from location {$fromLocationId}"
-        ]);
-
-        return ['transfer_out_id' => $mOut, 'transfer_in_id' => $mIn];
-    }
-
-    /**
-     * Stock Adjustment (Increase or Decrease)
-     */
-    public function adjustStock($itemId, $locationId, float $adjustmentQty, float $newRate = 0.0, $headerId = null, $lineId = null, string $reason = '', string $date = null, array $context = []): int
-    {
-        if (abs($adjustmentQty) < 0.0001) {
-            return 0;
-        }
-        $date = $date ?: date('Y-m-d');
-        $locationId = $locationId ?: get_user_default_location_id();
-
-        $stmt = $this->pdo->prepare("SELECT cost_price FROM items WHERE id = ?");
-        $stmt->execute([$itemId]);
-        $unitCost = $newRate > 0 ? $newRate : (float)($stmt->fetchColumn() ?: 0.0);
-
-        if ($newRate > 0) {
-            $stmtUp = $this->pdo->prepare("UPDATE items SET cost_price = ? WHERE id = ?");
-            $stmtUp->execute([$newRate, $itemId]);
-        }
-
-        $mType = $adjustmentQty > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
-        $qtyIn = $adjustmentQty > 0 ? $adjustmentQty : 0.0;
-        $qtyOut = $adjustmentQty < 0 ? abs($adjustmentQty) : 0.0;
-
-        return $this->recordMovementAndSyncBalance([
-            'header_id' => $headerId,
-            'line_id' => $lineId,
-            'txn_number' => $context['txn_number'] ?? null,
-            'txn_type' => 'ADJUSTMENT',
-            'movement_type' => $mType,
-            'item_id' => $itemId,
-            'location_id' => $locationId,
-            'qty_in' => $qtyIn,
-            'qty_out' => $qtyOut,
-            'net_qty' => $adjustmentQty,
-            'unit_cost' => $unitCost,
-            'total_cost' => round(abs($adjustmentQty) * $unitCost, 4),
-            'movement_date' => $date,
-            'reason' => $reason ?: 'Stock Adjustment'
-        ]);
-    }
-
-    /**
-     * Reverse all inventory movements associated with a transaction header ID
-     */
-    public function reverseMovementsForHeader($headerId, string $reason = 'Transaction Reversal/Edit'): int
-    {
-        if (empty($headerId)) return 0;
-
-        $stmt = $this->pdo->prepare("SELECT * FROM inventory_movements WHERE header_id = ? AND reversal_of_id IS NULL");
-        $stmt->execute([$headerId]);
-        $movements = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        $reversedCount = 0;
-        foreach ($movements as $m) {
-            $revNetQty = -$m['net_qty'];
-            $revQtyIn = $m['qty_out'];
-            $revQtyOut = $m['qty_in'];
-
-            $this->recordMovementAndSyncBalance([
-                'header_id' => $headerId,
-                'line_id' => $m['line_id'],
-                'txn_number' => $m['txn_number'],
-                'txn_type' => $m['txn_type'],
-                'movement_type' => 'REVERSAL',
-                'item_id' => $m['item_id'],
-                'location_id' => $m['location_id'],
-                'qty_in' => $revQtyIn,
-                'qty_out' => $revQtyOut,
-                'net_qty' => $revNetQty,
-                'unit_cost' => $m['unit_cost'],
-                'total_cost' => $m['total_cost'],
-                'movement_date' => date('Y-m-d'),
-                'reversal_of_id' => $m['id'],
-                'reason' => $reason
-            ]);
-            $reversedCount++;
-        }
-
-        return $reversedCount;
-    }
-
-    /**
-     * Get real-time stock valuation directly from inventory balances / items
-     */
-    public function getRealtimeStockValuation($asOfDate = null, $locationId = null, $categoryId = null): array
-    {
-        $asOfDate = $asOfDate ?: date('Y-m-d');
-        $params = [];
-        $locSql = "";
-        if (!empty($locationId) && $locationId !== 'all') {
-            $locSql = " AND ib.location_id = ? ";
-            $params[] = $locationId;
-        }
-        $catSql = "";
-        if (!empty($categoryId)) {
-            $catSql = " AND i.item_category = ? ";
-            $params[] = $categoryId;
-        }
-
-        if (!empty($locationId) && $locationId !== 'all') {
-            $sql = "
-                SELECT 
-                    i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
-                    i.cost_price, i.selling_price, i.reorder_level, i.reorder_qty, i.item_category as category_id,
-                    COALESCE(ib.quantity_on_hand, 0) AS stock_qty
-                FROM items i
-                LEFT JOIN inventory_balances ib ON ib.item_id = i.id {$locSql}
-                LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
-                LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-                WHERE i.is_deleted = 0 AND i.is_active = 1 {$catSql}
-                ORDER BY rc1.name, i.item_name
-            ";
-        } else {
-            $sql = "
-                SELECT 
-                    i.id, i.sku, i.item_name, rc1.name as item_category, rc2.name as unit_type,
-                    i.cost_price, i.selling_price, i.reorder_level, i.reorder_qty, i.item_category as category_id,
-                    COALESCE(i.current_stock, 0) AS stock_qty
-                FROM items i
-                LEFT JOIN reference_codes rc1 ON i.item_category = rc1.id AND rc1.type = 'category'
-                LEFT JOIN reference_codes rc2 ON i.unit_type = rc2.id AND rc2.type IN ('unit', 'units')
-                WHERE i.is_deleted = 0 AND i.is_active = 1 {$catSql}
-                ORDER BY rc1.name, i.item_name
-            ";
-        }
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    }
-
-    /**
-     * Get real-time stock ledger movement directly from inventory_movements table
-     */
-    public function getRealtimeStockLedger(string $fromDate, string $toDate, $locationId = null, $categoryId = null, $itemId = null): array
-    {
-        $params = [$fromDate, $fromDate, $toDate, $fromDate, $toDate];
-        $locSql = "";
-        if (!empty($locationId) && $locationId !== 'all') {
-            $locSql = " AND m.location_id = " . (int)$locationId;
-        }
-
-        $itemSql = "";
-        if (!empty($itemId)) {
-            $itemSql = " AND i.id = ? ";
-            $params[] = $itemId;
-        }
-
-        $catSql = "";
-        if (!empty($categoryId)) {
-            $catSql = " AND i.item_category = ? ";
-            $params[] = $categoryId;
-        }
-
-        $sql = "
-            SELECT 
-                i.id, i.sku, i.item_name, i.cost_price,
-                COALESCE(SUM(CASE WHEN m.movement_date < ? THEN m.net_qty ELSE 0 END), 0) AS opening_qty,
-                COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_in ELSE 0 END), 0) AS qty_in,
-                COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_out ELSE 0 END), 0) AS qty_out
-            FROM items i
-            LEFT JOIN inventory_movements m ON m.item_id = i.id {$locSql}
-            WHERE i.is_deleted = 0 AND i.is_active = 1 {$itemSql} {$catSql}
-            GROUP BY i.id, i.sku, i.item_name, i.cost_price
-            HAVING (opening_qty != 0 OR qty_in != 0 OR qty_out != 0)
-            ORDER BY i.item_name ASC
-        ";
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    }
-
-    /**
-     * Reconcile inventory stock valuation with GL asset account dynamically by COA account_subtype
-     */
-    public function reconcileInventoryValuationWithGL(): array
-    {
-        $stmt = $this->pdo->query("SELECT COALESCE(SUM(current_stock * cost_price), 0) as subledger_val FROM items WHERE is_deleted = 0");
-        $subledgerVal = (float)($stmt->fetchColumn() ?: 0.0);
-
-        $stmtGl = $this->pdo->query("
-            SELECT COALESCE(SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END), 0) as gl_bal
-            FROM journal_entries j
-            JOIN accounts a ON j.account_id = a.id
-            JOIN transaction_headers th ON j.header_id = th.id
-            WHERE a.account_type = 'asset' AND a.account_subtype IN ('inventory', 'Inventory Asset')
-              AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
+        $stmt = $this->pdo->prepare("
+            INSERT INTO inventory_movements 
+            (header_id, line_id, txn_number, txn_type, movement_type, item_id, location_id, qty_in, qty_out, net_qty, unit_cost, total_cost, movement_date, reason, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $glBal = (float)($stmtGl->fetchColumn() ?: 0.0);
+        $stmt->execute([
+            $headerId, $lineId, 'TXN-' . $headerId, $txnType, $movementType, $itemId, $locationId,
+            $qtyIn, $qtyOut, $netQty, $unitCost, $totalCost, date('Y-m-d', strtotime($dateStr)), $reason, $_SESSION['user_id'] ?? null
+        ]);
+    }
 
-        $diff = round($subledgerVal - $glBal, 2);
+    private function mapMovementType(string $txnType, float $qty): string
+    {
+        $t = strtoupper($txnType);
+        if (in_array($t, ['PURCHASE', 'PURCHASE_RECEIPT', 'VENDOR_BILL'])) return 'PURCHASE_RECEIPT';
+        if (in_array($t, ['SALE', 'POS', 'POS_SALE', 'SALES_ISSUE', 'CUSTOMER_INVOICE'])) return 'SALES_ISSUE';
+        if (in_array($t, ['CREDIT_MEMO', 'SALES_RETURN'])) return 'SALES_RETURN';
+        if (in_array($t, ['VENDOR_RETURN', 'PURCHASE_RETURN'])) return 'PURCHASE_RETURN';
+        if ($qty >= 0) return 'ADJUSTMENT_IN';
+        return 'ADJUSTMENT_OUT';
+    }
 
-        return [
-            'subledger_val' => $subledgerVal,
-            'gl_val' => $glBal,
-            'adjustment_posted' => 0,
-            'status' => abs($diff) < 0.05 ? 'MATCH' : 'DIFFERENCE'
-        ];
+    private function consumeFifoCostLayers($itemId, $locationId, float $qtyToConsume, float $fallbackCost): float
+    {
+        $stmtLayers = $this->pdo->prepare("
+            SELECT * FROM fifo_cost_layers 
+            WHERE item_id = ? AND location_id = ? AND remaining_qty > 0 
+            ORDER BY receipt_date ASC, layer_id ASC
+        ");
+        $stmtLayers->execute([$itemId, $locationId]);
+        $layers = $stmtLayers->fetchAll(PDO::FETCH_ASSOC);
+
+        if (empty($layers)) {
+            return $fallbackCost;
+        }
+
+        $needed = $qtyToConsume;
+        $totalCostVal = 0.0;
+
+        foreach ($layers as $layer) {
+            if ($needed <= 0) break;
+            $rem = (float)$layer['remaining_qty'];
+            $take = min($needed, $rem);
+            $cost = (float)$layer['unit_cost'];
+
+            $totalCostVal += ($take * $cost);
+            $needed -= $take;
+
+            $newRem = round($rem - $take, 6);
+            $stmtUp = $this->pdo->prepare("UPDATE fifo_cost_layers SET remaining_qty = ? WHERE layer_id = ?");
+            $stmtUp->execute([$newRem, $layer['layer_id']]);
+        }
+
+        return $qtyToConsume > 0 ? round($totalCostVal / $qtyToConsume, 6) : $fallbackCost;
     }
 }

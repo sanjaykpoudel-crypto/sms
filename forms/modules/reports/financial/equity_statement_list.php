@@ -21,10 +21,11 @@ $loc_sql       = rpt_location_sql('h');
 // 1. Fetch beginning balances of all equity accounts prior to date_from
 $beginning_balances = $db->fetchAll("
     SELECT a.id, a.account_name,
-           -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+           SUM(jl.credit - jl.debit) as bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity' AND h.txn_date >= ? AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     GROUP BY a.id, a.account_name
@@ -33,32 +34,35 @@ $beginning_balances = $db->fetchAll("
 // 2. Fetch period changes breakdown (debits, credits, net change)
 $period_changes = $db->fetchAll("
     SELECT a.id, a.account_name,
-           SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE 0 END) as total_debit,
-           SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE 0 END) as total_credit,
-           -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as net_bal
+           SUM(jl.debit) as total_debit,
+           SUM(jl.credit) as total_credit,
+           SUM(jl.credit - jl.debit) as net_bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
     GROUP BY a.id, a.account_name
 ", [$date_from, $date_to]);
 
 // 3. Fetch Net Profit for the period (Revenues minus Expenses)
-$revenue = -(float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
+$revenue = (float) ($db->fetchOne("
+    SELECT SUM(jl.credit - jl.debit) AS v 
+    FROM journal_lines jl 
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id 
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'income' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
 
 $expenses = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.debit - jl.credit) AS v 
+    FROM journal_lines jl 
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id 
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'expense' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
@@ -105,15 +109,16 @@ unset($eq_item);
 
 // 4. Fetch GL transaction details for equity accounts in date range
 $equity_transactions = $db->fetchAll("
-    SELECT a.id as account_id, a.account_name, j.entry_date, j.entry_type, j.amount,
-           h.id as header_id, h.txn_number, h.txn_type, h.memo, h.created_by, h.status as posting_status
+    SELECT a.id as account_id, a.account_name, je.je_date as entry_date, jl.debit, jl.credit,
+           h.id as header_id, h.txn_number, h.txn_type, COALESCE(je.memo, h.memo) as memo, h.created_by, h.status as posting_status
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity' AND h.txn_date BETWEEN ? AND ? 
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    ORDER BY j.entry_date ASC, h.id ASC, j.id ASC
+    ORDER BY je.je_date ASC, h.id ASC, jl.jl_id ASC
 ", [$date_from, $date_to]);
 
 $txns_by_account = [];
@@ -128,15 +133,15 @@ foreach ($equity_transactions as $et) {
 
     // Categorize transaction movements
     $acc_name_lower = strtolower($et['account_name']);
-    $amt = (float)$et['amount'];
+    $net_val = (float)$et['credit'] - (float)$et['debit'];
     if (str_contains($acc_name_lower, 'drawing') || str_contains($acc_name_lower, 'withdrawal')) {
-        $drawings += ($et['entry_type'] === 'debit' ? $amt : -$amt);
+        $drawings += ((float)$et['debit'] - (float)$et['credit']);
     } elseif (str_contains($acc_name_lower, 'dividend')) {
-        $dividends += ($et['entry_type'] === 'debit' ? $amt : -$amt);
+        $dividends += ((float)$et['debit'] - (float)$et['credit']);
     } elseif (str_contains($acc_name_lower, 'capital') || str_contains($acc_name_lower, 'investment') || str_contains($acc_name_lower, 'contribution')) {
-        $contributions += ($et['entry_type'] === 'credit' ? $amt : -$amt);
+        $contributions += $net_val;
     } else {
-        $other_adj += ($et['entry_type'] === 'credit' ? $amt : -$amt);
+        $other_adj += $net_val;
     }
 }
 
@@ -159,10 +164,15 @@ unset($val);
 
 // Balance Sheet Equity Validation
 $bs_equity = (float) ($db->fetchOne("
-    SELECT -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    SELECT SUM(CASE 
+        WHEN a.account_type IN ('equity', 'income') THEN (jl.credit - jl.debit)
+        WHEN a.account_type = 'expense' THEN (jl.credit - jl.debit)
+        ELSE 0 
+    END) as bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type IN ('equity', 'income', 'expense') AND h.txn_date <= ?
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['bal'] ?? 0);
@@ -395,11 +405,11 @@ $is_reconciled   = $reconciled_diff < 0.01;
                                                     <td><span class="ns-badge" style="background:#e2e8f0; color:#334155; padding:2px 6px; border-radius:4px; font-size:10px; text-transform:uppercase; font-weight:700;"><?= htmlspecialchars($t['txn_type']) ?></span></td>
                                                     <td style="font-weight:600; color:#003087;"><?= htmlspecialchars($t['txn_number']) ?></td>
                                                     <td><?= htmlspecialchars($t['memo'] ?: '—') ?></td>
-                                                    <td style="text-align:right; color:<?= $t['entry_type'] === 'debit' ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
-                                                        <?= $t['entry_type'] === 'debit' ? rpt_currency((float)$t['amount']) : '—' ?>
+                                                    <td style="text-align:right; color:<?= (float)$t['debit'] > 0 ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
+                                                        <?= (float)$t['debit'] > 0 ? rpt_currency((float)$t['debit']) : '—' ?>
                                                     </td>
-                                                    <td style="text-align:right; color:<?= $t['entry_type'] === 'credit' ? '#059669' : '#94a3b8' ?>; font-weight:600;">
-                                                        <?= $t['entry_type'] === 'credit' ? rpt_currency((float)$t['amount']) : '—' ?>
+                                                    <td style="text-align:right; color:<?= (float)$t['credit'] > 0 ? '#059669' : '#94a3b8' ?>; font-weight:600;">
+                                                        <?= (float)$t['credit'] > 0 ? rpt_currency((float)$t['credit']) : '—' ?>
                                                     </td>
                                                 </tr>
                                             <?php endforeach; ?>
@@ -458,16 +468,11 @@ $is_reconciled   = $reconciled_diff < 0.01;
                     <?php 
                     $running_bal = $tot_beg;
                     foreach ($equity_transactions as $t): 
-                        $amt = (float)$t['amount'];
-                        $is_debit = ($t['entry_type'] === 'debit');
-                        $is_credit = ($t['entry_type'] === 'credit');
+                        $deb = (float)$t['debit'];
+                        $cre = (float)$t['credit'];
                         
                         // Equity balance increases with Credit, decreases with Debit
-                        if ($is_credit) {
-                            $running_bal += $amt;
-                        } else {
-                            $running_bal -= $amt;
-                        }
+                        $running_bal += ($cre - $deb);
                     ?>
                         <tr>
                             <td><?= rpt_date($t['entry_date']) ?></td>
@@ -475,11 +480,11 @@ $is_reconciled   = $reconciled_diff < 0.01;
                             <td style="font-weight:600; color:#003087;"><?= htmlspecialchars($t['txn_number']) ?></td>
                             <td><?= htmlspecialchars($t['account_name']) ?></td>
                             <td><?= htmlspecialchars($t['memo'] ?: '—') ?></td>
-                            <td style="text-align:right; color:<?= $is_debit ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
-                                <?= $is_debit ? rpt_currency($amt) : '—' ?>
+                            <td style="text-align:right; color:<?= $deb > 0 ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
+                                <?= $deb > 0 ? rpt_currency($deb) : '—' ?>
                             </td>
-                            <td style="text-align:right; color:<?= $is_credit ? '#059669' : '#94a3b8' ?>; font-weight:600;">
-                                <?= $is_credit ? rpt_currency($amt) : '—' ?>
+                            <td style="text-align:right; color:<?= $cre > 0 ? '#059669' : '#94a3b8' ?>; font-weight:600;">
+                                <?= $cre > 0 ? rpt_currency($cre) : '—' ?>
                             </td>
                             <td style="text-align:right; font-weight:800; color:#003087;">
                                 <?= rpt_currency($running_bal) ?>

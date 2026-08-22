@@ -102,7 +102,7 @@ try {
         ]);
         
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     $total_adjustment_credit = 0;
@@ -140,15 +140,25 @@ try {
         if ($abs_amount > 0) {
             if ($qty > 0) {
                 // Increase: Dr Inventory
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $inventory_account_id, $item_id, $abs_amount, 'Inventory Adj IN - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $gl_lines[] = [
+                    'account_id'  => $inventory_account_id,
+                    'debit'       => $abs_amount,
+                    'credit'      => 0.00,
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $item_id,
+                    'location_id' => $location_id,
+                ];
                 $total_adjustment_credit += $abs_amount;
             } else {
                 // Decrease: Cr Inventory
-                $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-                    generate_uuid(), $id, $inventory_account_id, $item_id, $abs_amount, 'Inventory Adj OUT - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-                ]);
+                $gl_lines[] = [
+                    'account_id'  => $inventory_account_id,
+                    'debit'       => 0.00,
+                    'credit'      => $abs_amount,
+                    'entity_type' => 'ITEM',
+                    'entity_id'   => $item_id,
+                    'location_id' => $location_id,
+                ];
                 $total_adjustment_debit += $abs_amount;
             }
         }
@@ -156,14 +166,26 @@ try {
 
     // Insert the single summarized offsetting Journal Entry / Entries for the Adjustment Account
     if ($total_adjustment_credit > 0) {
-        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $adjustment_account_id, null, $total_adjustment_credit, 'Inventory Adj Offset CR - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-        ]);
+        $gl_lines[] = [
+            'account_id'  => $adjustment_account_id,
+            'debit'       => 0.00,
+            'credit'      => $total_adjustment_credit,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
     if ($total_adjustment_debit > 0) {
-        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, item_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $adjustment_account_id, null, $total_adjustment_debit, 'Inventory Adj Offset DR - ' . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-        ]);
+        $gl_lines[] = [
+            'account_id'  => $adjustment_account_id,
+            'debit'       => $total_adjustment_debit,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
+    }
+
+    if (!empty($gl_lines)) {
+        AccountingEngine::getInstance()->postJournalEntry($id, 'INVENTORY_ADJ', $gl_lines, $txn_date, 'Inventory Adj ' . $txn_number);
     }
 
     if (function_exists('sync_daily_pos_summary')) {

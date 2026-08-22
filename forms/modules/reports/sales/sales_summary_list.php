@@ -54,11 +54,12 @@ if ($channel === 'all' || $channel === 'pos') {
 $journal_sales = 0.0;
 if ($channel === 'all' || $channel === 'journals') {
     $journal_sales = (float) ($db->fetchOne("
-        SELECT SUM(CASE WHEN j.entry_type = 'credit' THEN j.amount ELSE -j.amount END) as total
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers th ON j.header_id = th.id
-        WHERE th.txn_type IN ('Journal', 'journal_entry')
+        SELECT SUM(jl.credit - jl.debit) as total
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers th ON je.transaction_id = th.id
+        WHERE th.txn_type IN ('Journal', 'journal_entry', 'journal')
           AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
           AND th.txn_date BETWEEN ? AND ?
           AND a.account_type = 'income'

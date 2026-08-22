@@ -82,7 +82,7 @@ try {
         ]);
         
         $db->execute("DELETE FROM account_transfers WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     // Insert into existing account_transfers table
@@ -92,15 +92,23 @@ try {
     ]);
 
     // Insert Journal Entries (Double-Entry Impact)
-    // Dr Destination Bank Account (Increase Asset)
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?, NULL, NULL)", [
-        generate_uuid(), $id, $to_account_id, $amount, 'Transfer IN - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-    ]);
-
-    // Cr Source Bank Account (Decrease Asset)
-    $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?, NULL, NULL)", [
-        generate_uuid(), $id, $from_account_id, $amount, 'Transfer OUT - ' . $txn_number . ' ' . $memo, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-    ]);
+    $gl_lines = [
+        [
+            'account_id'  => $to_account_id,
+            'debit'       => $amount,
+            'credit'      => 0.00,
+            'entity_type' => 'NONE',
+            'location_id' => $to_location_id ?? $from_location_id,
+        ],
+        [
+            'account_id'  => $from_account_id,
+            'debit'       => 0.00,
+            'credit'      => $amount,
+            'entity_type' => 'NONE',
+            'location_id' => $from_location_id,
+        ],
+    ];
+    AccountingEngine::getInstance()->postJournalEntry($id, 'ACCOUNT_TRANSFER', $gl_lines, $txn_date, 'Fund Transfer ' . $txn_number . ' ' . $memo);
 
     log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $amount, 'memo' => $memo, 'status' => $status]);
 

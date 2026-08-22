@@ -40,25 +40,21 @@ if ($party_type === 'customer') {
     // 2. Tagged Journal Entries for Customer
     $journals = $db->fetchAll("
         SELECT 'Journal' as txn_type,
-               IF(j.memo LIKE '%Opening Balance%' OR j.memo LIKE '%opening balance%', 'Opening Balance', 'Journal') as txn_type_group,
+               IF(COALESCE(je.memo, h.memo) LIKE '%Opening Balance%' OR COALESCE(je.memo, h.memo) LIKE '%opening balance%', 'Opening Balance', 'Journal') as txn_type_group,
                h.txn_number as txn_number,
                h.txn_date,
-               IF(j.entry_type = 'debit', j.amount, -j.amount) as total_amount,
+               (jl.debit - jl.credit) as total_amount,
                (
-                   IF(j.entry_type = 'debit', j.amount, -j.amount)
+                   (jl.debit - jl.credit)
                    - COALESCE((
                        SELECT SUM(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)))
                        FROM transaction_links tl_all
                        JOIN transaction_headers ph ON tl_all.parent_id = ph.id
                        JOIN payments p ON ph.id = p.header_id
-                       WHERE (tl_all.child_id = j.id OR tl_all.child_id = h.id)
+                       WHERE (tl_all.child_id = jl.jl_id OR tl_all.child_id = h.id)
                          AND (
-                             tl_all.link_type LIKE CONCAT('payment:', j.id, ':%')
-                             OR (
-                                 tl_all.link_type NOT LIKE 'payment:%:%'
-                                 AND tl_all.link_type LIKE 'payment:%'
-                                 AND ABS(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'debit', j.amount, -j.amount)) < 0.01
-                             )
+                             tl_all.link_type LIKE CONCAT('payment:', jl.jl_id, ':%')
+                             OR tl_all.link_type LIKE 'payment:%'
                          )
                          AND p.customer_id = ?
                          AND (ph.id != ? OR ? = '')
@@ -66,30 +62,27 @@ if ($party_type === 'customer') {
                    ), 0.00)
                ) as balance_due,
                h.id,
-               j.id as line_id,
+               jl.jl_id as line_id,
                COALESCE(MAX(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0) as applied_amount,
-               j.memo
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id)
+               COALESCE(je.memo, h.memo) as memo
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        LEFT JOIN transaction_links tl ON (tl.child_id = jl.jl_id OR tl.child_id = h.id)
             AND (
-                tl.link_type LIKE CONCAT('payment:', j.id, ':%')
-                OR (
-                    tl.link_type NOT LIKE 'payment:%:%'
-                    AND tl.link_type LIKE 'payment:%'
-                    AND ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'debit', j.amount, -j.amount)) < 0.01
-                )
+                tl.link_type LIKE CONCAT('payment:', jl.jl_id, ':%')
+                OR tl.link_type LIKE 'payment:%'
             )
             AND tl.parent_id = ?
-        WHERE j.party_id = ?
-          AND (j.party_type = 'customer' OR j.party_type IS NULL)
+        WHERE (jl.entity_id = ? OR h.party_id = ?)
+          AND (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL OR h.party_type = 'customer')
           AND h.is_deleted = 0
           AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.txn_type IN ('Journal', 'journal_entry')
-        GROUP BY j.id, h.id, h.txn_number, h.txn_date, j.memo, j.entry_type, j.amount
+          AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'opening balance', 'opening_balance')
+        GROUP BY jl.jl_id, h.id, h.txn_number, h.txn_date, je.memo, h.memo, jl.debit, jl.credit
         HAVING ABS(balance_due) > 0.01 OR ABS(applied_amount) > 0
         ORDER BY h.txn_date ASC
-    ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id]);
+    ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id, $party_id]);
 
     // 3. Open Credit Memos for Customer
     $credit_memos = $db->fetchAll("
@@ -129,25 +122,21 @@ if ($party_type === 'customer') {
     // 2. Tagged Journal Entries for Vendor
     $journals = $db->fetchAll("
         SELECT 'Journal' as txn_type,
-               IF(j.memo LIKE '%Opening Balance%' OR j.memo LIKE '%opening balance%', 'Opening Balance', 'Journal') as txn_type_group,
+               IF(COALESCE(je.memo, h.memo) LIKE '%Opening Balance%' OR COALESCE(je.memo, h.memo) LIKE '%opening balance%', 'Opening Balance', 'Journal') as txn_type_group,
                h.txn_number as txn_number,
                h.txn_date,
-               IF(j.entry_type = 'credit', j.amount, -j.amount) as total_amount,
+               (jl.credit - jl.debit) as total_amount,
                (
-                   IF(j.entry_type = 'credit', j.amount, -j.amount)
+                   (jl.credit - jl.debit)
                    - COALESCE((
                        SELECT SUM(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)))
                        FROM transaction_links tl_all
                        JOIN transaction_headers ph ON tl_all.parent_id = ph.id
                        JOIN payments p ON ph.id = p.header_id
-                       WHERE (tl_all.child_id = j.id OR tl_all.child_id = h.id)
+                       WHERE (tl_all.child_id = jl.jl_id OR tl_all.child_id = h.id)
                          AND (
-                             tl_all.link_type LIKE CONCAT('payment:', j.id, ':%')
-                             OR (
-                                 tl_all.link_type NOT LIKE 'payment:%:%'
-                                 AND tl_all.link_type LIKE 'payment:%'
-                                 AND ABS(CAST(SUBSTRING_INDEX(tl_all.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'credit', j.amount, -j.amount)) < 0.01
-                             )
+                             tl_all.link_type LIKE CONCAT('payment:', jl.jl_id, ':%')
+                             OR tl_all.link_type LIKE 'payment:%'
                          )
                          AND p.vendor_id = ?
                          AND (ph.id != ? OR ? = '')
@@ -155,30 +144,27 @@ if ($party_type === 'customer') {
                    ), 0.00)
                ) as balance_due,
                h.id,
-               j.id as line_id,
+               jl.jl_id as line_id,
                COALESCE(MAX(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0) as applied_amount,
-               j.memo
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        LEFT JOIN transaction_links tl ON (tl.child_id = j.id OR tl.child_id = h.id)
+               COALESCE(je.memo, h.memo) as memo
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        LEFT JOIN transaction_links tl ON (tl.child_id = jl.jl_id OR tl.child_id = h.id)
             AND (
-                tl.link_type LIKE CONCAT('payment:', j.id, ':%')
-                OR (
-                    tl.link_type NOT LIKE 'payment:%:%'
-                    AND tl.link_type LIKE 'payment:%'
-                    AND ABS(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)) - IF(j.entry_type = 'credit', j.amount, -j.amount)) < 0.01
-                )
+                tl.link_type LIKE CONCAT('payment:', jl.jl_id, ':%')
+                OR tl.link_type LIKE 'payment:%'
             )
             AND tl.parent_id = ?
-        WHERE j.party_id = ?
-          AND (j.party_type = 'vendor' OR j.party_type IS NULL)
+        WHERE (jl.entity_id = ? OR h.party_id = ?)
+          AND (jl.entity_type = 'VENDOR' OR jl.entity_type IS NULL OR h.party_type = 'vendor')
           AND h.is_deleted = 0
           AND h.status NOT IN ('void', 'voided', 'draft')
-          AND h.txn_type IN ('Journal', 'journal_entry')
-        GROUP BY j.id, h.id, h.txn_number, h.txn_date, j.memo, j.entry_type, j.amount
+          AND LOWER(h.txn_type) IN ('journal', 'journal_entry', 'opening balance', 'opening_balance')
+        GROUP BY jl.jl_id, h.id, h.txn_number, h.txn_date, je.memo, h.memo, jl.debit, jl.credit
         HAVING ABS(balance_due) > 0.01 OR ABS(applied_amount) > 0
         ORDER BY h.txn_date ASC
-    ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id]);
+    ", [$party_id, $payment_id, $payment_id, $payment_id, $party_id, $party_id]);
 
     // 3. Open Vendor Credits for Vendor
     $vendor_credits = $db->fetchAll("

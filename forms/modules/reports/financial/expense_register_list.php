@@ -16,14 +16,15 @@ $date_to   = $_GET['date_to']   ?? $today;
 $loc_sql = rpt_location_sql('h');
 
 $expenses = $db->fetchAll("
-    SELECT a.id as account_id, a.account_name, j.entry_date, j.amount, j.entry_type,
-           h.txn_number, h.txn_type, h.memo
+    SELECT a.id as account_id, a.account_name, je.je_date as entry_date, (jl.debit - jl.credit) as amount,
+           h.txn_number, h.txn_type, COALESCE(je.memo, h.memo) as memo
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'expense' AND h.txn_date BETWEEN ? AND ? 
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-    ORDER BY j.entry_date DESC, a.account_name ASC
+    ORDER BY je.je_date DESC, a.account_name ASC
 ", [$date_from, $date_to]);
 
 // Aggregate expenses by account
@@ -32,7 +33,7 @@ $total_expense  = 0.0;
 
 foreach ($expenses as $e) {
     $acc_id  = $e['account_id'];
-    $net_amt = ($e['entry_type'] === 'debit' ? (float)$e['amount'] : -(float)$e['amount']);
+    $net_amt = (float)$e['amount'];
     
     if (!isset($exp_by_account[$acc_id])) {
         $exp_by_account[$acc_id] = [

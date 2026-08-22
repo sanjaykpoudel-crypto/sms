@@ -26,19 +26,20 @@ $rows = $db->fetchAll("
         UNION ALL
 
         SELECT 
-            COALESCE(j.party_id, th.party_id) as customer_id,
+            COALESCE(jl.entity_id, th.party_id) as customer_id,
             th.id as header_id,
-            SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
+            SUM(jl.debit - jl.credit) as total_amount,
             COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00) as amount_paid,
-            (SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due
-        FROM journal_entries j
-        JOIN transaction_headers th ON j.header_id = th.id
+            (SUM(jl.debit - jl.credit) - COALESCE(SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2))), 0.00)) as balance_due
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers th ON je.transaction_id = th.id
         LEFT JOIN transaction_links tl ON tl.child_id = th.id AND tl.link_type LIKE 'payment:%'
-        WHERE (j.party_type = 'customer' OR j.party_type IS NULL)
-          AND (j.party_id IS NOT NULL OR th.party_id IS NOT NULL)
-          AND th.txn_type IN ('Journal', 'journal_entry') 
+        WHERE (jl.entity_type = 'CUSTOMER' OR jl.entity_type IS NULL)
+          AND (jl.entity_id IS NOT NULL OR th.party_id IS NOT NULL)
+          AND th.txn_type IN ('Journal', 'journal_entry', 'journal') 
           AND th.txn_date BETWEEN ? AND ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
-        GROUP BY th.id, j.party_id, th.party_id
+        GROUP BY th.id, jl.entity_id, th.party_id
     ) open_docs ON c.id = open_docs.customer_id
     WHERE c.is_deleted = 0
     GROUP BY c.id, c.customer_code, c.full_name, c.customer_type

@@ -247,7 +247,7 @@ try {
             $existing_hdrs = $db->fetchAll("SELECT id FROM transaction_headers WHERE id = ? OR txn_number = ?", [$fy['closing_journal_id'] ?? '', $closing_number]);
             foreach ($existing_hdrs as $eh) {
                 if ($reclose_behavior === 'delete') {
-                    $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$eh['id']]);
+                    AccountingEngine::getInstance()->deleteJournalForTransaction($eh['id']);
                     $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$eh['id']]);
                 } else {
                     reverse_journal_entry($pdo, $eh['id']);
@@ -256,7 +256,7 @@ try {
 
             if (!empty($fy['opening_journal_id'])) {
                 // Delete the next year opening journal generated previously
-                $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$fy['opening_journal_id']]);
+                AccountingEngine::getInstance()->deleteJournalForTransaction($fy['opening_journal_id']);
                 $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$fy['opening_journal_id']]);
             }
             
@@ -441,13 +441,13 @@ try {
             
             // 1. Delete closing journal
             if (!empty($fy['closing_journal_id'])) {
-                $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$fy['closing_journal_id']]);
+                AccountingEngine::getInstance()->deleteJournalForTransaction($fy['closing_journal_id']);
                 $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$fy['closing_journal_id']]);
             }
             
             // 2. Delete opening journal of the next year
             if (!empty($fy['opening_journal_id'])) {
-                $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$fy['opening_journal_id']]);
+                AccountingEngine::getInstance()->deleteJournalForTransaction($fy['opening_journal_id']);
                 $db->execute("DELETE FROM transaction_headers WHERE id = ?", [$fy['opening_journal_id']]);
             }
             

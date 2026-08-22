@@ -344,7 +344,7 @@ function handleTransaction($json, $pdo, $db)
                         // Delete associated payments, links, and journal entries
                         $pdo->prepare("DELETE FROM payments WHERE header_id = ?")->execute([$primaryValue]);
                         $pdo->prepare("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?")->execute([$primaryValue, $primaryValue]);
-                        $pdo->prepare("DELETE FROM journal_entries WHERE header_id = ?")->execute([$primaryValue]);
+                        AccountingEngine::getInstance()->deleteJournalForTransaction($primaryValue);
 
                         // Recalculate status and balance due on linked invoices, bills, and journal entries
                         foreach ($affected_doc_ids as $doc_id) {

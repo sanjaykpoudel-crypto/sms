@@ -9,10 +9,11 @@ if ($id) {
     $data = $db->fetchOne("SELECT * FROM accounts WHERE id = ?", [$id]);
     if ($data) {
         $bal_row = $db->fetchOne("
-            SELECT COALESCE(SUM(CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END), 0) as bal
-            FROM journal_entries je
-            JOIN transaction_headers h ON je.header_id = h.id
-            WHERE je.account_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
+            SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as bal
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.je_id = je.je_id
+            JOIN transaction_headers h ON je.transaction_id = h.id
+            WHERE jl.account_id = ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
         ", [$id]);
         $net_debit = (float) ($bal_row['bal'] ?? 0);
         $type = strtolower($data['account_type'] ?? '');

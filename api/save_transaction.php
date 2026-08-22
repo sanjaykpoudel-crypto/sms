@@ -80,7 +80,7 @@ try {
 
         $db->execute("DELETE FROM payments WHERE header_id = ?", [$id]);
         $db->execute("DELETE FROM transaction_links WHERE parent_id = ? OR child_id = ?", [$id, $id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     $bank_account_ids = $_POST['bank_account_id'] ?? [];
@@ -101,12 +101,12 @@ try {
         }
     }
 
+    $gl_lines = [];
     foreach ($bank_account_ids as $index => $acc_id) {
-        if (empty($acc_id)) continue;
         $line_amount = (float)($line_amounts[$index] ?? 0);
+        if ($line_amount <= 0 || empty($acc_id)) continue;
         $total_tendered += $line_amount;
-        
-        // Dynamically resolve payment method based on the account name
+
         $acc_info = $db->fetchOne("SELECT account_name FROM accounts WHERE id = ?", [$acc_id]);
         $mapped_method = resolve_payment_method($acc_info['account_name'] ?? '');
         
@@ -118,32 +118,44 @@ try {
             $mapped_method, $acc_id, $line_amount, $reference_number, $txn_date
         ]);
 
-        if ($line_amount > 0) {
-            // For customer payments: Debit Bank (Money IN); For customer refunds: Credit Bank (Money OUT)
-            if ($party_type === 'customer') {
-                $entry_type = $is_refund_payment ? 'credit' : 'debit';
-            } else {
-                $entry_type = $is_refund_payment ? 'debit' : 'credit';
-            }
-            $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year, party_id, party_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-                generate_uuid(), $id, $acc_id, $entry_type, $line_amount, ($is_refund_payment ? 'Refund ' : 'Payment ') . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year'], $party_id, $party_type
-            ]);
+        // Bank / Cash GL line
+        if ($party_type === 'customer') {
+            $is_dr = !$is_refund_payment;
+        } else {
+            $is_dr = $is_refund_payment;
         }
+        $gl_lines[] = [
+            'account_id'  => $acc_id,
+            'debit'       => $is_dr ? $line_amount : 0.00,
+            'credit'      => $is_dr ? 0.00 : $line_amount,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
 
-    // Cr/Dr AR/AP Account
+    // Party AR/AP GL line
     $party_acc_type = ($party_type === 'customer') ? 'receivable' : 'payable';
-    $party_account = get_effective_account($party_id, $party_acc_type);
+    $party_account  = get_effective_account($party_id, $party_acc_type);
     if ($party_type === 'customer') {
-        $party_entry_type = $is_refund_payment ? 'debit' : 'credit';
+        $is_party_dr = $is_refund_payment;
     } else {
-        $party_entry_type = $is_refund_payment ? 'credit' : 'debit';
+        $is_party_dr = !$is_refund_payment;
     }
 
     if ($total_tendered > 0) {
-        $db->execute("INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            generate_uuid(), $id, $party_account, $party_entry_type, $total_tendered, ($is_refund_payment ? 'Refund ' : 'Payment ') . $txn_number, $_SESSION['user_id'], $txn_date, $fiscal['period'], $fiscal['year']
-        ]);
+        $gl_lines[] = [
+            'account_id'  => $party_account,
+            'debit'       => $is_party_dr ? $total_tendered : 0.00,
+            'credit'      => $is_party_dr ? 0.00 : $total_tendered,
+            'entity_type' => strtoupper($party_type),
+            'entity_id'   => $party_id,
+            'location_id' => $location_id,
+        ];
+    }
+
+    if (!empty($gl_lines)) {
+        $je_type = ($party_type === 'customer') ? 'CUSTOMER_PAYMENT' : 'VENDOR_PAYMENT';
+        AccountingEngine::getInstance()->postJournalEntry($id, $je_type, $gl_lines, $txn_date, ($is_refund_payment ? 'Refund ' : 'Payment ') . $txn_number);
     }
 
     // Handle Application

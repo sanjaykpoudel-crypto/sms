@@ -28,9 +28,9 @@ $invoices = $db->fetchAll("
     WHERE ci.customer_id = ? AND th.is_deleted = 0 AND th.status NOT IN ('void', 'voided', 'draft')
     UNION ALL
     SELECT 'Journal' as doc_type, h.id as id, h.id as header_id, h.txn_number as doc_number, h.txn_date as doc_date,
-        SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total_amount,
+        SUM(jl.debit - jl.credit) as total_amount,
         (
-            SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END)
+            SUM(jl.debit - jl.credit)
             - COALESCE((
                 SELECT SUM(CAST(SUBSTRING_INDEX(tl.link_type, ':', -1) AS DECIMAL(10,2)))
                 FROM transaction_links tl
@@ -43,9 +43,10 @@ $invoices = $db->fetchAll("
             ), 0.00)
         ) as balance_due,
         h.status as payment_status
-    FROM journal_entries j
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE j.party_id = ? AND j.party_type = 'customer'
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE jl.entity_id = ? AND jl.entity_type = 'CUSTOMER'
       AND h.is_deleted = 0 
       AND h.status NOT IN ('void', 'voided', 'draft')
       AND h.txn_type IN ('Journal', 'journal_entry', 'Opening Balance', 'Opening_Balance', 'opening_balance')

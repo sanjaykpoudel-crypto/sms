@@ -47,34 +47,39 @@ $entries = [];
 if (!empty($bank_acct_ids)) {
     $acct_placeholders = implode(',', array_fill(0, count($bank_acct_ids), '?'));
 
-    // 2. Calculate Opening Balance (entry_date < $date_from)
+    // 2. Calculate Opening Balance (je_date < $date_from)
     $op_params = array_merge($bank_acct_ids, [$date_from], $params);
     $op_row = $db->fetchOne("
-        SELECT COALESCE(SUM(CASE WHEN j.entry_type='debit' THEN j.amount ELSE -j.amount END), 0) as op_bal
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE j.account_id IN ({$acct_placeholders})
-          AND j.entry_date < ?
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0) as op_bal
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE jl.account_id IN ({$acct_placeholders})
+          AND je.je_date < ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           {$loc_sql}
     ", $op_params);
     $opening_balance = (float)($op_row['op_bal'] ?? 0);
 
-    // 3. Fetch Period Bank Transactions (entry_date BETWEEN $date_from AND $date_to)
+    // 3. Fetch Period Bank Transactions (je_date BETWEEN $date_from AND $date_to)
     $period_params = array_merge($bank_acct_ids, [$date_from, $date_to], $params);
     $entries = $db->fetchAll("
-        SELECT j.id, j.entry_date, h.txn_number, h.txn_type, j.memo,
-               a.account_name, j.entry_type, j.amount
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        JOIN transaction_headers h ON j.header_id = h.id
-        WHERE j.account_id IN ({$acct_placeholders})
-          AND j.entry_date BETWEEN ? AND ?
+        SELECT jl.jl_id as id, je.je_date as entry_date, h.txn_number, h.txn_type, je.memo,
+               a.account_name, 
+               IF(jl.debit > 0, 'debit', 'credit') as entry_type,
+               IF(jl.debit > 0, jl.debit, jl.credit) as amount,
+               jl.debit, jl.credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        JOIN transaction_headers h ON je.transaction_id = h.id
+        WHERE jl.account_id IN ({$acct_placeholders})
+          AND je.je_date BETWEEN ? AND ?
           AND h.is_deleted = 0
           AND h.status NOT IN ('{$excluded}')
           {$loc_sql}
-        ORDER BY j.entry_date ASC, j.id ASC
+        ORDER BY je.je_date ASC, jl.jl_id ASC
     ", $period_params);
 }
 

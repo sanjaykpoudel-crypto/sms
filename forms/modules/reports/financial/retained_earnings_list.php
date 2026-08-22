@@ -19,29 +19,32 @@ $loc_sql       = rpt_location_sql('h');
 
 // Opening Retained Earnings as of date_from
 $opening_retained = (float) ($db->fetchOne("
-    SELECT -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    SELECT SUM(jl.credit - jl.debit) as bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'equity' AND (a.account_subtype IN ('Retained Earnings', 'retained_earnings') OR LOWER(a.account_name) LIKE '%retained%')
       AND h.txn_date >= ? AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$fy_start_date, $date_from])['bal'] ?? 0);
 
 // Net Profit / (Loss) for the period
-$revenue = -(float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
+$revenue = (float) ($db->fetchOne("
+    SELECT SUM(jl.credit - jl.debit) AS v 
+    FROM journal_lines jl 
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id 
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'income' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
 
 $expenses = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) AS v 
-    FROM journal_entries j 
-    JOIN accounts a ON j.account_id = a.id 
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.debit - jl.credit) AS v 
+    FROM journal_lines jl 
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id 
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'expense' AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
 ", [$date_from, $date_to])['v'] ?? 0);
@@ -50,11 +53,12 @@ $net_profit = $revenue - $expenses;
 
 // Dividends & Other Allocations during the period
 $dividends = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
-    WHERE (a.account_name LIKE '%dividend%' OR a.account_name LIKE '%drawing%')
+    SELECT SUM(jl.debit - jl.credit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
+    WHERE (LOWER(a.account_name) LIKE '%dividend%' OR LOWER(a.account_name) LIKE '%drawing%')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 

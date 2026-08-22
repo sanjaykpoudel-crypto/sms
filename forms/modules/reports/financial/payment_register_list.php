@@ -19,28 +19,29 @@ $loc_sql = rpt_location_sql('h');
 $where_flow = "";
 $params = [$date_from, $date_to];
 if ($flow_type === 'inflow') {
-    $where_flow = " AND j.entry_type = 'debit' ";
+    $where_flow = " AND jl.debit > 0 ";
 } elseif ($flow_type === 'outflow') {
-    $where_flow = " AND j.entry_type = 'credit' ";
+    $where_flow = " AND jl.credit > 0 ";
 }
 
 $payments = $db->fetchAll("
-    SELECT j.id as entry_id, j.entry_date, j.entry_type, j.amount,
-           h.txn_number, h.txn_type, h.memo, a.id as account_id, a.account_name
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT jl.jl_id as entry_id, je.je_date as entry_date, jl.debit, jl.credit,
+           h.txn_number, h.txn_type, COALESCE(je.memo, h.memo) as memo, a.id as account_id, a.account_name
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset'
-      AND a.account_subtype IN ('Cash', 'Bank')
+      AND a.account_subtype IN ('Cash', 'Bank', 'cash', 'bank')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$where_flow} {$loc_sql}
-    ORDER BY j.entry_date DESC, j.id DESC
+    ORDER BY je.je_date DESC, jl.jl_id DESC
 ", $params);
 
 $tot_inflow  = 0.0;
 $tot_outflow = 0.0;
 foreach ($payments as $p) {
-    if ($p['entry_type'] === 'debit') $tot_inflow += (float)$p['amount'];
-    if ($p['entry_type'] === 'credit') $tot_outflow += (float)$p['amount'];
+    $tot_inflow += (float)$p['debit'];
+    $tot_outflow += (float)$p['credit'];
 }
 ?>
 
@@ -81,20 +82,18 @@ foreach ($payments as $p) {
                 <?php if (empty($payments)): ?>
                     <tr><td colspan="7" style="text-align:center; padding:30px; color:#94a3b8;">No payment transactions found.</td></tr>
                 <?php else: ?>
-                    <?php foreach ($payments as $p): 
-                        $is_inflow = ($p['entry_type'] === 'debit');
-                    ?>
+                    <?php foreach ($payments as $p): ?>
                         <tr>
                             <td><?= rpt_date($p['entry_date']) ?></td>
                             <td style="font-weight:600; color:#003087;"><?= htmlspecialchars($p['txn_number']) ?></td>
                             <td><span class="ns-badge" style="background:#f1f5f9; color:#334155; padding:2px 6px; border-radius:4px; font-size:10px; text-transform:uppercase; font-weight:700;"><?= htmlspecialchars($p['txn_type']) ?></span></td>
                             <td><?= htmlspecialchars($p['account_name']) ?></td>
                             <td><?= htmlspecialchars($p['memo'] ?: '—') ?></td>
-                            <td style="text-align:right; color:<?= $is_inflow ? '#059669' : '#94a3b8' ?>; font-weight:600;">
-                                <?= $is_inflow ? rpt_currency((float)$p['amount']) : '—' ?>
+                            <td style="text-align:right; color:<?= (float)$p['debit'] > 0 ? '#059669' : '#94a3b8' ?>; font-weight:600;">
+                                <?= (float)$p['debit'] > 0 ? rpt_currency((float)$p['debit']) : '—' ?>
                             </td>
-                            <td style="text-align:right; color:<?= !$is_inflow ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
-                                <?= !$is_inflow ? rpt_currency((float)$p['amount']) : '—' ?>
+                            <td style="text-align:right; color:<?= (float)$p['credit'] > 0 ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
+                                <?= (float)$p['credit'] > 0 ? rpt_currency((float)$p['credit']) : '—' ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

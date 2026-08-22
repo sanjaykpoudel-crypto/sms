@@ -47,14 +47,15 @@ $loc_sql = rpt_location_sql('h');
 
 // 5. Fetch balances for This FY
 $this_bal_rows = $db->fetchAll("
-    SELECT j.account_id, 
-           SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-    FROM journal_entries j
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT jl.account_id, 
+           SUM(jl.debit - jl.credit) as bal
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE h.txn_date BETWEEN ? AND ?
       AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
       AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-    GROUP BY j.account_id
+    GROUP BY jl.account_id
 ", [$date_from_this, $date_to_this]);
 
 $this_balances = [];
@@ -66,14 +67,15 @@ foreach ($this_bal_rows as $row) {
 $prev_balances = [];
 if ($prev_fy) {
     $prev_bal_rows = $db->fetchAll("
-        SELECT j.account_id, 
-               SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
-        FROM journal_entries j
-        JOIN transaction_headers h ON j.header_id = h.id
+        SELECT jl.account_id, 
+               SUM(jl.debit - jl.credit) as bal
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN transaction_headers h ON je.transaction_id = h.id
         WHERE h.txn_date BETWEEN ? AND ?
           AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft')
           AND (h.source IS NULL OR h.source NOT IN ('Fiscal Year Closing', 'Fiscal Year Opening')) {$loc_sql}
-        GROUP BY j.account_id
+        GROUP BY jl.account_id
     ", [$date_from_prev, $date_to_prev]);
 
     foreach ($prev_bal_rows as $row) {

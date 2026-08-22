@@ -39,11 +39,16 @@ $lines_by_header = [];
 if (!empty($header_ids)) {
     $in_clause = implode(',', array_fill(0, count($header_ids), '?'));
     $lines = $db->fetchAll("
-        SELECT j.header_id, j.entry_type, j.amount, j.entry_date, a.id as account_id, a.account_name
-        FROM journal_entries j
-        JOIN accounts a ON j.account_id = a.id
-        WHERE j.header_id IN ($in_clause)
-        ORDER BY j.id ASC
+        SELECT je.transaction_id as header_id, jl.debit, jl.credit, je.je_date as entry_date, a.id as account_id, a.account_name,
+               COALESCE(c.full_name, v.company_name, u.full_name) as entity_name
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        JOIN accounts a ON jl.account_id = a.id
+        LEFT JOIN customers c ON jl.entity_id = c.id AND jl.entity_type = 'CUSTOMER'
+        LEFT JOIN vendors v ON jl.entity_id = v.id AND jl.entity_type = 'VENDOR'
+        LEFT JOIN users u ON jl.entity_id = u.id AND jl.entity_type = 'USER'
+        WHERE je.transaction_id IN ($in_clause)
+        ORDER BY jl.jl_id ASC
     ", $header_ids);
 
     foreach ($lines as $l) {
@@ -58,8 +63,8 @@ foreach ($journals as $j) {
     $hid = $j['header_id'];
     if (isset($lines_by_header[$hid])) {
         foreach ($lines_by_header[$hid] as $l) {
-            if ($l['entry_type'] === 'debit') $tot_debit += (float)$l['amount'];
-            if ($l['entry_type'] === 'credit') $tot_credit += (float)$l['amount'];
+            $tot_debit += (float)$l['debit'];
+            $tot_credit += (float)$l['credit'];
         }
     }
 }
@@ -147,12 +152,15 @@ foreach ($journals as $j) {
                                 <td colspan="5" style="border-right:none;"></td>
                                 <td style="padding-left:20px; font-weight:500; color:#1e293b;">
                                     <?= htmlspecialchars($l['account_name']) ?>
+                                    <?php if (!empty($l['entity_name'])): ?>
+                                        <span style="font-size:11px; color:#64748b; margin-left:6px;">(<?= htmlspecialchars($l['entity_name']) ?>)</span>
+                                    <?php endif; ?>
                                 </td>
-                                <td style="text-align:right; color:<?= $l['entry_type'] === 'debit' ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
-                                    <?= $l['entry_type'] === 'debit' ? rpt_currency((float)$l['amount']) : '—' ?>
+                                <td style="text-align:right; color:<?= (float)$l['debit'] > 0 ? '#dc2626' : '#94a3b8' ?>; font-weight:600;">
+                                    <?= (float)$l['debit'] > 0 ? rpt_currency((float)$l['debit']) : '—' ?>
                                 </td>
-                                <td style="text-align:right; color:<?= $l['entry_type'] === 'credit' ? '#059669' : '#94a3b8' ?>; font-weight:600;">
-                                    <?= $l['entry_type'] === 'credit' ? rpt_currency((float)$l['amount']) : '—' ?>
+                                <td style="text-align:right; color:<?= (float)$l['credit'] > 0 ? '#059669' : '#94a3b8' ?>; font-weight:600;">
+                                    <?= (float)$l['credit'] > 0 ? rpt_currency((float)$l['credit']) : '—' ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

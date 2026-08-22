@@ -6,7 +6,13 @@ $data = [];
 $lines = [];
 if ($id) {
     $data = $db->fetchOne("SELECT * FROM transaction_headers WHERE id = ?", [$id]);
-    $lines = $db->fetchAll("SELECT * FROM journal_entries WHERE header_id = ? ORDER BY id ASC", [$id]);
+    $lines = $db->fetchAll("
+        SELECT jl.*, jl.debit, jl.credit, LOWER(jl.entity_type) as party_type, jl.entity_id as party_id, je.memo
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.je_id = je.je_id
+        WHERE je.transaction_id = ?
+        ORDER BY jl.jl_id ASC
+    ", [$id]);
 } else {
     $data = [
         'txn_number' => getNextTransactionNumber('journal_entry'),
@@ -16,7 +22,7 @@ if ($id) {
 
 if (empty($lines)) {
     $lines = [
-        ['account_id' => '', 'entry_type' => 'debit', 'amount' => 0, 'party_type' => '', 'party_id' => '', 'memo' => '']
+        ['account_id' => '', 'debit' => 0, 'credit' => 0, 'party_type' => '', 'party_id' => '', 'memo' => '']
     ];
 }
 
@@ -48,13 +54,14 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
             style="display: flex; gap: 40px; align-items: flex-start; justify-content: space-between; width: 100%;">
             <div style="flex: 2; max-width: 60%; display: flex; flex-direction: column; gap: 8px;">
                 <div class="ns-form-group">
-                    <label class="ns-label">Entry #</label>
-                    <input type="text" name="txn_number" class="ns-input" value="<?php echo $data['txn_number']; ?>"
-                        readonly style="background: #f0f0f0;">
+                    <label class="ns-label">Journal Entry #</label>
+                    <input type="text" name="txn_number" class="ns-input"
+                        value="<?php echo $data['txn_number'] ?? ''; ?>" readonly
+                        style="background: #f9f9f9; font-weight: bold; color: var(--ns-primary);">
                 </div>
                 <div class="ns-form-group">
-                    <label class="ns-label">Date *</label>
-                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date']; ?>"
+                    <label class="ns-label">Date</label>
+                    <input type="date" name="txn_date" class="ns-input" value="<?php echo $data['txn_date'] ?? ''; ?>"
                         required>
                 </div>
                 <div class="ns-form-group">
@@ -116,8 +123,8 @@ $users = $db->fetchAll("SELECT id, full_name as name FROM users WHERE is_active 
                 <?php
                 $accounts = $db->fetchAll("SELECT id, account_name FROM accounts WHERE is_active = 1 AND is_deleted = 0 ORDER BY account_name ASC");
                 foreach ($lines as $i => $line):
-                    $debit_val = ($line['entry_type'] === 'debit') ? (float) $line['amount'] : 0.00;
-                    $credit_val = ($line['entry_type'] === 'credit') ? (float) $line['amount'] : 0.00;
+                    $debit_val = (float)($line['debit'] ?? (($line['entry_type'] ?? '') === 'debit' ? ($line['amount'] ?? 0) : 0.00));
+                    $credit_val = (float)($line['credit'] ?? (($line['entry_type'] ?? '') === 'credit' ? ($line['amount'] ?? 0) : 0.00));
                     $line_party_type = $line['party_type'] ?? '';
                     $line_party_id = $line['party_id'] ?? '';
                     ?>

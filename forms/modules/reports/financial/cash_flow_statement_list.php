@@ -30,10 +30,11 @@ $acct_op_balance = (float) ($db->fetchOne("
 
 // 1. Opening Cash & Bank Balance prior to date_from
 $opening_cash_txns = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    SELECT SUM(jl.debit - jl.credit) as bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
       AND h.txn_date < ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from])['bal'] ?? 0);
@@ -43,34 +44,37 @@ $opening_cash = $acct_op_balance + $opening_cash_txns;
 // 2. Operating Activities
 // Cash Received from Customers & Sales
 $customer_collections = (float) ($db->fetchOne("
-    SELECT SUM(j.amount) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.debit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
-      AND j.entry_type = 'debit' AND h.txn_type IN ('customer_payment', 'customer_invoice', 'invoice', 'payment', 'pos', 'receipt')
+      AND jl.debit > 0 AND h.txn_type IN ('customer_payment', 'customer_invoice', 'invoice', 'payment', 'pos', 'receipt')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
 // Cash Paid to Vendors & Suppliers
 $vendor_payments = (float) ($db->fetchOne("
-    SELECT SUM(j.amount) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.credit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
-      AND j.entry_type = 'credit' AND h.txn_type IN ('vendor_payment', 'bill', 'purchase')
+      AND jl.credit > 0 AND h.txn_type IN ('vendor_payment', 'bill', 'purchase')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
 // Cash Paid for Operating Expenses
 $operating_expenses_paid = (float) ($db->fetchOne("
-    SELECT SUM(j.amount) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.credit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
-      AND j.entry_type = 'credit' AND h.txn_type IN ('expense')
+      AND jl.credit > 0 AND h.txn_type IN ('expense')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
@@ -78,32 +82,35 @@ $net_operating_cash = $customer_collections - $vendor_payments - $operating_expe
 
 // 3. Investing Activities — Fixed Asset accounts (account_subtype = 'Fixed Asset')
 $investing_cash = (float)($db->fetchOne("
-    SELECT -SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT -SUM(jl.debit - jl.credit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE a.account_type = 'asset' AND a.account_subtype = 'Fixed Asset'
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
 // 4. Financing Activities (Capital contributions, drawings, owner investments via Journal entries)
 $capital_inflows = (float) ($db->fetchOne("
-    SELECT SUM(j.amount) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.debit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
-      AND j.entry_type = 'debit' AND h.txn_type = 'Journal'
+      AND jl.debit > 0 AND h.txn_type IN ('Journal', 'journal', 'journal_entry')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
 $capital_outflows = (float) ($db->fetchOne("
-    SELECT SUM(j.amount) as total
-    FROM journal_entries j
-    JOIN accounts a ON j.account_id = a.id
-    JOIN transaction_headers h ON j.header_id = h.id
+    SELECT SUM(jl.credit) as total
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
-      AND j.entry_type = 'credit' AND h.txn_type = 'Journal'
+      AND jl.credit > 0 AND h.txn_type IN ('Journal', 'journal', 'journal_entry')
       AND h.txn_date BETWEEN ? AND ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_from, $date_to])['total'] ?? 0);
 
@@ -113,10 +120,11 @@ $net_cash_change = $net_operating_cash + $investing_cash + $financing_cash;
 
 // Verify actual GL cash & bank balance as of date_to (including static opening balances)
 $gl_ending_cash_txns = (float) ($db->fetchOne("
-    SELECT SUM(CASE WHEN j.entry_type = 'debit' THEN j.amount ELSE -j.amount END) as bal
+    SELECT SUM(jl.debit - jl.credit) as bal
     FROM accounts a
-    JOIN journal_entries j ON a.id = j.account_id
-    JOIN transaction_headers h ON j.header_id = h.id
+    JOIN journal_lines jl ON a.id = jl.account_id
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN transaction_headers h ON je.transaction_id = h.id
     WHERE {$cash_where}
       AND h.txn_date <= ? AND h.is_deleted = 0 AND h.status NOT IN ('void', 'voided', 'draft') {$loc_sql}
 ", [$date_to])['bal'] ?? 0);

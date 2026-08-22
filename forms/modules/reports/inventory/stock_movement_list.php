@@ -13,42 +13,26 @@ $today     = date('Y-m-d');
 $date_from = $_GET['date_from'] ?? $fy['start_date'];
 $date_to   = $_GET['date_to']   ?? $today;
 
+require_once 'api/InventoryEngine.php';
+
 $user_loc = function_exists('get_user_default_location_id') ? get_user_default_location_id() : '';
 $location_id = $_GET['location_id'] ?? ($user_loc ?: ($_SESSION['location_id'] ?? null));
 
-$loc_sql = "";
-$loc_param = [];
-if (!empty($location_id) && $location_id !== 'all') {
-    $loc_sql = " AND m.location_id = ? ";
-    $loc_param = [(int)$location_id];
-}
-
-$rows = $db->fetchAll("
-    SELECT 
-        i.id, i.sku as item_code, i.item_name,
-        COALESCE(i.current_stock, 0) as current_stock,
-        COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_in ELSE 0 END), 0) as purchased_qty,
-        COALESCE(SUM(CASE WHEN m.movement_date BETWEEN ? AND ? THEN m.qty_out ELSE 0 END), 0) as sold_qty
-    FROM items i
-    LEFT JOIN inventory_movements m ON m.item_id = i.id {$loc_sql}
-    WHERE i.is_active = 1 AND i.is_deleted = 0
-    GROUP BY i.id, i.sku, i.item_name, i.current_stock
-    HAVING (purchased_qty > 0 OR sold_qty > 0 OR current_stock > 0)
-    ORDER BY i.item_name ASC
-", array_merge([$date_from, $date_to, $date_from, $date_to], $loc_param));
+$invEngine = InventoryEngine::getInstance();
+$rows = $invEngine->getRealtimeStockLedger($date_from, $date_to, $location_id);
 
 $movement_data = [];
 $tot_purchased_qty = 0;
 $tot_sold_qty      = 0;
 
 foreach ($rows as $r) {
-    $purchased_qty = (float)$r['purchased_qty'];
-    $sold_qty      = (float)$r['sold_qty'];
+    $purchased_qty = (float)$r['qty_in'];
+    $sold_qty      = (float)$r['qty_out'];
     $net_movement  = $purchased_qty - $sold_qty;
-    $curr_stock    = (float)$r['current_stock'];
+    $curr_stock    = (float)$r['opening_qty'] + $net_movement;
 
     $movement_data[] = [
-        'code'          => $r['item_code'],
+        'code'          => $r['sku'] ?: '—',
         'name'          => $r['item_name'],
         'purchased_qty' => $purchased_qty,
         'sold_qty'      => $sold_qty,

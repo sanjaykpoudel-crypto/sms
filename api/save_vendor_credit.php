@@ -164,7 +164,7 @@ try {
         ", [$vendor_id, $txn_date, $bill_id, $deduct_from_stock, $subtotal, $tax_total, $grand_total, $grand_total, $id]);
 
         $db->execute("DELETE FROM transaction_lines WHERE header_id = ?", [$id]);
-        $db->execute("DELETE FROM journal_entries WHERE header_id = ?", [$id]);
+        AccountingEngine::getInstance()->deleteJournalForTransaction($id);
     }
 
     // GL Accounts
@@ -191,28 +191,38 @@ try {
     }
 
     // 4. Create General Ledger (Journal Entries) for Vendor Credit
-    // DR: Accounts Payable (Grand Total Credit) -> Reduces Vendor AP Liability
+    $gl_lines = [];
     if ($grand_total > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $ap_account_id, $grand_total, 'Vendor Credit AP Reduction - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+        $gl_lines[] = [
+            'account_id'  => $ap_account_id,
+            'debit'       => $grand_total,
+            'credit'      => 0.00,
+            'entity_type' => 'VENDOR',
+            'entity_id'   => $vendor_id,
+            'location_id' => $location_id,
+        ];
     }
-
-    // CR: Purchase Return / COGS / Inventory (Subtotal) -> Reverses Purchase Expense
     if ($subtotal > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $purchase_account_id, $subtotal, 'Vendor Credit Purchase Reversal - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+        $gl_lines[] = [
+            'account_id'  => $purchase_account_id,
+            'debit'       => 0.00,
+            'credit'      => $subtotal,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
+    }
+    if ($tax_total > 0) {
+        $gl_lines[] = [
+            'account_id'  => $tax_account_id,
+            'debit'       => 0.00,
+            'credit'      => $tax_total,
+            'entity_type' => 'NONE',
+            'location_id' => $location_id,
+        ];
     }
 
-    // CR: Tax Payable / VAT (Tax Total) -> Reverses Input VAT
-    if ($tax_total > 0) {
-        $db->execute("
-            INSERT INTO journal_entries (id, header_id, account_id, entry_type, amount, memo, created_by, entry_date, fiscal_period, fiscal_year)
-            VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?, ?)
-        ", [generate_uuid(), $id, $tax_account_id, $tax_total, 'Vendor Credit Tax Reversal - ' . $txn_number, $user_id, $txn_date, $fiscal['period'], $fiscal['year']]);
+    if (!empty($gl_lines)) {
+        AccountingEngine::getInstance()->postJournalEntry($id, 'VENDOR_CREDIT', $gl_lines, $txn_date, 'Vendor Credit ' . $txn_number);
     }
 
     log_audit('transaction_headers', !empty($existing_hdr) ? 'update' : 'create', $id, $existing_hdr ?? null, ['txn_number' => $txn_number, 'amount' => $grand_total, 'party_id' => $vendor_id, 'memo' => $memo, 'status' => 'open'], $user_id);

@@ -1,5 +1,6 @@
 <?php
 require_once 'database/DBConnection.php';
+require_once __DIR__ . '/../../../api/reference_helper.php';
 $db = db();
 $id = $_GET['id'] ?? '';
 
@@ -151,7 +152,7 @@ $items = $db->fetchAll("
 
 // Fetch GL Entries
 $gl_entries = $db->fetchAll("
-    SELECT je.*, a.account_name,
+    SELECT jl.*, a.account_name,
            COALESCE(
                c.full_name, 
                v.company_name, 
@@ -160,17 +161,18 @@ $gl_entries = $db->fetchAll("
                h_v.company_name,
                h_u.full_name
            ) as party_name
-    FROM journal_entries je 
-    JOIN accounts a ON je.account_id = a.id 
-    LEFT JOIN customers c ON je.party_id = c.id AND je.party_type = 'customer'
-    LEFT JOIN vendors v ON je.party_id = v.id AND je.party_type = 'vendor'
-    LEFT JOIN users u ON je.party_id = u.id AND je.party_type = 'user'
-    LEFT JOIN transaction_headers th ON je.header_id = th.id
+    FROM journal_lines jl
+    JOIN journal_entries je ON jl.je_id = je.je_id
+    JOIN accounts a ON jl.account_id = a.id 
+    LEFT JOIN customers c ON jl.entity_id = c.id AND jl.entity_type = 'CUSTOMER'
+    LEFT JOIN vendors v ON jl.entity_id = v.id AND jl.entity_type = 'VENDOR'
+    LEFT JOIN users u ON jl.entity_id = u.id AND jl.entity_type = 'USER'
+    LEFT JOIN transaction_headers th ON je.transaction_id = th.id
     LEFT JOIN customers h_c ON th.party_id = h_c.id AND th.party_type = 'customer'
     LEFT JOIN vendors h_v ON th.party_id = h_v.id AND th.party_type = 'vendor'
     LEFT JOIN users h_u ON th.party_id = h_u.id AND th.party_type = 'user'
-    WHERE je.header_id = :id
-    ORDER BY je.entry_type DESC, je.id ASC
+    WHERE je.transaction_id = :id
+    ORDER BY jl.debit DESC, jl.jl_id ASC
 ", ['id' => $id]);
 
 // Fetch Related Links
@@ -243,8 +245,9 @@ if (empty($audit_logs) && !empty($header)) {
     ];
 }
 
-function getDiff($oldJson, $newJson)
-{
+if (!function_exists('getDiff')) {
+    function getDiff($oldJson, $newJson)
+    {
     $old = is_array($oldJson) ? $oldJson : (json_decode((string)$oldJson, true) ?: []);
     $new = is_array($newJson) ? $newJson : (json_decode((string)$newJson, true) ?: []);
 
@@ -279,6 +282,7 @@ function getDiff($oldJson, $newJson)
         }
     }
     return $diff;
+}
 }
 
 // Logic for delete validation
@@ -335,10 +339,10 @@ if ($txn_type == 'vendor_bill') {
 } elseif ($txn_type == 'customer_invoice') {
     $edit_url = "?page=transactions/invoice/manage&id=" . $id;
     $list_url = "?page=transactions/invoice";
-} elseif (in_array($txn_type, ['customer_payment', 'vendor_payment'])) {
+} elseif (in_array(strtolower($txn_type), ['customer_payment', 'vendor_payment'])) {
     $edit_url = "?page=transactions/payment/manage&id=" . $id;
     $list_url = "?page=transactions/payment";
-} elseif ($txn_type == 'Journal') {
+} elseif (in_array(strtolower($txn_type), ['journal', 'journal_entry'])) {
     $edit_url = "?page=transactions/journal/manage&id=" . $id;
     $list_url = "?page=transactions/journal";
 } elseif (strtolower($txn_type) == 'expense') {
@@ -356,7 +360,7 @@ if ($txn_type == 'vendor_bill') {
 } elseif ($txn_type == 'credit_memo') {
     $edit_url = "?page=transactions/credit_memo/manage&id=" . $id;
     $list_url = "?page=transactions/credit_memo";
-} elseif (in_array($txn_type, ['vendor_credit', 'bill_credit'])) {
+} elseif (in_array(strtolower($txn_type), ['vendor_credit', 'bill_credit'])) {
     $edit_url = "?page=transactions/bill_credit/manage&id=" . $id;
     $list_url = "?page=transactions/bill_credit";
 }
@@ -746,10 +750,12 @@ if ($is_pos_summary):
                 if (strtolower($txn_type) == 'inventory_adjustment') {
                     $display_total_amount = (float)($header['net_amount'] ?? 0);
                 } elseif ($display_total_amount === null || (in_array(strtolower($txn_type), ['journal', 'account_transfer']) && (float)$display_total_amount == 0)) {
-                    $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit' AND account_id != 'acc-3300'", [$id])['s'] ?? 0;
-                    if ($gl_debit_sum == 0) {
-                        $gl_debit_sum = $db->fetchOne("SELECT SUM(amount) as s FROM journal_entries WHERE header_id = ? AND entry_type = 'debit'", [$id])['s'] ?? 0;
-                    }
+                    $gl_debit_sum = $db->fetchOne("
+                        SELECT SUM(jl.debit) as s 
+                        FROM journal_lines jl 
+                        JOIN journal_entries je ON jl.je_id = je.je_id 
+                        WHERE je.transaction_id = ?
+                    ", [$id])['s'] ?? 0;
                     $display_total_amount = $gl_debit_sum > 0 ? $gl_debit_sum : abs($header['net_amount'] ?? 0);
                 }
                 ?>
@@ -774,16 +780,14 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
 
 <div class="ns-tabs">
     <?php if (strtolower($txn_type) == 'cash_denomination'): ?>
-        <div class="ns-tab active" data-target="tab-denom">Denomination Breakdown</div>
-    <?php endif; ?>
-
-    <?php if (count($items) > 0): ?>
-        <div class="ns-tab <?php echo strtolower($txn_type) != 'cash_denomination' ? 'active' : ''; ?>"
-            data-target="tab-items">Items (<?php echo count($items); ?>)</div>
-        <div class="ns-tab" data-target="tab-gl">GL Impact</div>
+        <div class="ns-tab active" data-target="tab-denom"><i class="fas fa-coins" style="margin-right: 6px;"></i>Denomination Breakdown</div>
+    <?php elseif (in_array(strtolower($txn_type), ['journal', 'journal_entry'])): ?>
+        <div class="ns-tab active" data-target="tab-gl"><i class="fas fa-book" style="margin-right: 6px;"></i>Journal Lines (<?php echo count($gl_entries); ?>)</div>
+    <?php elseif (count($items) > 0): ?>
+        <div class="ns-tab active" data-target="tab-items"><i class="fas fa-boxes" style="margin-right: 6px;"></i>Items (<?php echo count($items); ?>)</div>
+        <div class="ns-tab" data-target="tab-gl"><i class="fas fa-balance-scale" style="margin-right: 6px;"></i>GL Impact</div>
     <?php else: ?>
-        <div class="ns-tab <?php echo strtolower($txn_type) != 'cash_denomination' ? 'active' : ''; ?>"
-            data-target="tab-gl">GL Impact</div>
+        <div class="ns-tab active" data-target="tab-gl"><i class="fas fa-balance-scale" style="margin-right: 6px;"></i>GL Impact</div>
     <?php endif; ?>
 
     <?php if (!empty($partyTabTitle) && !empty($details['entity_name'])): ?>
@@ -1020,9 +1024,15 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
 <div class="ns-tab-content <?php echo (count($items) == 0 && strtolower($txn_type) != 'cash_denomination') ? 'active' : ''; ?>"
     id="tab-gl">
     <?php if (count($gl_entries) == 0): ?>
-        <div style="padding: 20px; text-align: center; color: #888;">
-            <i class="fas fa-book" style="font-size: 32px; opacity: 0.3; margin-bottom: 10px;"></i>
-            <p>No GL entries posted for this transaction yet.</p>
+        <div style="padding: 30px 20px; text-align: center; color: #64748b; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; margin: 10px 0;">
+            <i class="fas fa-book-open" style="font-size: 36px; opacity: 0.4; margin-bottom: 12px; color: var(--ns-primary);"></i>
+            <p style="font-size: 15px; font-weight: 600; margin: 0 0 6px 0; color: #1e293b;">No GL lines recorded for this transaction yet.</p>
+            <p style="font-size: 13px; margin: 0 0 15px 0; color: #64748b;">This transaction header exists in the register, but no line items were saved.</p>
+            <?php if (in_array(strtolower($txn_type), ['journal', 'journal_entry'])): ?>
+                <a href="?page=transactions/journal/manage&id=<?php echo urlencode($id); ?>" class="ns-btn ns-btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-edit"></i> Edit & Add Journal Lines
+                </a>
+            <?php endif; ?>
         </div>
     <?php else: ?>
         <table class="ns-table" style="width: 100%;">
@@ -1041,9 +1051,9 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                 $totDr = 0;
                 $totCr = 0;
                 foreach ($gl_entries as $idx => $je):
-                    $isDr = $je['entry_type'] == 'debit';
-                    $dr = $isDr ? $je['amount'] : 0;
-                    $cr = !$isDr ? $je['amount'] : 0;
+                    $dr = (float)($je['debit'] ?? (($je['entry_type'] ?? '') == 'debit' ? ($je['amount'] ?? 0) : 0));
+                    $cr = (float)($je['credit'] ?? (($je['entry_type'] ?? '') == 'credit' ? ($je['amount'] ?? 0) : 0));
+                    $isDr = $dr >= $cr;
                     $totDr += $dr;
                     $totCr += $cr;
                     ?>
@@ -1057,7 +1067,7 @@ if (in_array(strtolower($txn_type), ['vendor_bill', 'vendor_payment'])) {
                         </td>
                         <td style="text-align: right;"><?php echo $dr > 0 ? number_format($dr, 2) : ''; ?></td>
                         <td style="text-align: right;"><?php echo $cr > 0 ? number_format($cr, 2) : ''; ?></td>
-                        <td><?php echo htmlspecialchars($je['memo']); ?></td>
+                        <td><?php echo htmlspecialchars($je['memo'] ?? ''); ?></td>
                         <td>
                             <?php 
                                 $partyNameDisp = !empty($je['party_name']) ? $je['party_name'] : ($details['entity_name'] ?? ($header['party_name'] ?? ''));
